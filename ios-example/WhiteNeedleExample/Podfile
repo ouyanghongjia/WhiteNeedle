@@ -1,0 +1,23 @@
+# 清华 CocoaPods Specs 镜像：https://mirrors.tuna.tsinghua.edu.cn/help/cocoapods/
+source 'https://mirrors.tuna.tsinghua.edu.cn/git/CocoaPods/Specs.git'
+
+platform :ios, '15.0'
+inhibit_all_warnings!
+
+target 'WhiteNeedleExample' do
+  # 本地开发 Pod：源码在 ios-dylib/WhiteNeedle，可在 Xcode 中单步调试
+  pod 'WhiteNeedle', :path => '../../ios-dylib/WhiteNeedle'
+
+  # 将 sample-scripts/ 同步到 app bundle，供运行时加载测试脚本
+  script_phase :name => 'Copy Sample Scripts',
+    :script => 'rsync -av --delete "${SRCROOT}/../../sample-scripts/" "${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/sample-scripts/"',
+    :execution_position => :after_compile
+end
+
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    target.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+    end
+  end
+end

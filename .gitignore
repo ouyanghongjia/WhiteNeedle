@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+ios-dylib/build/
+**/DerivedData/
+**/build/
+**/dist/
+**/out/
+*.o
+
+# Xcode / CocoaPods
+*.xcuserstate
+*.xcuserdatad/
+xcuserdata/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Logs & local artifacts
+log.txt
+*.log
+.DS_Store
+
+# Release artifacts (use GitHub Releases instead; vsix is large)
+*.vsix
+
+# Resign payload: copy from `ios-dylib/build/WhiteNeedle.dylib` after `make`
+resign-tool/payload/*.dylib
+
+# Secrets & signing (never commit)
+.env
+.env.*
+*.mobileprovision
+*.p12
+*.pem
+AuthKey_*.p8
+deploy.conf.local
+
+# Editor / tooling
+.ruby-lsp/
+.idea/
+
+# Optional: local Cursor rules with machine paths (uncomment if needed)
+# .cursor/

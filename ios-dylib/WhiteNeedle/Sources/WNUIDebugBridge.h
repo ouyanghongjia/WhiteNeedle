@@ -1,0 +1,23 @@
+#import <Foundation/Foundation.h>
+#import <JavaScriptCore/JavaScriptCore.h>
+
+NS_ASSUME_NONNULL_BEGIN
+
+/**
+ * WNUIDebugBridge registers the UIDebug namespace into a JSContext.
+ *
+ * API:
+ *   UIDebug.viewHierarchy()            → recursive view tree description
+ *   UIDebug.screenshot()               → base64 PNG of key window
+ *   UIDebug.screenshotView(address)    → base64 PNG of a specific UIView
+ *   UIDebug.bounds(address)            → frame/bounds of a view by address
+ *   UIDebug.keyWindow()                → info about the key window
+ *   UIDebug.viewControllers()          → view controller hierarchy
+ */
+@interface WNUIDebugBridge : NSObject
+
++ (void)registerInContext:(JSContext *)context;
+
+@end
+
+NS_ASSUME_NONNULL_END

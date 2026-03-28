@@ -1,0 +1,266 @@
+{
+  "name": "whiteneedle",
+  "displayName": "WhiteNeedle",
+  "description": "Remote iOS debugging powered by WhiteNeedle Engine — LAN discovery, script push, ObjC runtime inspection",
+  "version": "0.1.0",
+  "publisher": "whiteneedle",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Debuggers",
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:whiteneedle-devices",
+    "onCommand:whiteneedle.connectByIP",
+    "onCommand:whiteneedle.connectDevice",
+    "onCommand:whiteneedle.refreshDevices",
+    "onCommand:whiteneedle.pushScript",
+    "onCommand:whiteneedle.stopScript",
+    "onCommand:whiteneedle.disconnectDevice",
+    "onCommand:whiteneedle.newScript",
+    "onCommand:whiteneedle.loadClasses",
+    "onCommand:whiteneedle.filterClasses",
+    "onCommand:whiteneedle.traceMethod",
+    "onCommand:whiteneedle.evaluate",
+    "onCommand:whiteneedle.listHooks"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "whiteneedle",
+          "title": "WhiteNeedle",
+          "icon": "$(debug-alt)"
+        }
+      ]
+    },
+    "views": {
+      "whiteneedle": [
+        {
+          "id": "whiteneedle-devices",
+          "name": "Devices"
+        },
+        {
+          "id": "whiteneedle-scripts",
+          "name": "Scripts"
+        },
+        {
+          "id": "whiteneedle-objc",
+          "name": "ObjC Runtime"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "whiteneedle.refreshDevices",
+        "title": "Refresh Devices",
+        "icon": "$(refresh)",
+        "category": "WhiteNeedle"
+      },
+      {
+        "command": "whiteneedle.connectDevice",
+        "title": "Connect to Device",
+        "category": "WhiteNeedle"
+      },
+      {
+        "command": "whiteneedle.connectByIP",
+        "title": "Connect by IP Address",
+        "icon": "$(plug)",
+        "category": "WhiteNeedle"
+      },
+      {
+        "command": "whiteneedle.disconnectDevice",
+        "title": "Disconnect Device",
+        "category": "WhiteNeedle"
+      },
+      {
+        "command": "whiteneedle.pushScript",
+        "title": "Push & Run Script",
+        "icon": "$(play)",
+        "category": "WhiteNeedle"
+      },
+      {
+        "command": "whiteneedle.stopScript",
+        "title": "Stop Script",
+        "icon": "$(debug-stop)",
+        "category": "WhiteNeedle"
+      },
+      {
+        "command": "whiteneedle.newScript",
+        "title": "New Frida Script",
+        "category": "WhiteNeedle"
+      },
+      {
+        "command": "whiteneedle.loadClasses",
+        "title": "Load ObjC Classes",
+        "icon": "$(cloud-download)",
+        "category": "WhiteNeedle"
+      },
+      {
+        "command": "whiteneedle.filterClasses",
+        "title": "Filter Classes",
+        "icon": "$(search)",
+        "category": "WhiteNeedle"
+      },
+      {
+        "command": "whiteneedle.traceMethod",
+        "title": "Trace Method",
+        "icon": "$(pulse)",
+        "category": "WhiteNeedle"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "whiteneedle.refreshDevices",
+          "when": "view == whiteneedle-devices",
+          "group": "navigation@1"
+        },
+        {
+          "command": "whiteneedle.connectByIP",
+          "when": "view == whiteneedle-devices",
+          "group": "navigation@2"
+        },
+        {
+          "command": "whiteneedle.pushScript",
+          "when": "view == whiteneedle-scripts",
+          "group": "navigation@1"
+        },
+        {
+          "command": "whiteneedle.stopScript",
+          "when": "view == whiteneedle-scripts",
+          "group": "navigation@2"
+        },
+        {
+          "command": "whiteneedle.loadClasses",
+          "when": "view == whiteneedle-objc",
+          "group": "navigation"
+        },
+        {
+          "command": "whiteneedle.filterClasses",
+          "when": "view == whiteneedle-objc",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "whiteneedle.traceMethod",
+          "when": "viewItem == objcMethod",
+          "group": "inline"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "whiteneedle.pushScript",
+          "when": "resourceExtname == .js",
+          "group": "navigation"
+        },
+        {
+          "command": "whiteneedle.stopScript",
+          "when": "resourceExtname == .js",
+          "group": "navigation"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "whiteneedle.pushScript",
+        "key": "ctrl+shift+r",
+        "mac": "cmd+shift+r",
+        "when": "editorTextFocus && resourceExtname == .js"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "whiteneedle",
+        "label": "WhiteNeedle",
+        "languages": [
+          "javascript"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "host",
+              "inspectorPort"
+            ],
+            "properties": {
+              "host": {
+                "type": "string",
+                "description": "Target device IP address",
+                "default": "127.0.0.1"
+              },
+              "inspectorPort": {
+                "type": "number",
+                "description": "V8 Inspector port on the device",
+                "default": 9229
+              },
+              "script": {
+                "type": "string",
+                "description": "Path to the Frida script to debug",
+                "default": "${file}"
+              }
+            }
+          }
+        },
+        "configurationSnippets": [
+          {
+            "label": "WhiteNeedle: Debug Frida Script",
+            "description": "Debug a Frida JS script on a connected iOS device",
+            "body": {
+              "type": "whiteneedle",
+              "request": "launch",
+              "name": "WhiteNeedle: Debug",
+              "host": "^\"\\${config:whiteneedle.deviceHost}\"",
+              "inspectorPort": 9229,
+              "script": "^\"\\${file}\""
+            }
+          }
+        ]
+      }
+    ],
+    "configuration": {
+      "title": "WhiteNeedle",
+      "properties": {
+        "whiteneedle.autoReload": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto-reload script on save"
+        },
+        "whiteneedle.fridaPort": {
+          "type": "number",
+          "default": 27042,
+          "description": "Default Frida Gadget port"
+        },
+        "whiteneedle.deviceHost": {
+          "type": "string",
+          "default": "127.0.0.1",
+          "description": "Connected device IP (auto-set on connect)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.18.1",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.50.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "@vscode/debugadapter": "^1.68.0",
+    "@vscode/debugprotocol": "^1.68.0",
+    "bonjour-service": "^1.2.0",
+    "ws": "^8.20.0"
+  }
+}

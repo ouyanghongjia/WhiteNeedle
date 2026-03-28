@@ -1,0 +1,10 @@
+{
+  "name": "whiteneedle-sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "WhiteNeedle sidecar bridge — frida-node JSON-RPC interface",
+  "main": "bridge.js",
+  "dependencies": {
+    "frida": "^16.5.0"
+  }
+}

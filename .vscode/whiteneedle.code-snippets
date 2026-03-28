@@ -1,0 +1,461 @@
+{
+    "WN: ObjC.instance — 从十六进制地址": {
+        "prefix": ["wn-instance-addr", "ObjC.instance"],
+        "body": [
+            "var ${1:proxy} = ObjC.instance(\"${2:0x}\");",
+            "if (${1:proxy}) {",
+            "    var ${3:view} = ${1:proxy}.invoke(\"view\");",
+            "    $0",
+            "}"
+        ],
+        "description": "从十六进制地址字符串得到实例代理（任意 NSObject，不限 UI）"
+    },
+    "WN: ObjC.use — 获取 ObjC 类代理": {
+        "prefix": ["wn-use", "ObjC.use"],
+        "body": [
+            "var ${1:cls} = ObjC.use(\"${2:ClassName}\");"
+        ],
+        "description": "通过类名获取 ObjC 类的代理对象"
+    },
+    "WN: invoke 无参方法": {
+        "prefix": ["wn-invoke", "invoke"],
+        "body": [
+            "${1:proxy}.invoke(\"${2:selectorName}\");"
+        ],
+        "description": "调用无参数的 ObjC 方法"
+    },
+    "WN: invoke 带参方法": {
+        "prefix": ["wn-invoke-args", "invoke-args"],
+        "body": [
+            "${1:proxy}.invoke(\"${2:selector:}\", [${3:arg1}]);"
+        ],
+        "description": "调用带参数的 ObjC 方法"
+    },
+    "WN: 获取 UIApplication": {
+        "prefix": ["wn-app", "sharedApplication"],
+        "body": [
+            "var app = ObjC.use(\"UIApplication\").invoke(\"sharedApplication\");"
+        ],
+        "description": "获取 UIApplication.sharedApplication 单例"
+    },
+    "WN: 获取 mainBundle 信息": {
+        "prefix": ["wn-bundle", "mainBundle"],
+        "body": [
+            "var bundle = ObjC.use(\"NSBundle\").invoke(\"mainBundle\");",
+            "var bundleId = bundle.getProperty(\"bundleIdentifier\");",
+            "console.log(\"Bundle ID:\", bundleId);"
+        ],
+        "description": "获取应用主 Bundle 信息"
+    },
+    "WN: Interceptor.attach — Hook 方法": {
+        "prefix": ["wn-attach", "hook", "Interceptor.attach"],
+        "body": [
+            "Interceptor.attach(\"${1:-}[${2:ClassName} ${3:method}]\", {",
+            "    onEnter: function(self, sel, args) {",
+            "        console.log(\"[Hook] ${3:method} called:\", self.className());",
+            "        $0",
+            "    },",
+            "    onLeave: function(retval) {",
+            "        console.log(\"[Hook] ${3:method} returned:\", retval);",
+            "    }",
+            "});"
+        ],
+        "description": "拦截 ObjC 方法调用（onEnter + onLeave）"
+    },
+    "WN: Interceptor.attach onEnter only": {
+        "prefix": ["wn-attach-enter", "hook-enter"],
+        "body": [
+            "Interceptor.attach(\"${1:-}[${2:ClassName} ${3:method}]\", {",
+            "    onEnter: function(self, sel, args) {",
+            "        console.log(\"[Hook] ${3:method}:\", self.className());",
+            "        $0",
+            "    }",
+            "});"
+        ],
+        "description": "拦截 ObjC 方法调用（仅 onEnter）"
+    },
+    "WN: Interceptor.replace — 替换方法": {
+        "prefix": ["wn-replace", "Interceptor.replace"],
+        "body": [
+            "Interceptor.replace(\"${1:-}[${2:ClassName} ${3:method}]\", function(self, args) {",
+            "    $0",
+            "    return ${4:undefined};",
+            "});"
+        ],
+        "description": "完全替换 ObjC 方法实现"
+    },
+    "WN: ObjC.define — 动态创建类": {
+        "prefix": ["wn-define", "ObjC.define"],
+        "body": [
+            "var ${1:MyClass} = ObjC.define({",
+            "    name: \"${2:WN$1}\",",
+            "    super: \"${3:NSObject}\",",
+            "    methods: {",
+            "        \"${4:doWork}\": function(self, args) {",
+            "            $0",
+            "        }",
+            "    }",
+            "});",
+            "",
+            "var ${5:obj} = ${1:MyClass}.invoke(\"new\");"
+        ],
+        "description": "在运行时动态创建新的 ObjC 类"
+    },
+    "WN: ObjC.delegate — 创建代理对象": {
+        "prefix": ["wn-delegate", "ObjC.delegate"],
+        "body": [
+            "var ${1:delegate} = ObjC.delegate({",
+            "    protocols: [\"${2:UITableViewDelegate}\"],",
+            "    methods: {",
+            "        \"${3:tableView:didSelectRowAtIndexPath:}\": function(self, args) {",
+            "            $0",
+            "        }",
+            "    }",
+            "});"
+        ],
+        "description": "快速创建遵循协议的代理对象"
+    },
+    "WN: ObjC.choose — 堆扫描": {
+        "prefix": ["wn-choose", "ObjC.choose", "heap-scan"],
+        "body": [
+            "ObjC.choose(\"${1:UIViewController}\", {",
+            "    onMatch: function(instance) {",
+            "        console.log(\"Found:\", instance.className());",
+            "        $0",
+            "    },",
+            "    onComplete: function() {",
+            "        console.log(\"Heap scan complete\");",
+            "    }",
+            "});"
+        ],
+        "description": "在堆中搜索指定类的实例"
+    },
+    "WN: ObjC.enumerateLoadedClasses": {
+        "prefix": ["wn-enumerate", "enumerate-classes"],
+        "body": [
+            "var count = 0;",
+            "ObjC.enumerateLoadedClasses({",
+            "    onMatch: function(className) {",
+            "        if (className.indexOf(\"${1:Filter}\") !== -1) {",
+            "            console.log(className);",
+            "        }",
+            "        count++;",
+            "    },",
+            "    onComplete: function() {",
+            "        console.log(\"Total classes:\", count);",
+            "    }",
+            "});"
+        ],
+        "description": "枚举所有已注册的 ObjC 类"
+    },
+    "WN: $block — 创建 ObjC Block": {
+        "prefix": ["wn-block", "$block"],
+        "body": [
+            "var ${1:block} = $$block(function(${2:arg}) {",
+            "    $0",
+            "}, \"${3:v@?@}\");"
+        ],
+        "description": "将 JS 函数包装为 ObjC Block"
+    },
+    "WN: $callBlock — 调用 Block": {
+        "prefix": ["wn-callblock", "$callBlock"],
+        "body": [
+            "$$callBlock(${1:block}, \"${2:v@?@}\", ${3:arg});"
+        ],
+        "description": "从 JS 调用一个 ObjC Block"
+    },
+    "WN: $struct — 定义结构体": {
+        "prefix": ["wn-struct", "$struct"],
+        "body": [
+            "var ${1:CGPoint} = $$struct(\"${1:CGPoint}\", [",
+            "    {name: \"${2:x}\", type: \"${3:double}\"},",
+            "    {name: \"${4:y}\", type: \"${5:double}\"}",
+            "]);",
+            "",
+            "var ${6:point} = ${1:CGPoint}({${2:x}: ${7:0}, ${4:y}: ${8:0}});"
+        ],
+        "description": "定义 C 结构体并创建实例"
+    },
+    "WN: $pointer.read — 读内存": {
+        "prefix": ["wn-read", "$pointer.read"],
+        "body": [
+            "var ${1:value} = $$pointer.read(${2:address}, \"${3:int32}\");"
+        ],
+        "description": "从内存地址读取数据"
+    },
+    "WN: $pointer.write — 写内存": {
+        "prefix": ["wn-write", "$pointer.write"],
+        "body": [
+            "$$pointer.write(${1:address}, \"${2:int32}\", ${3:value});"
+        ],
+        "description": "向内存地址写入数据"
+    },
+    "WN: $pointer.alloc + free": {
+        "prefix": ["wn-alloc", "$pointer.alloc"],
+        "body": [
+            "var ${1:mem} = $$pointer.alloc(${2:256});",
+            "// 使用: $pointer.read/write(${1:mem}.address, ...)",
+            "$0",
+            "$$pointer.free(${1:mem}.address);"
+        ],
+        "description": "分配和释放堆内存"
+    },
+    "WN: Module.findExportByName — 查找符号": {
+        "prefix": ["wn-symbol", "Module.findExportByName"],
+        "body": [
+            "var ${1:addr} = Module.findExportByName(${2:null}, \"${3:malloc}\");",
+            "console.log(\"${3:malloc} @\", ${1:addr});"
+        ],
+        "description": "在模块中查找导出符号的地址"
+    },
+    "WN: Module.enumerateModules — 枚举模块": {
+        "prefix": ["wn-modules", "enumerate-modules"],
+        "body": [
+            "var mods = Module.enumerateModules();",
+            "mods.forEach(function(mod) {",
+            "    var parts = mod.name.split(\"/\");",
+            "    console.log(parts[parts.length - 1], \"base:\", mod.base);",
+            "});"
+        ],
+        "description": "枚举所有已加载的 dyld 镜像"
+    },
+    "WN: ViewController 生命周期监控": {
+        "prefix": ["wn-lifecycle", "vc-lifecycle"],
+        "body": [
+            "Interceptor.attach(\"-[UIViewController viewDidLoad]\", {",
+            "    onEnter: function(self, sel, args) {",
+            "        console.log(\"[Lifecycle] viewDidLoad:\", self.className());",
+            "    }",
+            "});",
+            "",
+            "Interceptor.attach(\"-[UIViewController viewWillAppear:]\", {",
+            "    onEnter: function(self, sel, args) {",
+            "        console.log(\"[Lifecycle] viewWillAppear:\", self.className());",
+            "    }",
+            "});",
+            "",
+            "Interceptor.attach(\"-[UIViewController viewDidDisappear:]\", {",
+            "    onEnter: function(self, sel, args) {",
+            "        console.log(\"[Lifecycle] viewDidDisappear:\", self.className());",
+            "    }",
+            "});",
+            "",
+            "console.log(\"[Lifecycle] ViewController lifecycle hooks active\");"
+        ],
+        "description": "监控所有 ViewController 的生命周期方法"
+    },
+    "WN: 网络请求监控": {
+        "prefix": ["wn-network", "network-monitor"],
+        "body": [
+            "Interceptor.attach(\"-[NSURLSession dataTaskWithRequest:completionHandler:]\", {",
+            "    onEnter: function(self, sel, args) {",
+            "        var request = args[0];",
+            "        var url = request.invoke(\"URL\").invoke(\"absoluteString\");",
+            "        var method = request.invoke(\"HTTPMethod\");",
+            "        console.log(\"[Network]\", method, url);",
+            "    }",
+            "});",
+            "",
+            "console.log(\"[Network] Request monitoring active\");"
+        ],
+        "description": "监控 NSURLSession 网络请求"
+    },
+    "WN: UserDefaults 读写": {
+        "prefix": ["wn-defaults", "userdefaults"],
+        "body": [
+            "var defaults = ObjC.use(\"NSUserDefaults\").invoke(\"standardUserDefaults\");",
+            "var ${1:value} = defaults.invoke(\"objectForKey:\", [\"${2:key}\"]);",
+            "console.log(\"${2:key}:\", ${1:value});"
+        ],
+        "description": "读取 NSUserDefaults 中的值"
+    },
+    "WN: RPC 导出模板": {
+        "prefix": ["wn-rpc", "rpc-exports"],
+        "body": [
+            "rpc.exports = {",
+            "    ${1:methodName}: function(${2:arg}) {",
+            "        $0",
+            "        return { success: true };",
+            "    }",
+            "};",
+            "",
+            "console.log(\"[RPC] Exports registered: ${1:methodName}\");"
+        ],
+        "description": "定义 RPC 可调用接口"
+    },
+    "WN: 脚本模板（完整）": {
+        "prefix": ["wn-template", "wn-script"],
+        "body": [
+            "// WhiteNeedle Script: ${1:Script Name}",
+            "// ${2:Description}",
+            "",
+            "console.log(\"[${1:Script Name}] Loading...\");",
+            "",
+            "$0",
+            "",
+            "rpc.exports = {",
+            "    // 定义远程可调用接口",
+            "};",
+            "",
+            "console.log(\"[${1:Script Name}] Ready.\");"
+        ],
+        "description": "WhiteNeedle 脚本完整模板"
+    },
+    "WN: Debug 计时器": {
+        "prefix": ["wn-timer", "debug-time"],
+        "body": [
+            "Debug.time(\"${1:operation}\");",
+            "$0",
+            "var elapsed = Debug.timeEnd(\"${1:operation}\");",
+            "console.log(\"${1:operation} took\", elapsed, \"ms\");"
+        ],
+        "description": "使用 Debug.time/timeEnd 测量耗时"
+    },
+    "WN: 类方法列表": {
+        "prefix": ["wn-methods", "list-methods"],
+        "body": [
+            "var cls = ObjC.use(\"${1:ClassName}\").invoke(\"new\");",
+            "var methods = cls.getMethods();",
+            "methods.forEach(function(m) {",
+            "    console.log(m);",
+            "});"
+        ],
+        "description": "列出指定类的所有方法"
+    },
+    "WN: Keychain 读取": {
+        "prefix": ["wn-keychain"],
+        "body": [
+            "var query = ObjC.use(\"NSMutableDictionary\").invoke(\"new\");",
+            "query.invoke(\"setObject:forKey:\", [\"${1:service}\", \"svce\"]);",
+            "// 使用 SecItemCopyMatching 查询 Keychain",
+            "console.log(\"[Keychain] Query built for: ${1:service}\");"
+        ],
+        "description": "构建 Keychain 查询"
+    },
+    "WN: Cookies 列出": {
+        "prefix": ["wn-cookies-list"],
+        "body": [
+            "var cookies = Cookies.getAll(\"${1:.example.com}\");",
+            "cookies.forEach(function(c) {",
+            "    console.log(c.name, \"=\", c.value, \"domain:\", c.domain);",
+            "});"
+        ],
+        "description": "列出 HTTP Cookies"
+    },
+    "WN: Cookies 设置": {
+        "prefix": ["wn-cookies-set"],
+        "body": [
+            "Cookies.set({",
+            "    name: \"${1:name}\",",
+            "    value: \"${2:value}\",",
+            "    domain: \"${3:.example.com}\",",
+            "    path: \"/\"",
+            "});"
+        ],
+        "description": "添加或更新 Cookie"
+    },
+    "WN: UserDefaults 读取": {
+        "prefix": ["wn-userdefaults-get"],
+        "body": [
+            "var val = UserDefaults.get(\"${1:key}\");",
+            "console.log(\"${1:key} =\", val);"
+        ],
+        "description": "读取 UserDefaults 值"
+    },
+    "WN: UserDefaults 写入": {
+        "prefix": ["wn-userdefaults-set"],
+        "body": [
+            "UserDefaults.set(\"${1:key}\", ${2:value});",
+            "console.log(\"Set ${1:key} =\", ${2:value});"
+        ],
+        "description": "写入 UserDefaults 值"
+    },
+    "WN: FileSystem 列目录": {
+        "prefix": ["wn-fs-list"],
+        "body": [
+            "var files = FileSystem.list(\"${1:Documents}\");",
+            "files.forEach(function(f) {",
+            "    console.log(f.name, f.isDir ? \"[DIR]\" : f.size + \" bytes\");",
+            "});"
+        ],
+        "description": "列出沙盒目录内容"
+    },
+    "WN: FileSystem 读文件": {
+        "prefix": ["wn-fs-read"],
+        "body": [
+            "var content = FileSystem.read(\"${1:Documents/config.json}\");",
+            "if (content) {",
+            "    console.log(content);",
+            "}"
+        ],
+        "description": "读取沙盒文件"
+    },
+    "WN: Performance 快照": {
+        "prefix": ["wn-perf-snapshot"],
+        "body": [
+            "var snap = Performance.snapshot();",
+            "console.log(\"Memory:\", (snap.memory.used / 1024 / 1024).toFixed(1), \"MB\");",
+            "console.log(\"CPU user:\", snap.cpu.userTime.toFixed(2) + \"s\");",
+            "console.log(\"Threads:\", snap.cpu.threadCount);"
+        ],
+        "description": "获取性能快照"
+    },
+    "WN: Performance FPS 监控": {
+        "prefix": ["wn-perf-fps"],
+        "body": [
+            "Performance.fps(function(fps) {",
+            "    console.log(\"FPS:\", fps);",
+            "});",
+            "",
+            "// 停止: Performance.stopFps();"
+        ],
+        "description": "启动 FPS 监控"
+    },
+    "WN: UIDebug 视图层级": {
+        "prefix": ["wn-uidebug-hierarchy"],
+        "body": [
+            "var tree = UIDebug.viewHierarchy();",
+            "console.log(JSON.stringify(tree, null, 2));"
+        ],
+        "description": "获取视图层级树"
+    },
+    "WN: UIDebug 截图": {
+        "prefix": ["wn-uidebug-screenshot"],
+        "body": [
+            "var png = UIDebug.screenshot();",
+            "console.log(\"Screenshot:\", png ? png.length + \" chars\" : \"failed\");"
+        ],
+        "description": "截取屏幕截图"
+    },
+    "WN: UIDebug ViewController 层级": {
+        "prefix": ["wn-uidebug-vcs"],
+        "body": [
+            "var vcs = UIDebug.viewControllers();",
+            "vcs.forEach(function(vc) {",
+            "    var indent = \"  \".repeat(vc.depth);",
+            "    console.log(indent + vc.class, vc.title ? \"(\" + vc.title + \")\" : \"\");",
+            "});"
+        ],
+        "description": "显示 ViewController 层级"
+    },
+    "WN: Debug 原生调用栈": {
+        "prefix": ["wn-debug-native-trace"],
+        "body": [
+            "var frames = Debug.nativeTrace(${1:32});",
+            "frames.forEach(function(f, i) {",
+            "    console.log(i + \": \" + f);",
+            "});"
+        ],
+        "description": "获取原生调用栈"
+    },
+    "WN: Debug 线程列表": {
+        "prefix": ["wn-debug-threads"],
+        "body": [
+            "var threads = Debug.threads();",
+            "threads.forEach(function(t) {",
+            "    console.log(\"Thread\", t.index, \"CPU:\", t.cpuUsage.toFixed(1) + \"%\", t.idle ? \"(idle)\" : \"\");",
+            "});"
+        ],
+        "description": "列出所有线程"
+    }
+}

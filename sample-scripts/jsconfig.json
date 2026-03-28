@@ -1,0 +1,15 @@
+{
+    "compilerOptions": {
+        "target": "ES6",
+        "module": "commonjs",
+        "typeRoots": ["../types"],
+        "types": [],
+        "noEmit": true,
+        "allowJs": true,
+        "checkJs": false
+    },
+    "include": [
+        "*.js",
+        "../types/whiteneedle.d.ts"
+    ]
+}
