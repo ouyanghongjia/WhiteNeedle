@@ -9,6 +9,7 @@ extern NSString *const kWNServiceType;
 @property (nonatomic, readonly) BOOL isPublishing;
 
 - (void)startWithPort:(NSInteger)port;
+- (void)startWithPort:(NSInteger)port inspectorPort:(NSInteger)inspectorPort;
 - (void)stop;
 
 @end

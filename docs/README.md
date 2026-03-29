@@ -8,6 +8,12 @@ WhiteNeedle 是一个基于 JavaScriptCore 的 iOS 动态化引擎，提供 ObjC
 - 最低支持：**iOS 15.0**
 - 架构：**arm64**
 
+## 其它
+
+| 文档 | 说明 |
+|------|------|
+| [Inspector 与 VS Code 断点](inspector-vscode.md) | 如何验证设备是否有 CDP `/json`、与 Safari 的差异、纯 VS Code F5 所需能力 |
+
 ## API 索引
 
 | 文档 | 说明 |

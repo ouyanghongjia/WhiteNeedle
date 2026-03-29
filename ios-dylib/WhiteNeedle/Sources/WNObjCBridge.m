@@ -22,21 +22,22 @@ static BOOL WNObjCPointerPassesBasicSafetyChecks(uintptr_t addr) {
     if (addr == 0) return NO;
     if (addr % sizeof(void *) != 0) return NO;
 
-    mach_vm_address_t regionAddr = (mach_vm_address_t)addr;
-    mach_vm_size_t regionSize = 0;
+    vm_address_t regionAddr = (vm_address_t)addr;
+    vm_size_t regionSize = 0;
     vm_region_basic_info_data_64_t regionInfo;
     mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
     mach_port_t objName = MACH_PORT_NULL;
-    kern_return_t kr = mach_vm_region(mach_task_self(), &regionAddr, &regionSize, VM_REGION_BASIC_INFO_64,
-                                        (vm_region_info_t)&regionInfo, &count, &objName);
+    kern_return_t kr = vm_region_64(mach_task_self(), &regionAddr, &regionSize, VM_REGION_BASIC_INFO_64,
+                                    (vm_region_info_t)&regionInfo, &count, &objName);
     if (kr != KERN_SUCCESS) return NO;
     if (!(regionInfo.protection & VM_PROT_READ)) return NO;
 
-    mach_vm_address_t userAddr = (mach_vm_address_t)addr;
+    vm_address_t userAddr = (vm_address_t)addr;
     if (userAddr < regionAddr || userAddr >= regionAddr + regionSize) return NO;
 
     uint8_t header[2 * sizeof(void *)];
-    kr = vm_read_overwrite(mach_task_self(), (vm_address_t)addr, sizeof(header), (vm_address_t)header);
+    vm_size_t readOut = 0;
+    kr = vm_read_overwrite(mach_task_self(), (vm_address_t)addr, sizeof(header), (vm_address_t)header, &readOut);
     if (kr != KERN_SUCCESS) return NO;
 
     uintptr_t isa = *(uintptr_t *)header;
@@ -55,18 +56,19 @@ static BOOL WNObjCPointerPassesBasicSafetyChecks(uintptr_t addr) {
     if (clsGuess == 0) return NO;
     if (clsGuess % sizeof(void *) != 0) return NO;
 
-    mach_vm_address_t r2 = (mach_vm_address_t)clsGuess;
-    mach_vm_size_t sz2 = 0;
+    vm_address_t r2 = (vm_address_t)clsGuess;
+    vm_size_t sz2 = 0;
     vm_region_basic_info_data_64_t info2;
     count = VM_REGION_BASIC_INFO_COUNT_64;
     objName = MACH_PORT_NULL;
-    kr = mach_vm_region(mach_task_self(), &r2, &sz2, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info2, &count, &objName);
+    kr = vm_region_64(mach_task_self(), &r2, &sz2, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info2, &count, &objName);
     if (kr != KERN_SUCCESS) return NO;
     if (!(info2.protection & VM_PROT_READ)) return NO;
-    if ((mach_vm_address_t)clsGuess < r2 || (mach_vm_address_t)clsGuess >= r2 + sz2) return NO;
+    if ((vm_address_t)clsGuess < r2 || (vm_address_t)clsGuess >= r2 + sz2) return NO;
 
     uint8_t word[sizeof(void *)];
-    kr = vm_read_overwrite(mach_task_self(), (vm_address_t)clsGuess, sizeof(word), (vm_address_t)word);
+    readOut = 0;
+    kr = vm_read_overwrite(mach_task_self(), (vm_address_t)clsGuess, sizeof(word), (vm_address_t)word, &readOut);
     return (kr == KERN_SUCCESS);
 }
 

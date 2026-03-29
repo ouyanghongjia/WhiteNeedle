@@ -24,7 +24,8 @@
     "onCommand:whiteneedle.filterClasses",
     "onCommand:whiteneedle.traceMethod",
     "onCommand:whiteneedle.evaluate",
-    "onCommand:whiteneedle.listHooks"
+    "onCommand:whiteneedle.listHooks",
+    "onDebugResolve:whiteneedle"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -90,7 +91,7 @@
       },
       {
         "command": "whiteneedle.newScript",
-        "title": "New Frida Script",
+        "title": "New WhiteNeedle Script",
         "category": "WhiteNeedle"
       },
       {
@@ -194,27 +195,33 @@
               },
               "inspectorPort": {
                 "type": "number",
-                "description": "V8 Inspector port on the device",
-                "default": 9229
+                "description": "WhiteNeedle Inspector WebSocket 端口（设备上 /json 发现端点）",
+                "default": 9222
               },
               "script": {
                 "type": "string",
-                "description": "Path to the Frida script to debug",
+                "description": "Optional: script path for reference; load script on device via Push & Run before debugging",
                 "default": "${file}"
+              },
+              "useUSB": {
+                "type": "boolean",
+                "description": "通过 USB 隧道 (iproxy) 连接真机（需要 brew install libimobiledevice）",
+                "default": true
               }
             }
           }
         },
         "configurationSnippets": [
           {
-            "label": "WhiteNeedle: Debug Frida Script",
-            "description": "Debug a Frida JS script on a connected iOS device",
+            "label": "WhiteNeedle: Debug Script (Inspector)",
+            "description": "连接 WhiteNeedle Inspector（WebKit Inspector Protocol over WebSocket）",
             "body": {
               "type": "whiteneedle",
               "request": "launch",
               "name": "WhiteNeedle: Debug",
-              "host": "^\"\\${config:whiteneedle.deviceHost}\"",
-              "inspectorPort": 9229,
+              "host": "127.0.0.1",
+              "inspectorPort": 9222,
+              "useUSB": true,
               "script": "^\"\\${file}\""
             }
           }
@@ -229,15 +236,20 @@
           "default": true,
           "description": "Auto-reload script on save"
         },
-        "whiteneedle.fridaPort": {
+        "whiteneedle.enginePort": {
           "type": "number",
           "default": 27042,
-          "description": "Default Frida Gadget port"
+          "description": "WhiteNeedle TCP engine port on device (JSON-RPC; shown for reference when connecting by IP)"
+        },
+        "whiteneedle.inspectorPort": {
+          "type": "number",
+          "default": 9222,
+          "description": "WhiteNeedle Inspector 端口（设备上 HTTP /json 发现与 WebSocket 调试端口）"
         },
         "whiteneedle.deviceHost": {
           "type": "string",
           "default": "127.0.0.1",
-          "description": "Connected device IP (auto-set on connect)"
+          "description": "Device IP for Inspector/DAP (updated automatically when you connect in the Devices view)"
         }
       }
     }
@@ -246,7 +258,8 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "lint": "eslint src --ext ts"
+    "lint": "eslint src --ext ts",
+    "check-inspector": "node scripts/check-inspector.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

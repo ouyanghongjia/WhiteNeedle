@@ -7,14 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		D722E8F7DD1BB33A6FD3BEC1 /* libPods-WhiteNeedleExample.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 432F21108CC1507509D47C71 /* libPods-WhiteNeedleExample.a */; };
+		88178E71E9A79CE0487621FF /* libPods-WhiteNeedleExample.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 0E2A8719A0EF94B6235F8CC4 /* libPods-WhiteNeedleExample.a */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		432F21108CC1507509D47C71 /* libPods-WhiteNeedleExample.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-WhiteNeedleExample.a"; sourceTree = BUILT_PRODUCTS_DIR; };
+		0E2A8719A0EF94B6235F8CC4 /* libPods-WhiteNeedleExample.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-WhiteNeedleExample.a"; sourceTree = BUILT_PRODUCTS_DIR; };
+		1CDB3E96E34424E2103CE142 /* Pods-WhiteNeedleExample.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-WhiteNeedleExample.debug.xcconfig"; path = "Target Support Files/Pods-WhiteNeedleExample/Pods-WhiteNeedleExample.debug.xcconfig"; sourceTree = "<group>"; };
+		29390B36904AA22FE0D89240 /* Pods-WhiteNeedleExample.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-WhiteNeedleExample.release.xcconfig"; path = "Target Support Files/Pods-WhiteNeedleExample/Pods-WhiteNeedleExample.release.xcconfig"; sourceTree = "<group>"; };
 		6CDBE7032F76CDF6006DCC01 /* WhiteNeedleExample.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WhiteNeedleExample.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		9B390C1C35A01DE728032412 /* Pods-WhiteNeedleExample.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-WhiteNeedleExample.debug.xcconfig"; path = "Target Support Files/Pods-WhiteNeedleExample/Pods-WhiteNeedleExample.debug.xcconfig"; sourceTree = "<group>"; };
-		C64CC1ECFAF9B7007D4B9786 /* Pods-WhiteNeedleExample.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-WhiteNeedleExample.release.xcconfig"; path = "Target Support Files/Pods-WhiteNeedleExample/Pods-WhiteNeedleExample.release.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -43,20 +43,28 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				D722E8F7DD1BB33A6FD3BEC1 /* libPods-WhiteNeedleExample.a in Frameworks */,
+				88178E71E9A79CE0487621FF /* libPods-WhiteNeedleExample.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		089C32D32F8F52480CFC0C09 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				0E2A8719A0EF94B6235F8CC4 /* libPods-WhiteNeedleExample.a */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		6CDBE6FA2F76CDF6006DCC01 = {
 			isa = PBXGroup;
 			children = (
 				6CDBE7052F76CDF6006DCC01 /* WhiteNeedleExample */,
 				6CDBE7042F76CDF6006DCC01 /* Products */,
 				8CD52AACCF0F601DD1BC9756 /* Pods */,
-				C9E922205E4BB16BFC0D731F /* Frameworks */,
+				089C32D32F8F52480CFC0C09 /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -71,18 +79,10 @@
 		8CD52AACCF0F601DD1BC9756 /* Pods */ = {
 			isa = PBXGroup;
 			children = (
-				9B390C1C35A01DE728032412 /* Pods-WhiteNeedleExample.debug.xcconfig */,
-				C64CC1ECFAF9B7007D4B9786 /* Pods-WhiteNeedleExample.release.xcconfig */,
+				1CDB3E96E34424E2103CE142 /* Pods-WhiteNeedleExample.debug.xcconfig */,
+				29390B36904AA22FE0D89240 /* Pods-WhiteNeedleExample.release.xcconfig */,
 			);
 			path = Pods;
-			sourceTree = "<group>";
-		};
-		C9E922205E4BB16BFC0D731F /* Frameworks */ = {
-			isa = PBXGroup;
-			children = (
-				432F21108CC1507509D47C71 /* libPods-WhiteNeedleExample.a */,
-			);
-			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -92,11 +92,11 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 6CDBE71B2F76CDF7006DCC01 /* Build configuration list for PBXNativeTarget "WhiteNeedleExample" */;
 			buildPhases = (
-				0F088736395236E31CABC9DF /* [CP] Check Pods Manifest.lock */,
+				E67E64882B05C1EFAC8B2D6F /* [CP] Check Pods Manifest.lock */,
 				6CDBE6FF2F76CDF6006DCC01 /* Sources */,
 				6CDBE7002F76CDF6006DCC01 /* Frameworks */,
 				6CDBE7012F76CDF6006DCC01 /* Resources */,
-				DFBFF39399CDA7748582D359 /* [CP-User] Copy Sample Scripts */,
+				39DEEAA3F9914E20E8617141 /* [CP-User] Copy Sample Scripts */,
 			);
 			buildRules = (
 			);
@@ -154,7 +154,17 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		0F088736395236E31CABC9DF /* [CP] Check Pods Manifest.lock */ = {
+		39DEEAA3F9914E20E8617141 /* [CP-User] Copy Sample Scripts */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			name = "[CP-User] Copy Sample Scripts";
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "rsync -av --delete \"${SRCROOT}/../../sample-scripts/\" \"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/sample-scripts/\"";
+		};
+		E67E64882B05C1EFAC8B2D6F /* [CP] Check Pods Manifest.lock */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -176,16 +186,6 @@
 			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 			showEnvVarsInLog = 0;
 		};
-		DFBFF39399CDA7748582D359 /* [CP-User] Copy Sample Scripts */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			name = "[CP-User] Copy Sample Scripts";
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "rsync -av --delete \"${SRCROOT}/../../sample-scripts/\" \"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/sample-scripts/\"";
-		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -201,7 +201,7 @@
 /* Begin XCBuildConfiguration section */
 		6CDBE71C2F76CDF7006DCC01 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 9B390C1C35A01DE728032412 /* Pods-WhiteNeedleExample.debug.xcconfig */;
+			baseConfigurationReference = 1CDB3E96E34424E2103CE142 /* Pods-WhiteNeedleExample.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -232,7 +232,7 @@
 		};
 		6CDBE71D2F76CDF7006DCC01 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = C64CC1ECFAF9B7007D4B9786 /* Pods-WhiteNeedleExample.release.xcconfig */;
+			baseConfigurationReference = 29390B36904AA22FE0D89240 /* Pods-WhiteNeedleExample.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;

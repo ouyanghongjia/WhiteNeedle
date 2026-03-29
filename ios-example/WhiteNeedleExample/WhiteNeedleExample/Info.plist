@@ -2,6 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- iOS 14+: Bonjour publish requires declared service types, or publish fails (e.g. -72008). -->
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_whiteneedle._tcp</string>
+	</array>
+	<!-- iOS 14+: local network permission prompt for multicast/Bonjour. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>WhiteNeedle uses the local network so your Mac can discover this device and connect for remote scripting.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

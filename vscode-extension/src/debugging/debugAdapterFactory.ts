@@ -31,21 +31,36 @@ export class WhiteNeedleConfigurationProvider
         config: vscode.DebugConfiguration,
         _token?: vscode.CancellationToken
     ): vscode.ProviderResult<vscode.DebugConfiguration> {
+        const ws = vscode.workspace.getConfiguration('whiteneedle');
+
         if (!config.type && !config.request && !config.name) {
             const editor = vscode.window.activeTextEditor;
             if (editor && editor.document.languageId === 'javascript') {
                 config.type = 'whiteneedle';
-                config.name = 'WhiteNeedle: Debug Frida Script';
+                config.name = 'WhiteNeedle: Debug Script';
                 config.request = 'launch';
                 config.script = '${file}';
             }
         }
 
-        if (!config.host) {
-            config.host = '127.0.0.1';
+        if (config.host === undefined || config.host === null || String(config.host).trim() === '') {
+            config.host = ws.get<string>('deviceHost') || '127.0.0.1';
         }
-        if (!config.inspectorPort) {
-            config.inspectorPort = 9229;
+
+        const defaultInspector = ws.get<number>('inspectorPort') ?? 9222;
+        if (config.inspectorPort === undefined || config.inspectorPort === null || config.inspectorPort === '') {
+            config.inspectorPort = defaultInspector;
+        } else {
+            const n = Number(config.inspectorPort);
+            if (!Number.isFinite(n)) {
+                config.inspectorPort = defaultInspector;
+            } else {
+                config.inspectorPort = n;
+            }
+        }
+
+        if (config.useUSB === undefined) {
+            config.useUSB = true;
         }
 
         return config;
@@ -59,9 +74,10 @@ export class WhiteNeedleConfigurationProvider
             {
                 type: 'whiteneedle',
                 request: 'launch',
-                name: 'WhiteNeedle: Debug Frida Script',
-                host: '${config:whiteneedle.deviceHost}',
-                inspectorPort: 9229,
+                name: 'WhiteNeedle: Debug Script',
+                host: '127.0.0.1',
+                inspectorPort: 9222,
+                useUSB: true,
                 script: '${file}',
             },
         ];

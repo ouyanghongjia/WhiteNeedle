@@ -402,29 +402,5 @@ console.log('[Test5] Network monitor DISABLED (uncomment in test.js to enable)')
     console.log('[Test12] WhiteNeedle: v' + __wnVersion + ' (' + __wnEngine + ')');
 })();
 
-(function testGlobalVariables() {
-    ObjC.choose('UIApplication', {
-        onMatch: function(instance) {
-            console.log('[Test13] UIApplication:', instance);
-        },
-        onComplete: function() {
-            console.log('[Test13] UIApplication not found');
-        }
-    });
-
-
-    var WNMyClass = ObjC.define({
-        name: "WNMyClass",
-        super: "NSObject",
-        methods: {
-            "doWork": function(self, args) {
-                
-            }
-        }
-    });
-    
-    var obj = MyClass.invoke("new");
-})();
-
 console.log('\n✅ All test cases loaded! Check output above for results.');
 console.log('💡 Hook-based tests (4, 8) will produce output as you interact with the app.');

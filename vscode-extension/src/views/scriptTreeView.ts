@@ -78,7 +78,7 @@ export class ScriptTreeProvider implements vscode.TreeDataProvider<ScriptTreeIte
 
         if (jsFiles.length === 0) {
             items.push(new StatusItem(
-                'No .js files in workspace — create one or use Cmd+Shift+P → "New Frida Script"',
+                'No .js files in workspace — create one or use Cmd+Shift+P → "New WhiteNeedle Script"',
                 'info'
             ));
         } else {

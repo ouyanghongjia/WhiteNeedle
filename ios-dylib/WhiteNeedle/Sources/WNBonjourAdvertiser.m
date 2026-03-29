@@ -10,6 +10,10 @@ NSString *const kWNServiceType = @"_whiteneedle._tcp.";
 @implementation WNBonjourAdvertiser
 
 - (void)startWithPort:(NSInteger)port {
+    [self startWithPort:port inspectorPort:0];
+}
+
+- (void)startWithPort:(NSInteger)port inspectorPort:(NSInteger)inspectorPort {
     if (self.netService) {
         [self stop];
     }
@@ -24,7 +28,7 @@ NSString *const kWNServiceType = @"_whiteneedle._tcp.";
                                                       port:(int)port];
     self.netService.delegate = self;
 
-    NSDictionary *txtDict = @{
+    NSMutableDictionary *txtDict = [@{
         @"bundleId": bundleId,
         @"device": deviceName,
         @"systemVersion": [[UIDevice currentDevice] systemVersion],
@@ -32,14 +36,19 @@ NSString *const kWNServiceType = @"_whiteneedle._tcp.";
         @"wnVersion": @"2.0.0",
         @"enginePort": [@(port) stringValue],
         @"engineType": @"jscore",
-    };
+    } mutableCopy];
+
+    if (inspectorPort > 0) {
+        txtDict[@"inspectorPort"] = [@(inspectorPort) stringValue];
+    }
+
     NSData *txtData = [NSNetService dataFromTXTRecordDictionary:
                        [self encodeTXTDictionary:txtDict]];
     [self.netService setTXTRecordData:txtData];
     [self.netService publish];
 
     _isPublishing = YES;
-    NSLog(@"[WhiteNeedle] Bonjour: Publishing '%@' on port %ld", serviceName, (long)port);
+    NSLog(@"[WhiteNeedle] Bonjour: Publishing '%@' on port %ld (inspector: %ld)", serviceName, (long)port, (long)inspectorPort);
 }
 
 - (void)stop {

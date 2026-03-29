@@ -5,6 +5,10 @@ import { DeviceManager } from './device/deviceManager';
 import { ScriptRunner } from './scripting/scriptRunner';
 import { ObjCTreeProvider } from './views/objcTreeView';
 import { ScriptTreeProvider } from './views/scriptTreeView';
+import {
+    WhiteNeedleConfigurationProvider,
+    WhiteNeedleDebugAdapterFactory,
+} from './debugging/debugAdapterFactory';
 
 let discovery: DeviceDiscovery;
 let deviceManager: DeviceManager;
@@ -33,6 +37,22 @@ export function activate(context: vscode.ExtensionContext) {
     const objcTreeView = vscode.window.createTreeView('whiteneedle-objc', {
         treeDataProvider: objcTreeProvider,
     });
+
+    const debugFactory = new WhiteNeedleDebugAdapterFactory();
+    const debugConfigProvider = new WhiteNeedleConfigurationProvider();
+    context.subscriptions.push(
+        vscode.debug.registerDebugAdapterDescriptorFactory('whiteneedle', debugFactory),
+        vscode.debug.registerDebugConfigurationProvider(
+            'whiteneedle',
+            debugConfigProvider,
+            vscode.DebugConfigurationProviderTriggerKind.Initial
+        ),
+        vscode.debug.registerDebugConfigurationProvider(
+            'whiteneedle',
+            debugConfigProvider,
+            vscode.DebugConfigurationProviderTriggerKind.Dynamic
+        )
+    );
 
     const refreshAllViews = () => {
         deviceTreeProvider.refresh();
@@ -77,6 +97,7 @@ export function activate(context: vscode.ExtensionContext) {
                 wnVersion: 'unknown',
                 enginePort: port,
                 engineType: 'jscore',
+                inspectorPort: 9222,
             };
 
             try {

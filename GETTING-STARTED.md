@@ -1,6 +1,6 @@
 # WhiteNeedle 使用指南
 
-基于 Frida 的 iOS 远程调试工具，通过 VSCode 插件实现局域网设备发现、脚本推送、JS 断点调试和 ObjC 运行时检查。
+基于 **JavaScriptCore** 的 iOS 远程调试：通过 VS Code / Cursor 扩展实现局域网设备发现、脚本推送、（在 Inspector 可用时）JS 断点调试，以及 ObjC 运行时浏览。
 
 ## 环境要求
 
@@ -9,7 +9,7 @@
 | macOS | 12.0+ |
 | Node.js | 18.0+ |
 | Xcode Command Line Tools | 已安装 |
-| VSCode | 1.85+ |
+| VS Code / Cursor | 1.85+ |
 | iOS 设备 | 15.0+ |
 | 签名证书 | 开发者/企业证书 + Provisioning Profile |
 
@@ -50,100 +50,73 @@ chmod +x insert_dylib
 ios-deploy --bundle YourApp_whiteneedle.ipa
 ```
 
-### 4. 安装 VSCode 插件
+### 4. 安装 VS Code 扩展
 
 ```bash
 cd vscode-extension
 
-# 安装依赖
 npm install
-cd sidecar && npm install && cd ..
-
-# 编译
 npm run compile
 
-# 调试运行 (在 VSCode 中按 F5)
+# 在本仓库用 F5 调试扩展，或 vsce package 生成 .vsix 后安装
 ```
+
+更细的 **连接设备、launch.json、DAP 与 Inspector 端口说明** 见：[vscode-extension/DEBUGGING.md](vscode-extension/DEBUGGING.md)。
 
 ### 5. 连接设备
 
-1. 打开 VSCode 侧边栏的 **WhiteNeedle** 面板
-2. 在 **Devices** 列表中找到你的设备（确保 Mac 和 iPhone 在同一局域网）
-3. 点击设备名称或使用命令面板 `WhiteNeedle: Connect to Device`
+1. 打开侧边栏 **WhiteNeedle** 面板  
+2. 在 **Devices** 列表中选择设备（Mac 与 iPhone 同一局域网），或 **Connect by IP**，格式：`192.168.x.x:27042`  
+3. 连接成功后，扩展会将 **`whiteneedle.deviceHost`** 设为该 IP，便于调试配置使用
 
 ### 6. 推送脚本
 
-1. 打开或新建一个 `.js` 文件
-2. 编写 Frida 脚本（参考 `sample-scripts/` 目录）
-3. 按 `Cmd+Shift+R` 推送并运行
-4. 在 **Output** 面板查看 `WhiteNeedle` 通道的输出
+1. 打开或新建 `.js`  
+2. 编写脚本（可参考 `sample-scripts/`）  
+3. `Cmd+Shift+R` 推送并运行  
+4. 在 **Output → WhiteNeedle** 查看日志
 
-### 7. 断点调试
+### 7. 断点调试（DAP）
 
-1. 创建 `.vscode/launch.json`：
+1. 按 [DEBUGGING.md](vscode-extension/DEBUGGING.md) 配置 `.vscode/launch.json`  
+2. 确认 **`inspectorPort`** 上能访问 CDP 风格的 `/json`（常为 9229 或经 USB 转发后的本地端口）  
+3. 在脚本中设断点，F5 启动 **WhiteNeedle** 调试配置  
 
-```json
-{
-  "version": "0.2.0",
-  "configurations": [
-    {
-      "type": "whiteneedle",
-      "request": "launch",
-      "name": "Debug Frida Script",
-      "host": "192.168.1.xxx",
-      "inspectorPort": 9229,
-      "script": "${file}"
-    }
-  ]
-}
-```
-
-2. 在 JS 脚本中设置断点
-3. 按 F5 启动调试
-4. 支持：断点、单步执行、变量查看、Watch 表达式、调试控制台
+若无法连上 Inspector，可使用 **Safari → 开发** 连接设备上的 JSContext 进行调试。
 
 ### 8. ObjC 运行时浏览
 
-1. 连接设备后，在侧边栏打开 **ObjC Runtime** 面板
-2. 点击下载图标加载所有 ObjC 类
-3. 使用搜索图标过滤类名
-4. 展开类查看方法列表
-5. 右键方法 -> **Trace Method** 可实时追踪方法调用
+1. 连接设备后打开 **ObjC Runtime**  
+2. 加载类列表、过滤、展开方法  
+3. 右键方法 → **Trace Method** 可注入追踪脚本  
 
 ## 项目结构
 
 ```
 WhiteNeedle/
-├── ios-dylib/           # iOS 动态库源码
-│   ├── WhiteNeedle/     # WhiteNeedle.dylib 源码
-│   ├── Vendor/          # FridaGadget.dylib + config
-│   └── Makefile
-├── resign-tool/         # IPA 重签名工具
-│   ├── resign.sh        # 重签名脚本
-│   ├── insert_dylib.c   # Mach-O 注入工具
-│   └── payload/         # 预构建的 dylib 集合
-├── vscode-extension/    # VSCode 插件
-│   ├── src/             # TypeScript 源码
-│   │   ├── debugging/   # DAP 调试适配器 + CDP 客户端
-│   │   ├── device/      # 设备管理
-│   │   ├── discovery/   # Bonjour 设备发现
-│   │   ├── scripting/   # 脚本推送
-│   │   └── views/       # TreeView 视图
-│   ├── sidecar/         # frida-node 桥接进程
-│   └── frida-api/       # Frida API 类型定义 (IntelliSense)
-└── sample-scripts/      # 示例 Frida 脚本
+├── ios-dylib/           # iOS 动态库源码（JSC 引擎 + TCP 27042）
+├── resign-tool/         # IPA 重签名与注入
+├── vscode-extension/    # VS Code 扩展（Bonjour、推脚本、DAP）
+│   ├── src/
+│   │   ├── debugging/   # DAP + CDP 客户端
+│   │   ├── device/
+│   │   ├── discovery/
+│   │   ├── scripting/
+│   │   └── views/
+│   └── DEBUGGING.md     # 调试与端口说明
+└── sample-scripts/      # 示例脚本
 ```
 
 ## 常见问题
 
-**Q: 设备列表中看不到设备？**
-确保 Mac 和 iPhone 在同一 WiFi 网络下，且 App 已启动。
+**Q: 设备列表中看不到设备？**  
+确保同一 Wi-Fi，且 App 已启动（Bonjour 会广播 `_whiteneedle._tcp`）。自 iOS 14 起，宿主 App 的 **Info.plist** 必须包含 **`NSBonjourServices`**（含 `_whiteneedle._tcp`）和 **`NSLocalNetworkUsageDescription`**，否则系统会拒绝发布服务（日志里常见 **`NSNetServicesErrorCode = -72008`**），扩展侧永远扫不到设备。示例工程已配置；自建 IPA 请同样添加。首次运行须在 iPhone 上允许「本地网络」权限。Mac 端若仍扫不到，在 **系统设置 → 隐私与安全性 → 本地网络** 中为 **Cursor / VS Code** 开启权限。
 
-**Q: 重签名后安装失败？**
-检查 Provisioning Profile 是否包含目标设备的 UDID，证书是否有效。
+**Q: 重签名后安装失败？**  
+检查描述文件是否包含设备 UDID、证书是否有效。
 
-**Q: 脚本推送报错 "Not connected"？**
-先在设备列表中连接设备，确认状态为已连接。
+**Q: 脚本推送报错 "Not connected"？**  
+先在 Devices 中连接，端口为 **27042**（引擎端口）。
 
-**Q: 断点不生效？**
-确保使用 `debugger;` 语句或在 launch.json 中正确配置了 Inspector 端口。
+**Q: F5 调试立刻失败 / 连不上 CDP？**  
+引擎 **27042** 不等于 Inspector。请阅读 **DEBUGGING.md**，检查 `http://host:inspectorPort/json`，或使用 Safari 开发菜单调试同一 JSContext。

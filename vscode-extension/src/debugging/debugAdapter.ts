@@ -13,12 +13,15 @@ import {
 } from '@vscode/debugadapter';
 import { DebugProtocol } from '@vscode/debugprotocol';
 import { CDPClient } from './cdpClient';
+import { USBTunnel } from './usbTunnel';
 import * as path from 'path';
+import * as fs from 'fs';
 
 interface WhiteNeedleLaunchArgs extends DebugProtocol.LaunchRequestArguments {
     host: string;
     inspectorPort: number;
     script?: string;
+    useUSB?: boolean;
 }
 
 interface CDPBreakpoint {
@@ -32,16 +35,19 @@ interface CDPCallFrame {
     location: { scriptId: string; lineNumber: number; columnNumber: number };
     scopeChain: Array<{
         type: string;
-        object: { objectId: string };
+        object: { objectId: string; type?: string; className?: string; description?: string };
         name?: string;
+        empty?: boolean;
     }>;
-    this: { objectId?: string };
+    this: { type?: string; objectId?: string; className?: string; description?: string };
 }
 
 const THREAD_ID = 1;
 
 export class WhiteNeedleDebugSession extends DebugSession {
     private cdp: CDPClient | null = null;
+    private tunnel: USBTunnel | null = null;
+    private launchArgs: WhiteNeedleLaunchArgs | null = null;
     private scriptSources = new Map<string, { url: string; source?: string }>();
     private breakpoints = new Map<string, string[]>();
     private pausedFrames: CDPCallFrame[] = [];
@@ -79,23 +85,26 @@ export class WhiteNeedleDebugSession extends DebugSession {
         args: WhiteNeedleLaunchArgs
     ): Promise<void> {
         try {
+            this.launchArgs = args;
             this.cdp = new CDPClient();
 
             this.cdp.on('Debugger.scriptParsed', (params: any) => {
-                this.scriptSources.set(params.scriptId, {
-                    url: params.url || `script_${params.scriptId}`,
-                    source: undefined,
-                });
+                const url = params.url || params.sourceURL || `script_${params.scriptId}`;
+                this.scriptSources.set(params.scriptId, { url, source: undefined });
             });
 
             this.cdp.on('Debugger.paused', (params: any) => {
                 this.pausedFrames = params.callFrames || [];
+                this.variableHandles.clear();
+                this.nextVarHandle = 1000;
                 const reason = params.reason === 'other' ? 'breakpoint' : params.reason;
                 this.sendEvent(new StoppedEvent(reason, THREAD_ID));
             });
 
             this.cdp.on('Debugger.resumed', () => {
                 this.pausedFrames = [];
+                this.variableHandles.clear();
+                this.nextVarHandle = 1000;
             });
 
             this.cdp.on('Runtime.consoleAPICalled', (params: any) => {
@@ -112,27 +121,97 @@ export class WhiteNeedleDebugSession extends DebugSession {
             });
 
             this.cdp.on('close', () => {
+                this.cleanupTunnel();
                 this.sendEvent(new TerminatedEvent());
             });
 
-            await this.cdp.connect(args.host, args.inspectorPort);
+            const useUSB = args.useUSB !== false;
+            const isLocalhost =
+                args.host === '127.0.0.1' || args.host === 'localhost' || !args.host;
+            let connectHost = args.host || '127.0.0.1';
+            let rewriteWsHost: string | undefined;
+
+            if (useUSB && isLocalhost) {
+                this.sendEvent(
+                    new OutputEvent(
+                        '[WhiteNeedle] 启动 USB 隧道 (iproxy)...\n',
+                        'console'
+                    )
+                );
+                try {
+                    this.tunnel = new USBTunnel(args.inspectorPort, args.inspectorPort);
+                    await this.tunnel.start();
+                    connectHost = '127.0.0.1';
+                    rewriteWsHost = '127.0.0.1';
+                    this.sendEvent(
+                        new OutputEvent(
+                            `[WhiteNeedle] USB 隧道就绪: localhost:${args.inspectorPort}\n`,
+                            'console'
+                        )
+                    );
+                } catch (err: any) {
+                    this.sendEvent(
+                        new OutputEvent(
+                            `[WhiteNeedle] USB 隧道失败 (${err.message})，尝试直连...\n`,
+                            'console'
+                        )
+                    );
+                    this.tunnel = null;
+                }
+            }
+
+            await this.cdp.connect(connectHost, args.inspectorPort, rewriteWsHost);
             await this.cdp.send('Debugger.enable', {});
+            await this.cdp.send('Debugger.setBreakpointsActive', { active: true }).catch(() => {});
             await this.cdp.send('Runtime.enable', {});
+            await this.cdp.send('Console.enable', {}).catch(() => {});
 
             this.sendEvent(new InitializedEvent());
             this.sendResponse(response);
         } catch (err: any) {
+            this.cleanupTunnel();
             response.success = false;
             response.message = err.message;
             this.sendResponse(response);
         }
     }
 
-    protected configurationDoneRequest(
+    private cleanupTunnel(): void {
+        if (this.tunnel) {
+            this.tunnel.stop();
+            this.tunnel = null;
+        }
+    }
+
+    protected async configurationDoneRequest(
         response: DebugProtocol.ConfigurationDoneResponse,
         _args: DebugProtocol.ConfigurationDoneArguments
-    ): void {
+    ): Promise<void> {
         this.sendResponse(response);
+
+        const scriptPath = this.launchArgs?.script;
+        if (scriptPath && fs.existsSync(scriptPath)) {
+            try {
+                const scriptContent = fs.readFileSync(scriptPath, 'utf-8');
+                const wrappedScript = `${scriptContent}\n//# sourceURL=${scriptPath}`;
+                this.sendEvent(
+                    new OutputEvent(`[WhiteNeedle] Running: ${path.basename(scriptPath)}\n`, 'console')
+                );
+
+                // Use fire-and-forget for script evaluation.
+                // If JSC hits a breakpoint, Debugger.paused fires as an async
+                // event and the evaluate response arrives only after the script
+                // finishes — so we must NOT await it or set a timeout.
+                this.cdp!.sendFireAndForget('Runtime.evaluate', {
+                    expression: wrappedScript,
+                    generatePreview: true,
+                });
+            } catch (err: any) {
+                this.sendEvent(
+                    new OutputEvent(`[WhiteNeedle] Script error: ${err.message}\n`, 'stderr')
+                );
+            }
+        }
     }
 
     protected async setBreakPointsRequest(
@@ -179,7 +258,7 @@ export class WhiteNeedleDebugSession extends DebugSession {
 
     protected threadsRequest(response: DebugProtocol.ThreadsResponse): void {
         response.body = {
-            threads: [new Thread(THREAD_ID, 'Frida JS')],
+            threads: [new Thread(THREAD_ID, 'WhiteNeedle JS')],
         };
         this.sendResponse(response);
     }
@@ -212,6 +291,21 @@ export class WhiteNeedleDebugSession extends DebugSession {
         this.sendResponse(response);
     }
 
+    private static scopeLabel(scope: CDPCallFrame['scopeChain'][0]): string {
+        if (scope.name) return scope.name;
+        switch (scope.type) {
+            case 'local': return 'Local';
+            case 'closure': return 'Closure';
+            case 'global': return 'Global';
+            case 'with': return 'With Block';
+            case 'catch': return 'Catch';
+            case 'functionName': return 'Function Name';
+            case 'globalLexicalEnvironment': return 'Block';
+            case 'nestedLexical': return 'Block';
+            default: return scope.type;
+        }
+    }
+
     protected async scopesRequest(
         response: DebugProtocol.ScopesResponse,
         args: DebugProtocol.ScopesArguments
@@ -221,10 +315,19 @@ export class WhiteNeedleDebugSession extends DebugSession {
 
         if (frame) {
             for (const scope of frame.scopeChain) {
+                if (scope.empty) continue;
                 const handle = this.createVarHandle(scope.object.objectId);
-                const scopeName = scope.name || scope.type;
                 const expensive = scope.type === 'global';
-                scopes.push(new Scope(scopeName, handle, expensive));
+                scopes.push(new Scope(
+                    WhiteNeedleDebugSession.scopeLabel(scope),
+                    handle,
+                    expensive,
+                ));
+            }
+
+            if (frame.this?.objectId) {
+                const thisHandle = this.createVarHandle(frame.this.objectId);
+                scopes.push(new Scope('this', thisHandle, false));
             }
         }
 
@@ -243,62 +346,81 @@ export class WhiteNeedleDebugSession extends DebugSession {
             try {
                 const result: any = await this.cdp.send('Runtime.getProperties', {
                     objectId,
-                    ownProperties: true,
+                    ownProperties: false,
                     generatePreview: true,
                 });
 
-                for (const prop of (result.result || [])) {
+                const props: any[] = result.properties || result.result || [];
+
+                for (const prop of props) {
                     if (prop.name === '__proto__') continue;
+                    if (prop.isAccessor && !prop.value) continue;
 
                     const val = prop.value || {};
                     let varRef = 0;
-                    if (val.objectId && val.type === 'object') {
+                    if (val.objectId && (val.type === 'object' || val.subtype === 'array')) {
                         varRef = this.createVarHandle(val.objectId);
                     }
 
                     variables.push(new Variable(
                         prop.name,
                         this.formatValue(val),
-                        varRef
+                        varRef,
                     ));
                 }
-            } catch { /* ignore */ }
+
+                const internalProps: any[] = result.internalProperties || [];
+                for (const prop of internalProps) {
+                    const val = prop.value || {};
+                    let varRef = 0;
+                    if (val.objectId && (val.type === 'object' || val.subtype === 'array')) {
+                        varRef = this.createVarHandle(val.objectId);
+                    }
+                    variables.push(new Variable(
+                        `[[${prop.name}]]`,
+                        this.formatValue(val),
+                        varRef,
+                    ));
+                }
+            } catch (err: any) {
+                console.error('[WhiteNeedle] Runtime.getProperties failed:', err.message);
+            }
         }
 
         response.body = { variables };
         this.sendResponse(response);
     }
 
-    protected async continueRequest(
+    protected continueRequest(
         response: DebugProtocol.ContinueResponse,
         _args: DebugProtocol.ContinueArguments
-    ): Promise<void> {
-        await this.cdp?.send('Debugger.resume', {});
+    ): void {
+        this.cdp?.sendFireAndForget('Debugger.resume', {});
         response.body = { allThreadsContinued: true };
         this.sendResponse(response);
     }
 
-    protected async nextRequest(
+    protected nextRequest(
         response: DebugProtocol.NextResponse,
         _args: DebugProtocol.NextArguments
-    ): Promise<void> {
-        await this.cdp?.send('Debugger.stepOver', {});
+    ): void {
+        this.cdp?.sendFireAndForget('Debugger.stepOver', {});
         this.sendResponse(response);
     }
 
-    protected async stepInRequest(
+    protected stepInRequest(
         response: DebugProtocol.StepInResponse,
         _args: DebugProtocol.StepInArguments
-    ): Promise<void> {
-        await this.cdp?.send('Debugger.stepInto', {});
+    ): void {
+        this.cdp?.sendFireAndForget('Debugger.stepInto', {});
         this.sendResponse(response);
     }
 
-    protected async stepOutRequest(
+    protected stepOutRequest(
         response: DebugProtocol.StepOutResponse,
         _args: DebugProtocol.StepOutArguments
-    ): Promise<void> {
-        await this.cdp?.send('Debugger.stepOut', {});
+    ): void {
+        this.cdp?.sendFireAndForget('Debugger.stepOut', {});
         this.sendResponse(response);
     }
 
@@ -326,9 +448,17 @@ export class WhiteNeedleDebugSession extends DebugSession {
                 });
             }
 
+            if (result.wasThrown) {
+                const errVal = result.result || {};
+                response.success = false;
+                response.message = errVal.description || errVal.value || 'Evaluation error';
+                this.sendResponse(response);
+                return;
+            }
+
             const val = result.result || {};
             let varRef = 0;
-            if (val.objectId && val.type === 'object') {
+            if (val.objectId && (val.type === 'object' || val.subtype === 'array')) {
                 varRef = this.createVarHandle(val.objectId);
             }
 
@@ -349,6 +479,7 @@ export class WhiteNeedleDebugSession extends DebugSession {
         _args: DebugProtocol.TerminateArguments
     ): Promise<void> {
         this.cdp?.disconnect();
+        this.cleanupTunnel();
         this.sendResponse(response);
     }
 
@@ -357,6 +488,7 @@ export class WhiteNeedleDebugSession extends DebugSession {
         _args: DebugProtocol.DisconnectArguments
     ): void {
         this.cdp?.disconnect();
+        this.cleanupTunnel();
         this.sendResponse(response);
     }
 
@@ -377,11 +509,49 @@ export class WhiteNeedleDebugSession extends DebugSession {
     }
 
     private formatValue(val: any): string {
+        if (!val) return 'undefined';
         if (val.type === 'undefined') return 'undefined';
         if (val.type === 'string') return `"${val.value}"`;
+        if (val.type === 'boolean' || val.type === 'number') return String(val.value);
+        if (val.subtype === 'null') return 'null';
+
+        if (val.type === 'symbol') return val.description || 'Symbol()';
+        if (val.type === 'bigint') return `${val.description || val.value}n`;
+        if (val.type === 'function') {
+            return val.description?.split('\n')[0] || 'function()';
+        }
+
+        if (val.type === 'object') {
+            if (val.preview) return this.formatPreview(val.preview, val.className);
+            if (val.description) return val.description;
+            if (val.className) return val.className;
+            return 'Object';
+        }
+
         if (val.value !== undefined) return String(val.value);
         if (val.description) return val.description;
-        if (val.className) return `[${val.className}]`;
         return val.type || 'unknown';
+    }
+
+    private formatPreview(preview: any, fallbackClass?: string): string {
+        if (!preview || !preview.properties) {
+            return preview?.description || fallbackClass || 'Object';
+        }
+
+        const isArray = preview.subtype === 'array';
+        const entries = (preview.properties as any[]).map((p: any) => {
+            const v = p.type === 'string' ? `"${p.value}"` : (p.value ?? p.subtype ?? p.type);
+            return isArray ? String(v) : `${p.name}: ${v}`;
+        });
+
+        if (preview.overflow) entries.push('…');
+
+        if (isArray) {
+            const len = preview.description?.match(/\d+/)?.[0];
+            return `Array(${len ?? entries.length}) [${entries.join(', ')}]`;
+        }
+
+        const cls = preview.description || fallbackClass || 'Object';
+        return `${cls} {${entries.join(', ')}}`;
     }
 }

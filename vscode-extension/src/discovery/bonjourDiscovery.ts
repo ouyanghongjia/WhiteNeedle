@@ -14,6 +14,7 @@ export interface WNDevice {
     wnVersion: string;
     enginePort: number;
     engineType: string;
+    inspectorPort: number;
     raw?: Service;
 }
 
@@ -74,6 +75,7 @@ export class DeviceDiscovery extends EventEmitter {
         if (!host) { return null; }
 
         const enginePort = parseInt(this.decodeTxt(txt['enginePort']) || String(service.port), 10);
+        const inspectorPort = parseInt(this.decodeTxt(txt['inspectorPort']) || '9222', 10);
 
         return {
             name: service.name,
@@ -86,6 +88,7 @@ export class DeviceDiscovery extends EventEmitter {
             wnVersion: this.decodeTxt(txt['wnVersion']) || 'unknown',
             enginePort,
             engineType: this.decodeTxt(txt['engineType']) || 'jscore',
+            inspectorPort,
             raw: service,
         };
     }

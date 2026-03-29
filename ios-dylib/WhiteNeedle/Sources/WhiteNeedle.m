@@ -3,10 +3,24 @@
 #import "WNJSEngine.h"
 #import "WNRemoteServer.h"
 #import "WNBonjourAdvertiser.h"
+#import "Inspector/WNInspectorServer.h"
+
+/*
+ * Static linker + CocoaPods: `-ObjC` only pulls .o files from libWhiteNeedle.a that define an
+ * Objective-C class or category. This file had only a `static` constructor → the whole
+ * WhiteNeedle.o could be omitted, so `WhiteNeedleInit` never ran. A tiny @implementation
+ * forces the unit to link. (Injected .dylib loads the whole image; constructor still runs.)
+ */
+@interface WNWhiteNeedleEntry : NSObject
+@end
+@implementation WNWhiteNeedleEntry
+@end
 
 static WNBonjourAdvertiser *g_advertiser = nil;
 static WNRemoteServer *g_remoteServer = nil;
+static WNInspectorServer *g_inspectorServer = nil;
 static const NSInteger kDefaultEnginePort = 27042;
+static const NSInteger kDefaultInspectorPort = 9222;
 
 __attribute__((constructor))
 static void WhiteNeedleInit(void) {
@@ -34,9 +48,16 @@ static void WhiteNeedleInit(void) {
                                                                port:(uint16_t)kDefaultEnginePort];
             [g_remoteServer start];
 
+            /* Start Inspector WebSocket server for VS Code F5 debugging */
+            JSContext *ctx = [WNJSEngine sharedEngine].context;
+            g_inspectorServer = [[WNInspectorServer alloc] initWithContext:ctx
+                                                                     port:(uint16_t)kDefaultInspectorPort];
+            [g_inspectorServer start];
+
             g_advertiser = [[WNBonjourAdvertiser alloc] init];
-            [g_advertiser startWithPort:kDefaultEnginePort];
+            [g_advertiser startWithPort:kDefaultEnginePort inspectorPort:kDefaultInspectorPort];
             NSLog(@"[WhiteNeedle] Ready for remote debugging on port %ld", (long)kDefaultEnginePort);
+            NSLog(@"[WhiteNeedle] Inspector server on port %ld — connect with: chrome://inspect or VS Code", (long)kDefaultInspectorPort);
         });
     }
 }

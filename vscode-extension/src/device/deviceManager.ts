@@ -37,7 +37,14 @@ export class DeviceManager {
 
         await this.bridge.connect(device.host, device.enginePort);
         this.connectedDevice = device;
-        this.outputChannel.appendLine('[DeviceManager] Connected');
+        const cfg = vscode.workspace.getConfiguration('whiteneedle');
+        await cfg.update('deviceHost', device.host, vscode.ConfigurationTarget.Global);
+        if (device.inspectorPort > 0) {
+            await cfg.update('inspectorPort', device.inspectorPort, vscode.ConfigurationTarget.Global);
+        }
+        this.outputChannel.appendLine(
+            `[DeviceManager] Connected (engine=${device.enginePort}, inspector=${device.inspectorPort})`
+        );
     }
 
     async disconnect(): Promise<void> {
