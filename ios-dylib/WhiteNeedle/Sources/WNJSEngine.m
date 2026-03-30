@@ -183,6 +183,12 @@ static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
     if ([value isString]) return [value toString];
 
     if ([value isObject]) {
+        JSValue *toStringFn = value[@"toString"];
+        if (toStringFn && [toStringFn isObject] && ![[toStringFn toString] isEqualToString:@"function toString() { [native code] }"]) {
+            JSValue *str = [toStringFn callWithArguments:@[]];
+            if (str && ![str isUndefined]) return [str toString];
+        }
+
         JSValue *jsonFn = [self.context evaluateScript:@"(function(o){try{return JSON.stringify(o,null,2)}catch(e){return String(o)}})"];
         JSValue *result = [jsonFn callWithArguments:@[value]];
         return [result toString];
@@ -271,6 +277,86 @@ static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
     JSValue *rpcObj = [JSValue valueWithNewObjectInContext:self.context];
     rpcObj[@"exports"] = [JSValue valueWithNewObjectInContext:self.context];
     self.context[@"rpc"] = rpcObj;
+
+    [self registerDispatchAPI];
+}
+
+#pragma mark - Dispatch API (main thread scheduling)
+
+- (void)registerDispatchAPI {
+    JSValue *dispatchObj = [JSValue valueWithNewObjectInContext:self.context];
+
+    // dispatch.main(fn) — synchronous: block until fn completes on main thread, return result
+    dispatchObj[@"main"] = ^JSValue *(JSValue *fn) {
+        if (!fn || [fn isUndefined] || [fn isNull]) {
+            return [JSValue valueWithUndefinedInContext:[JSContext currentContext]];
+        }
+
+        JSContext *ctx = [JSContext currentContext];
+
+        if ([NSThread isMainThread]) {
+            return [fn callWithArguments:@[]];
+        }
+
+        __block JSValue *result = nil;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            result = [fn callWithArguments:@[]];
+        });
+        return result ?: [JSValue valueWithUndefinedInContext:ctx];
+    };
+
+    // dispatch.mainAsync(fn) — asynchronous: schedule fn on main thread, return immediately
+    __weak typeof(self) weakSelf = self;
+    dispatchObj[@"mainAsync"] = ^(JSValue *fn) {
+        if (!fn || [fn isUndefined] || [fn isNull]) return;
+
+        JSManagedValue *managed = [JSManagedValue managedValueWithValue:fn];
+        WNJSEngine *engine = weakSelf;
+        if (!engine) return;
+        [engine.context.virtualMachine addManagedReference:managed withOwner:engine];
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            WNJSEngine *eng = weakSelf;
+            JSValue *callback = managed.value;
+            if (callback && ![callback isUndefined]) {
+                [callback callWithArguments:@[]];
+            }
+            if (eng) {
+                [eng.context.virtualMachine removeManagedReference:managed withOwner:eng];
+            }
+        });
+    };
+
+    // dispatch.after(delayMs, fn) — schedule fn on main thread after delay
+    dispatchObj[@"after"] = ^(JSValue *delayMs, JSValue *fn) {
+        if (!fn || [fn isUndefined] || [fn isNull]) return;
+        double ms = [delayMs toDouble];
+        if (ms < 0) ms = 0;
+
+        JSManagedValue *managed = [JSManagedValue managedValueWithValue:fn];
+        WNJSEngine *engine = weakSelf;
+        if (!engine) return;
+        [engine.context.virtualMachine addManagedReference:managed withOwner:engine];
+
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(ms * NSEC_PER_MSEC)),
+                       dispatch_get_main_queue(), ^{
+            WNJSEngine *eng = weakSelf;
+            JSValue *callback = managed.value;
+            if (callback && ![callback isUndefined]) {
+                [callback callWithArguments:@[]];
+            }
+            if (eng) {
+                [eng.context.virtualMachine removeManagedReference:managed withOwner:eng];
+            }
+        });
+    };
+
+    // dispatch.isMainThread() — check if currently on main thread
+    dispatchObj[@"isMainThread"] = ^BOOL {
+        return [NSThread isMainThread];
+    };
+
+    self.context[@"dispatch"] = dispatchObj;
 }
 
 #pragma mark - Exception handler

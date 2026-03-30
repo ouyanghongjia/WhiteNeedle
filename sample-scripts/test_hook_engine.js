@@ -36,56 +36,60 @@
         console.log("Interceptor.list after attach: PASS");
     }
 
-    // 4. Interceptor.attach — hook 带参数的方法
-    try {
-        Interceptor.attach("-[UIView setFrame:]", {
-            onEnter: function (self, sel, args) {
-                console.log("HOOK setFrame: called on", self);
-            }
-        });
-        console.log("Interceptor.attach (setFrame:): PASS");
-    } catch (e) {
-        console.error("Interceptor.attach (setFrame:): FAIL —", e.message || e);
-    }
+    // // 4. Interceptor.attach — hook 带参数的方法（过滤只看感兴趣的类）
+    // try {
+    //     var setFrameCount = 0;
+    //     Interceptor.attach("-[UIView setFrame:]", {
+    //         onEnter: function (self, sel, args) {
+    //             var cls = self.className();
+    //             if (cls.indexOf("_UI") === 0) return; // 跳过 UIKit 私有类
+    //             setFrameCount++;
+    //             console.log("HOOK setFrame: #" + setFrameCount, self, "args:", args);
+    //         }
+    //     });
+    //     console.log("Interceptor.attach (setFrame:): PASS");
+    // } catch (e) {
+    //     console.error("Interceptor.attach (setFrame:): FAIL —", e.message || e);
+    // }
 
-    // 5. Interceptor.detach — 移除单个 hook
-    try {
-        Interceptor.detach("-[UIView setFrame:]");
-        console.log("Interceptor.detach (setFrame:): PASS");
-    } catch (e) {
-        console.error("Interceptor.detach: FAIL —", e.message || e);
-    }
+    // // 5. Interceptor.detach — 移除单个 hook
+    // try {
+    //     Interceptor.detach("-[UIView setFrame:]");
+    //     console.log("Interceptor.detach (setFrame:): PASS");
+    // } catch (e) {
+    //     console.error("Interceptor.detach: FAIL —", e.message || e);
+    // }
 
-    // 6. Interceptor.replace — 替换系统类方法
-    // 使用一个已知存在的方法进行测试
-    try {
-        Interceptor.replace("-[NSObject description]", function (self, args) {
-            return "replaced description";
-        });
-        console.log("Interceptor.replace (NSObject description): installed");
+    // // 6. Interceptor.replace — 替换系统类方法
+    // // 使用一个已知存在的方法进行测试
+    // try {
+    //     Interceptor.replace("-[NSObject description]", function (self, args) {
+    //         return "replaced description";
+    //     });
+    //     console.log("Interceptor.replace (NSObject description): installed");
 
-        // 验证
-        var hooksWithReplace = Interceptor.list();
-        console.log("hooks after replace:", hooksWithReplace);
-        if (hooksWithReplace && hooksWithReplace.length >= 1) {
-            console.log("Interceptor.replace: PASS — hook is active");
-        }
-    } catch (e) {
-        console.warn("Interceptor.replace: skipped —", e.message || e);
-    }
+    //     // 验证
+    //     var hooksWithReplace = Interceptor.list();
+    //     console.log("hooks after replace:", hooksWithReplace);
+    //     if (hooksWithReplace && hooksWithReplace.length >= 1) {
+    //         console.log("Interceptor.replace: PASS — hook is active");
+    //     }
+    // } catch (e) {
+    //     console.warn("Interceptor.replace: skipped —", e.message || e);
+    // }
 
-    // 7. Interceptor.detachAll — 移除所有 hook
-    try {
-        Interceptor.detachAll();
-        console.log("Interceptor.detachAll: PASS");
-        var hooksAfterDetachAll = Interceptor.list();
-        console.log("hooks after detachAll:", hooksAfterDetachAll);
-        if (!hooksAfterDetachAll || hooksAfterDetachAll.length === 0) {
-            console.log("Interceptor.detachAll cleanup: PASS");
-        }
-    } catch (e) {
-        console.error("Interceptor.detachAll: FAIL —", e.message || e);
-    }
+    // // 7. Interceptor.detachAll — 移除所有 hook
+    // try {
+    //     Interceptor.detachAll();
+    //     console.log("Interceptor.detachAll: PASS");
+    //     var hooksAfterDetachAll = Interceptor.list();
+    //     console.log("hooks after detachAll:", hooksAfterDetachAll);
+    //     if (!hooksAfterDetachAll || hooksAfterDetachAll.length === 0) {
+    //         console.log("Interceptor.detachAll cleanup: PASS");
+    //     }
+    // } catch (e) {
+    //     console.error("Interceptor.detachAll: FAIL —", e.message || e);
+    // }
 
     console.log("=== test_hook_engine.js END ===");
 })();

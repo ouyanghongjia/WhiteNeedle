@@ -241,6 +241,104 @@ console.log(cached);
 
 ---
 
+## dispatch — 线程调度
+
+提供主线程调度能力。在 JS 脚本中访问 UIKit 对象（获取 view、设置颜色、修改 frame 等）时，必须在 App 的主线程上执行。`dispatch` 命名空间提供了同步和异步两种调度方式。
+
+### dispatch.main(fn)
+
+在主线程上**同步**执行函数，阻塞当前执行直到完成，返回函数的返回值。如果已在主线程则直接执行（不会死锁）。
+
+- **fn** `function` — 要在主线程执行的函数
+- **返回** — fn 的返回值
+
+```javascript
+// 同步获取 key window（需要主线程）
+var window = dispatch.main(function() {
+    var UIApp = ObjC.use("UIApplication");
+    var app = UIApp.invoke("sharedApplication");
+    var keyWindow = app.invoke("keyWindow");
+    return keyWindow;
+});
+console.log("Key Window:", window);
+```
+
+### dispatch.mainAsync(fn)
+
+在主线程上**异步**执行函数，立即返回不等待完成。适用于只需要修改 UI 而不需要返回值的场景。
+
+- **fn** `function` — 要在主线程执行的函数
+
+```javascript
+// 异步修改视图颜色（不需要返回值）
+dispatch.mainAsync(function() {
+    var UIColor = ObjC.use("UIColor");
+    var red = UIColor.invoke("redColor");
+    someView.invoke("setBackgroundColor:", [red]);
+});
+```
+
+### dispatch.after(delayMs, fn)
+
+延迟指定毫秒后在主线程上执行函数。
+
+- **delayMs** `number` — 延迟时间（毫秒）
+- **fn** `function` — 要执行的函数
+
+```javascript
+// 1秒后在主线程执行
+dispatch.after(1000, function() {
+    console.log("1秒后的主线程操作");
+    var alert = ObjC.use("UIAlertController").invoke(
+        "alertControllerWithTitle:message:preferredStyle:",
+        ["提示", "Hello from WhiteNeedle!", 1]
+    );
+    // ...
+});
+```
+
+### dispatch.isMainThread()
+
+检查当前代码是否运行在主线程上。
+
+- **返回** `boolean`
+
+```javascript
+if (dispatch.isMainThread()) {
+    console.log("当前在主线程");
+} else {
+    console.log("当前不在主线程");
+}
+```
+
+### 使用场景示例
+
+```javascript
+// 在 hook 回调中安全地操作 UI
+Interceptor.attach("-[MyViewController viewDidAppear:]", {
+    onEnter: function(self, sel, args) {
+        // hook 回调可能不在主线程，用 dispatch.mainAsync 保证安全
+        dispatch.mainAsync(function() {
+            var UIColor = ObjC.use("UIColor");
+            var color = UIColor.invoke("colorWithRed:green:blue:alpha:", [0.2, 0.6, 1.0, 1.0]);
+            self.invoke("view").invoke("setBackgroundColor:", [color]);
+        });
+    }
+});
+
+// 同步获取 ViewController 栈
+var vcStack = dispatch.main(function() {
+    var UIApp = ObjC.use("UIApplication");
+    var app = UIApp.invoke("sharedApplication");
+    var window = app.invoke("keyWindow");
+    var rootVC = window.invoke("rootViewController");
+    return rootVC.className();
+});
+console.log("Root VC:", vcStack);
+```
+
+---
+
 ## Debug — 调试工具
 
 提供程序化调试辅助功能，配合 Safari Web Inspector 使用效果最佳。

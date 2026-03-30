@@ -150,8 +150,11 @@ static NSString *const kCellID = @"ScriptCell";
 }
 
 - (void)clearConsole {
-    [self.consoleLog setString:@""];
-    self.consoleView.text = @"";
+//    [self.consoleLog setString:@""];
+//    self.consoleView.text = @"";
+    ViewController *vc = [ViewController new];
+    vc.title = @"测试";
+    [self presentViewController:vc animated:YES completion:nil];
 }
 
 - (void)runScriptFile:(NSString *)fileName {

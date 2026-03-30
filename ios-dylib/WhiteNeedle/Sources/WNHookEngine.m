@@ -48,6 +48,7 @@ static NSString *const kLogPrefix = @"[WhiteNeedle:Hook]";
 static NSMutableDictionary<NSString *, WNHookEntry *> *g_hooks = nil;
 static NSMutableDictionary<NSString *, WNClassHookState *> *g_classStates = nil;
 static JSContext *g_hookContext = nil;
+static NSMutableSet<NSString *> *g_reentrancyGuard = nil;
 
 @implementation WNHookEngine
 
@@ -56,6 +57,7 @@ static JSContext *g_hookContext = nil;
     dispatch_once(&onceToken, ^{
         g_hooks = [NSMutableDictionary dictionary];
         g_classStates = [NSMutableDictionary dictionary];
+        g_reentrancyGuard = [NSMutableSet set];
     });
 }
 
@@ -346,9 +348,28 @@ static JSContext *g_hookContext = nil;
 + (void)handleHookedInvocation:(NSInvocation *)invocation
                           entry:(WNHookEntry *)entry
                          target:(id)target {
+    NSString *guardKey = entry.selectorKey;
+    BOOL isReentrant = [g_reentrancyGuard containsObject:guardKey];
+
+    if (isReentrant) {
+        // Reentrant call — skip JS callbacks, just call the original
+        [invocation setSelector:entry.aliasSelector];
+        [invocation invoke];
+        [invocation setSelector:entry.originalSelector];
+        return;
+    }
+
+    [g_reentrancyGuard addObject:guardKey];
+
     NSMethodSignature *sig = entry.methodSignature;
     JSContext *ctx = g_hookContext;
-    if (!ctx) return;
+    if (!ctx) {
+        [g_reentrancyGuard removeObject:guardKey];
+        [invocation setSelector:entry.aliasSelector];
+        [invocation invoke];
+        [invocation setSelector:entry.originalSelector];
+        return;
+    }
 
     // Extract all arguments (skip index 0=self, 1=_cmd)
     NSMutableArray<JSValue *> *jsArgs = [NSMutableArray array];
@@ -377,6 +398,7 @@ static JSContext *g_hookContext = nil;
                 [WNTypeConversion setInvocationReturnValue:invocation fromJSValue:result inContext:ctx];
             }
         }
+        [g_reentrancyGuard removeObject:guardKey];
         return;
     }
 
@@ -417,6 +439,8 @@ static JSContext *g_hookContext = nil;
             [WNTypeConversion setInvocationReturnValue:invocation fromJSValue:newRetval inContext:ctx];
         }
     }
+
+    [g_reentrancyGuard removeObject:guardKey];
 }
 
 #pragma mark - Detach

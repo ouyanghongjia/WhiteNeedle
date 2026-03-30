@@ -419,6 +419,38 @@ declare function $block(fn: (...args: any[]) => any, typeEncoding: string): Boxe
  */
 declare function $callBlock(block: BoxedBlock, typeEncoding: string, ...args: any[]): any;
 
+// ─── dispatch（线程调度）─────────────────────────────────────────
+
+declare namespace dispatch {
+    /**
+     * 在主线程上同步执行函数（阻塞当前线程直到完成）。
+     * 如果已在主线程则直接执行，不会死锁。
+     * 适用于需要立即获取 UIKit 返回值的场景。
+     * @param fn 要在主线程执行的函数
+     * @returns fn 的返回值
+     */
+    function main<T>(fn: () => T): T;
+
+    /**
+     * 在主线程上异步执行函数（立即返回，不等待完成）。
+     * 适用于修改 UI 但不需要返回值的场景。
+     * @param fn 要在主线程执行的函数
+     */
+    function mainAsync(fn: () => void): void;
+
+    /**
+     * 延迟指定毫秒后在主线程上执行函数
+     * @param delayMs 延迟时间（毫秒）
+     * @param fn 要执行的函数
+     */
+    function after(delayMs: number, fn: () => void): void;
+
+    /**
+     * 检查当前是否在主线程上
+     */
+    function isMainThread(): boolean;
+}
+
 // ─── Debug（调试工具）────────────────────────────────────────────
 
 declare namespace Debug {

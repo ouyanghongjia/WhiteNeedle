@@ -224,6 +224,23 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
         if (!super_) return [JSValue valueWithNullInContext:[JSContext currentContext]];
         return [JSValue valueWithObject:NSStringFromClass(super_) inContext:[JSContext currentContext]];
     };
+
+    jsProxy[@"toString"] = ^NSString *{
+        WNObjCProxy *p = weakProxy;
+        if (!p || !p.target) return @"<WNProxy: nil>";
+        if (p.isClassProxy) {
+            return [NSString stringWithFormat:@"<WNProxy: Class %@>", NSStringFromClass(p.targetClass)];
+        }
+        return [NSString stringWithFormat:@"<%@: %p>", NSStringFromClass(p.targetClass), p.target];
+    };
+
+    jsProxy[@"toJSON"] = ^NSDictionary *{
+        WNObjCProxy *p = weakProxy;
+        if (!p || !p.target) return @{@"$type": @"ObjCProxy", @"class": @"nil"};
+        NSString *cls = NSStringFromClass(p.targetClass);
+        NSString *addr = [NSString stringWithFormat:@"%p", p.target];
+        return @{@"$type": @"ObjCProxy", @"class": cls, @"address": addr};
+    };
 }
 
 #pragma mark - NSInvocation dynamic dispatch
