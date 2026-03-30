@@ -5,6 +5,9 @@ import { DeviceManager } from './device/deviceManager';
 import { ScriptRunner } from './scripting/scriptRunner';
 import { ObjCTreeProvider } from './views/objcTreeView';
 import { ScriptTreeProvider } from './views/scriptTreeView';
+import { CookieTreeProvider } from './views/cookieTreeView';
+import { UserDefaultsTreeProvider } from './views/userDefaultsTreeView';
+import { FileSystemTreeProvider } from './views/fileSystemTreeView';
 import {
     WhiteNeedleConfigurationProvider,
     WhiteNeedleDebugAdapterFactory,
@@ -38,6 +41,21 @@ export function activate(context: vscode.ExtensionContext) {
         treeDataProvider: objcTreeProvider,
     });
 
+    const cookieTreeProvider = new CookieTreeProvider(deviceManager);
+    const cookieTreeView = vscode.window.createTreeView('whiteneedle-cookies', {
+        treeDataProvider: cookieTreeProvider,
+    });
+
+    const udTreeProvider = new UserDefaultsTreeProvider(deviceManager);
+    const udTreeView = vscode.window.createTreeView('whiteneedle-userdefaults', {
+        treeDataProvider: udTreeProvider,
+    });
+
+    const fsTreeProvider = new FileSystemTreeProvider(deviceManager);
+    const fsTreeView = vscode.window.createTreeView('whiteneedle-filesystem', {
+        treeDataProvider: fsTreeProvider,
+    });
+
     const debugFactory = new WhiteNeedleDebugAdapterFactory();
     const debugConfigProvider = new WhiteNeedleConfigurationProvider();
     context.subscriptions.push(
@@ -63,6 +81,9 @@ export function activate(context: vscode.ExtensionContext) {
         deviceTreeView,
         scriptTreeView,
         objcTreeView,
+        cookieTreeView,
+        udTreeView,
+        fsTreeView,
         outputChannel,
 
         vscode.commands.registerCommand('whiteneedle.refreshDevices', () => {
@@ -305,6 +326,52 @@ console.log('[WhiteNeedle] Tracing: ${hookKey}');
             } catch (err: any) {
                 vscode.window.showErrorMessage(`Failed: ${err.message}`);
             }
+        }),
+
+        vscode.commands.registerCommand('whiteneedle.loadCookies', () => {
+            cookieTreeProvider.loadCookies();
+        }),
+        vscode.commands.registerCommand('whiteneedle.filterCookies', async () => {
+            const input = await vscode.window.showInputBox({
+                prompt: 'Filter cookies by domain (e.g., .example.com)',
+                placeHolder: '.example.com',
+            });
+            if (input !== undefined) {
+                cookieTreeProvider.loadCookies(input || undefined);
+            }
+        }),
+        vscode.commands.registerCommand('whiteneedle.deleteCookie', (item: any) => {
+            cookieTreeProvider.deleteCookie(item);
+        }),
+
+        vscode.commands.registerCommand('whiteneedle.loadUserDefaults', () => {
+            udTreeProvider.loadSuites();
+        }),
+        vscode.commands.registerCommand('whiteneedle.editUserDefault', (item: any) => {
+            udTreeProvider.editValue(item);
+        }),
+        vscode.commands.registerCommand('whiteneedle.deleteUserDefault', (item: any) => {
+            udTreeProvider.deleteKey(item);
+        }),
+
+        vscode.commands.registerCommand('whiteneedle.browseSandbox', () => {
+            fsTreeProvider.loadRoot();
+        }),
+        vscode.commands.registerCommand('whiteneedle.refreshSandbox', () => {
+            fsTreeProvider.refresh();
+            fsTreeProvider.loadRoot();
+        }),
+        vscode.commands.registerCommand('whiteneedle.openSandboxFile', (item: any) => {
+            fsTreeProvider.readFile(item);
+        }),
+        vscode.commands.registerCommand('whiteneedle.downloadSandboxFile', (item: any) => {
+            fsTreeProvider.downloadFile(item);
+        }),
+        vscode.commands.registerCommand('whiteneedle.downloadSandboxFolder', (item: any) => {
+            fsTreeProvider.downloadFolder(item);
+        }),
+        vscode.commands.registerCommand('whiteneedle.deleteSandboxEntry', (item: any) => {
+            fsTreeProvider.deleteEntry(item);
         }),
     );
 

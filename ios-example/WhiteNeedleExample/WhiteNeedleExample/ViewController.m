@@ -28,6 +28,15 @@ static NSString *const kCellID = @"ScriptCell";
     self.view.backgroundColor = UIColor.systemBackgroundColor;
     self.consoleLog = [NSMutableString string];
 
+    [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"boolTest"];
+    [[NSUserDefaults standardUserDefaults] setObject:@"this is a string object" forKey:@"stringTest"];
+    [[NSUserDefaults standardUserDefaults] setDouble:10.3 forKey:@"doubleTest"];
+    
+    NSUserDefaults *userDefaults = [[NSUserDefaults alloc] initWithSuiteName:@"yun"];
+    [userDefaults setBool:YES forKey:@"boolTest_suite"];
+    [userDefaults setObject:@"this is a string object" forKey:@"stringTest_suite"];
+    [userDefaults setDouble:10.3 forKey:@"doubleTest_suite"];
+    
     [self setupEngine];
     [self loadScriptList];
     [self buildUI];
