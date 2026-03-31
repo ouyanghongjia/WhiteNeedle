@@ -28,6 +28,10 @@
     "onCommand:whiteneedle.openObjC",
     "onCommand:whiteneedle.openNetwork",
     "onCommand:whiteneedle.openViewHierarchy",
+    "onCommand:whiteneedle.openHostMapping",
+    "onCommand:whiteneedle.startProxy",
+    "onCommand:whiteneedle.stopProxy",
+    "onCommand:whiteneedle.toggleProxy",
     "onDebugResolve:whiteneedle"
   ],
   "main": "./out/extension.js",
@@ -152,6 +156,29 @@
         "title": "View Hierarchy Inspector",
         "icon": "$(layers)",
         "category": "WhiteNeedle"
+      },
+      {
+        "command": "whiteneedle.openHostMapping",
+        "title": "Host Mapping (SwitchHosts)",
+        "icon": "$(arrow-swap)",
+        "category": "WhiteNeedle"
+      },
+      {
+        "command": "whiteneedle.startProxy",
+        "title": "Start Proxy Server",
+        "icon": "$(radio-tower)",
+        "category": "WhiteNeedle"
+      },
+      {
+        "command": "whiteneedle.stopProxy",
+        "title": "Stop Proxy Server",
+        "icon": "$(circle-slash)",
+        "category": "WhiteNeedle"
+      },
+      {
+        "command": "whiteneedle.toggleProxy",
+        "title": "Toggle Proxy Server",
+        "category": "WhiteNeedle"
       }
     ],
     "menus": {
@@ -214,6 +241,18 @@
         {
           "command": "whiteneedle.openViewHierarchy",
           "group": "wn_live@2"
+        },
+        {
+          "command": "whiteneedle.openHostMapping",
+          "group": "wn_live@3"
+        },
+        {
+          "command": "whiteneedle.startProxy",
+          "group": "wn_proxy@1"
+        },
+        {
+          "command": "whiteneedle.stopProxy",
+          "group": "wn_proxy@2"
         }
       ],
       "editor/title": [
@@ -313,6 +352,16 @@
           "type": "string",
           "default": "127.0.0.1",
           "description": "Device IP for Inspector/DAP (updated automatically when you connect in the Devices view)"
+        },
+        "whiteneedle.autoConnect": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto-connect to the last device when the extension restarts and the device is found via Bonjour or direct TCP probe"
+        },
+        "whiteneedle.proxyPort": {
+          "type": "number",
+          "default": 8899,
+          "description": "HTTP/HTTPS proxy port for host mapping. Set your iOS device's HTTP proxy to this Mac's IP and this port."
         }
       }
     }

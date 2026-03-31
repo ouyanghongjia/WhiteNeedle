@@ -23,6 +23,7 @@ static const NSUInteger kMaxCapturedRequests = 500;
 @property (nonatomic, assign) int64_t responseSize;
 @property (nonatomic, copy, nullable) NSString *errorMessage;
 @property (nonatomic, copy, nullable) NSString *mimeType;
+@property (nonatomic, copy) NSString *source;
 @end
 
 @implementation WNCapturedRequest
@@ -39,6 +40,7 @@ static const NSUInteger kMaxCapturedRequests = 500;
     d[@"mimeType"]   = self.mimeType ?: @"";
     d[@"error"]      = self.errorMessage ?: [NSNull null];
     d[@"completed"]  = @(self.endTime > 0);
+    d[@"source"]     = self.source ?: @"NSURLSession";
     return d;
 }
 
@@ -73,6 +75,7 @@ static const NSUInteger kMaxCapturedRequests = 500;
 
 static IMP g_originalDataTaskWithRequestCompletion = NULL;
 static IMP g_originalDataTaskWithURLCompletion = NULL;
+static IMP g_originalConnectionSendSync = NULL;
 
 @implementation WNNetworkMonitor
 
@@ -138,6 +141,59 @@ static IMP g_originalDataTaskWithURLCompletion = NULL;
         method_setImplementation(m2, newIMP2);
         NSLog(@"%@ Hooked dataTaskWithURL:completionHandler:", kLogPrefix);
     }
+
+    // Hook NSURLConnection +sendSynchronousRequest:returningResponse:error: (legacy API)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    Class connCls = [NSURLConnection class];
+    SEL selConn = @selector(sendSynchronousRequest:returningResponse:error:);
+    Method mConn = class_getClassMethod(connCls, selConn);
+    if (mConn) {
+        g_originalConnectionSendSync = method_getImplementation(mConn);
+        IMP newConnIMP = imp_implementationWithBlock(^NSData *(id _self, NSURLRequest *request, NSURLResponse **response, NSError **error) {
+            if (!self.capturing) {
+                typedef NSData *(*OrigFn)(id, SEL, NSURLRequest *, NSURLResponse **, NSError **);
+                return ((OrigFn)g_originalConnectionSendSync)(_self, selConn, request, response, error);
+            }
+
+            WNCapturedRequest *captured = [WNCapturedRequest new];
+            captured.requestId = [NSString stringWithFormat:@"req_%lu", (unsigned long)self.nextId++];
+            captured.method = request.HTTPMethod ?: @"GET";
+            captured.url = request.URL.absoluteString ?: @"";
+            captured.host = request.URL.host ?: @"";
+            captured.requestHeaders = request.allHTTPHeaderFields ?: @{};
+            captured.requestBody = request.HTTPBody;
+            captured.startTime = [[NSDate date] timeIntervalSince1970];
+            captured.source = @"NSURLConnection";
+
+            @synchronized(self.requests) {
+                [self.requests addObject:captured];
+                if (self.requests.count > kMaxCapturedRequests) {
+                    [self.requests removeObjectAtIndex:0];
+                }
+            }
+            [self.server broadcastNotification:@"networkRequest" params:[captured summaryDict]];
+
+            typedef NSData *(*OrigFn)(id, SEL, NSURLRequest *, NSURLResponse **, NSError **);
+            NSData *data = ((OrigFn)g_originalConnectionSendSync)(_self, selConn, request, response, error);
+
+            captured.endTime = [[NSDate date] timeIntervalSince1970];
+            captured.responseBody = data;
+            captured.responseSize = data.length;
+            if (error && *error) captured.errorMessage = (*error).localizedDescription;
+            if (response && *response && [*response isKindOfClass:[NSHTTPURLResponse class]]) {
+                NSHTTPURLResponse *http = (NSHTTPURLResponse *)*response;
+                captured.statusCode = http.statusCode;
+                captured.responseHeaders = http.allHeaderFields;
+                captured.mimeType = http.MIMEType;
+            }
+            [self.server broadcastNotification:@"networkResponse" params:[captured summaryDict]];
+            return data;
+        });
+        method_setImplementation(mConn, newConnIMP);
+        NSLog(@"%@ Hooked NSURLConnection +sendSynchronousRequest:returningResponse:error:", kLogPrefix);
+    }
+#pragma clang diagnostic pop
 }
 
 - (NSURLSessionDataTask *)interceptSession:(NSURLSession *)session
@@ -159,6 +215,7 @@ static IMP g_originalDataTaskWithURLCompletion = NULL;
     captured.requestHeaders = request.allHTTPHeaderFields ?: @{};
     captured.requestBody = request.HTTPBody;
     captured.startTime = [[NSDate date] timeIntervalSince1970];
+    captured.source = @"NSURLSession";
 
     @synchronized(self.requests) {
         [self.requests addObject:captured];

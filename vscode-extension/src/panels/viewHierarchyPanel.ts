@@ -171,6 +171,12 @@ body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size
 .tree-info { opacity: 0.7; margin-left: 6px; font-size: 11px; }
 .tree-hidden { opacity: 0.35; }
 .tree-children { padding-left: 16px; }
+.detail-header { display: flex; align-items: center; justify-content: space-between; padding: 0 0 8px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.detail-header .dh-title { flex: 1; min-width: 0; }
+.detail-header .dh-title h3 { font-size: 13px; color: var(--accent); }
+.detail-header .dh-title span { font-size: 11px; opacity: 0.5; }
+.detail-close { background: none; border: none; color: var(--fg); font-size: 18px; cursor: pointer; padding: 2px 6px; border-radius: 3px; opacity: 0.7; flex-shrink: 0; }
+.detail-close:hover { opacity: 1; background: var(--hover); }
 .detail-section { margin-bottom: 12px; }
 .detail-section h3 { font-size: 13px; margin-bottom: 4px; color: var(--accent); }
 .prop-grid { display: grid; grid-template-columns: 130px 1fr 24px; gap: 2px 6px; font-size: 12px; align-items: center; }
@@ -318,6 +324,11 @@ body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size
         });
 
         row.addEventListener('click', () => {
+            if (selectedAddr === node.address) {
+                closeDetail();
+                vscode.postMessage({command:'clearHighlight'});
+                return;
+            }
             selectedAddr = node.address;
             document.querySelectorAll('.tree-row.selected').forEach(r => r.classList.remove('selected'));
             row.classList.add('selected');
@@ -336,11 +347,19 @@ body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size
         ).join('') + '</div>';
     }
 
+    function closeDetail() {
+        selectedAddr = null;
+        var pane = document.getElementById('detailPane');
+        pane.classList.remove('open');
+        pane.innerHTML = '';
+        document.querySelectorAll('.tree-row.selected').forEach(function(r) { r.classList.remove('selected'); });
+    }
+
     function renderDetail(d) {
         const pane = document.getElementById('detailPane');
         if (!d) { pane.classList.remove('open'); return; }
         pane.classList.add('open');
-        let html = '<div class="detail-section"><h3>' + esc(d.class) + '</h3><span style="font-size:11px;opacity:0.5">' + esc(d.address) + '</span></div>';
+        let html = '<div class="detail-header"><div class="dh-title"><h3>' + esc(d.class) + '</h3><span>' + esc(d.address) + '</span></div><button class="detail-close" id="btnCloseVHDetail" title="Close detail panel">✕</button></div>';
         html += '<div class="detail-section"><h3>Properties</h3><div class="prop-grid">';
         const keys = Object.keys(d).filter(k => k !== 'class' && k !== 'address');
         for (const k of keys) {
@@ -360,6 +379,8 @@ body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size
                 vscode.postMessage({ command: 'requestSetProperty', address: d.address, key: btn.dataset.key, currentValue: btn.dataset.val });
             });
         });
+        var closeBtn = document.getElementById('btnCloseVHDetail');
+        if (closeBtn) { closeBtn.addEventListener('click', function() { closeDetail(); }); }
     }
 
     function renderSearchResults(views) {

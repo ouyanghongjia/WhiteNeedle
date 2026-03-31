@@ -1,7 +1,7 @@
 # WhiteNeedle 演进路线图
 
 > 基于当前能力现状，从深度 iOS 调试用户视角出发的功能规划。
-> 最后更新：2026-03-30
+> 最后更新：2026-03-31
 
 ---
 
@@ -16,30 +16,45 @@
 | 文件系统 | 浏览 / 读取 / 写入 / 删除 / 下载（含文件夹递归） |
 | 调试器 | 断点、单步、变量查看（WebKit Inspector Protocol） |
 | 主线程调度 | `dispatch.main()` / `dispatch.mainAsync()` / `dispatch.after()` |
-| VS Code 集成 | Bonjour 发现、手动 IP 连接、侧边栏 TreeView × 6、脚本编辑器 |
+| 网络监控 | NSURLSession / NSURLConnection / knet(curl) 请求捕获、应用级 Host 映射（SwitchHosts 风格） |
+| VS Code 集成 | Bonjour 发现、手动 IP 连接、侧边栏 TreeView × 6、脚本编辑器、网络面板、Host 映射面板 |
 
 ---
 
 ## 一、高价值新能力
 
-### 1.1 网络请求监控 `[P0]`
+### 1.1 网络请求监控 `[P0]` ✅ 已实现
 
-**痛点**：目前依赖 Charles / Proxyman 等外部代理工具，配置繁琐、无法查看 App 内部视角（如被 SSL Pinning 保护的请求），且需要在 IDE 外频繁切换窗口。
+**已实现功能**：
 
-**方案**：
+- [x] 实时请求列表（URL、Method、Status Code、耗时、大小、来源标识）
+- [x] 请求详情面板（Request Headers / Body / Response Headers / Body）
+- [x] 按域名、状态码、关键词过滤
+- [x] NSURLSession hook（`dataTaskWithRequest:` / `dataTaskWithURL:`）
+- [x] NSURLConnection hook（`+sendSynchronousRequest:returningResponse:error:`）
+- [x] knet/curl 监控（通过 fishhook 拦截 `curl_easy_perform`，符号不可用时降级）
+- [x] **应用级 Host 映射**（SwitchHosts 风格，替代 Mac 端 SwitchHosts + Charles 方案）
+  - DNS 级别拦截（hook `getaddrinfo`），对 NSURLSession / NSURLConnection / curl 统一生效
+  - 多分组管理、优先级控制（后启用的组优先）
+  - SwitchHosts `swh_data.json` 导入 / `/etc/hosts` 文本导入导出
+  - 数据持久化到 `Library/WhiteNeedle/host_mappings.json`
+  - VS Code Webview 管理面板
+  - 网络面板中 DNS 重写请求标记（显示原始域名 + 解析 IP + 命中分组）
+  - JSContext 脚本 API（`HostMapping` 命名空间）
+- [x] HTTPS 透明支持（DNS 层重定向保留原始 Host header 和 SNI，无需额外证书）
 
-- **iOS 侧**：新增 `WNNetworkBridge`，hook `NSURLSession` 的 `dataTaskWithRequest:completionHandler:` 等关键方法，捕获请求/响应元数据
-- **传输**：通过现有 TCP JSON-RPC 通道以 notification 推送 `networkRequest` 和 `networkResponse` 事件
-- **VS Code 侧**：新增 Webview 面板展示请求列表
+**已知限制**：
 
-**功能清单**：
+- WKWebView 使用独立进程进行网络请求，`getaddrinfo` hook 仅对主进程生效，Phase 2 计划通过 `NSURLProtocol` + 私有 API 支持
+- knet/curl 监控依赖 `curl_easy_perform` 符号可见性；若 libcurl 被静态链接且符号被 strip，仅能降级为 DNS 级 host 映射（请求仍正确路由，但不会出现在网络面板中）
 
-- [ ] 实时请求列表（URL、Method、Status Code、耗时、大小）
-- [ ] 请求详情面板（Request Headers / Body / Response Headers / Body）
-- [ ] 按域名、状态码、关键词过滤
+**后续计划**：
+
 - [ ] 请求时间线可视化
 - [ ] cURL 命令导出（方便复现）
 - [ ] Response Mock（拦截并修改返回数据）
+- [ ] WKWebView 请求捕获（Phase 2）
+- [ ] **SwitchHosts JSON 导入修复** — 当前 SwitchHosts v3/v4 导出文件解析存在兼容性问题（v4 将 host 列表元数据和内容分离存储在 potdb 中，`type` 字段可能为数字或字符串，根节点结构因版本而异），按钮暂时隐藏。需要获取真实 SwitchHosts 导出文件样本进行适配测试后重新启用。用户可通过 "Import Text" 以 `/etc/hosts` 文本格式手动导入。
 
 ---
 
@@ -206,7 +221,7 @@
 
 | 优先级 | 功能 | 价值 | 预估工作量 |
 |--------|------|------|-----------|
-| **P0** | 网络请求监控 | 替代 Charles/Proxyman，几乎每次调试必用 | 大 |
+| **P0** | ~~网络请求监控~~ ✅ | 替代 Charles/Proxyman + SwitchHosts，已实现 | — |
 | **P0** | 视图层级检查器 | 替代 Reveal，UI 调试核心工具 | 大 |
 | **P1** | 结构化日志系统 | 解决当前最大体验痛点 | 中 |
 | **P1** | Hook 管理面板 | 让 Hook 操作从写代码变为点按钮 | 中 |
@@ -229,7 +244,7 @@
 - 沙盒文件上传
 
 ### v0.3 — 核心调试工具
-- 网络请求监控
+- ~~网络请求监控~~ ✅ 已完成（含应用级 Host 映射、knet/curl 监控）
 - 视图层级检查器
 
 ### v0.4 — 数据调试套件

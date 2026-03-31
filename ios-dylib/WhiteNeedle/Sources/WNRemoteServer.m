@@ -5,6 +5,7 @@
 #import "WNNativeBridge.h"
 #import "WNNetworkMonitor.h"
 #import "WNUIDebugBridge.h"
+#import "WNMockInterceptor.h"
 #import <sys/socket.h>
 #import <netinet/in.h>
 #import <arpa/inet.h>
@@ -426,6 +427,52 @@ static void WNSocketCallback(CFSocketRef socket, CFSocketCallBackType type,
     if ([method isEqualToString:@"getScreenshot"]) {
         NSString *b64 = [WNUIDebugBridge screenshotBase64];
         return @{@"base64": b64 ?: [NSNull null]};
+    }
+
+    // --- Mock Interceptor ---
+
+    if ([method isEqualToString:@"listMockRules"]) {
+        return @{@"rules": [[WNMockInterceptor shared] allRules]};
+    }
+
+    if ([method isEqualToString:@"addMockRule"]) {
+        WNMockRule *rule = [WNMockRule ruleFromDictionary:params];
+        [[WNMockInterceptor shared] addRule:rule];
+        return [rule toDictionary];
+    }
+
+    if ([method isEqualToString:@"updateMockRule"]) {
+        NSString *ruleId = params[@"ruleId"];
+        if (!ruleId) return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Missing ruleId"}];
+        [[WNMockInterceptor shared] updateRule:ruleId withDict:params];
+        return @{@"success": @YES};
+    }
+
+    if ([method isEqualToString:@"removeMockRule"]) {
+        NSString *ruleId = params[@"ruleId"];
+        if (!ruleId) return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Missing ruleId"}];
+        [[WNMockInterceptor shared] removeRule:ruleId];
+        return @{@"success": @YES};
+    }
+
+    if ([method isEqualToString:@"removeAllMockRules"]) {
+        [[WNMockInterceptor shared] removeAllRules];
+        return @{@"success": @YES};
+    }
+
+    if ([method isEqualToString:@"enableMockInterceptor"]) {
+        [[WNMockInterceptor shared] install];
+        return @{@"success": @YES, @"installed": @YES};
+    }
+
+    if ([method isEqualToString:@"disableMockInterceptor"]) {
+        [[WNMockInterceptor shared] uninstall];
+        return @{@"success": @YES, @"installed": @NO};
+    }
+
+    if ([method isEqualToString:@"getMockInterceptorStatus"]) {
+        return @{@"installed": @([WNMockInterceptor shared].installed),
+                 @"ruleCount": @([WNMockInterceptor shared].allRules.count)};
     }
 
     return [NSError errorWithDomain:@"WN" code:-32601

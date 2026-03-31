@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as net from 'net';
 import { DeviceDiscovery, WNDevice } from './discovery/bonjourDiscovery';
 import { DeviceTreeProvider } from './views/deviceTreeView';
 import { DeviceManager, ConnectionState } from './device/deviceManager';
@@ -12,6 +13,8 @@ import { LogPanel, LogCategory, LogLevel } from './panels/logPanel';
 import { HookPanel } from './panels/hookPanel';
 import { NetworkPanel } from './panels/networkPanel';
 import { ViewHierarchyPanel } from './panels/viewHierarchyPanel';
+import { HostMappingPanel } from './panels/hostMappingPanel';
+import { ProxyServer } from './proxy/proxyServer';
 import {
     WhiteNeedleConfigurationProvider,
     WhiteNeedleDebugAdapterFactory,
@@ -20,8 +23,11 @@ import {
 let discovery: DeviceDiscovery;
 let deviceManager: DeviceManager;
 let scriptRunner: ScriptRunner;
+let proxyServer: ProxyServer;
 let outputChannel: vscode.OutputChannel;
 let statusBarItem: vscode.StatusBarItem;
+let proxyStatusBarItem: vscode.StatusBarItem;
+let extensionContext: vscode.ExtensionContext;
 
 function appendLog(category: LogCategory, level: LogLevel, message: string, source?: string): void {
     outputChannel.appendLine(`[${category}:${level}] ${message}`);
@@ -29,6 +35,7 @@ function appendLog(category: LogCategory, level: LogLevel, message: string, sour
 }
 
 export function activate(context: vscode.ExtensionContext) {
+    extensionContext = context;
     outputChannel = vscode.window.createOutputChannel('WhiteNeedle');
     outputChannel.appendLine('[WhiteNeedle] Extension activated');
 
@@ -36,19 +43,45 @@ export function activate(context: vscode.ExtensionContext) {
     scriptRunner = new ScriptRunner(deviceManager, outputChannel);
     discovery = new DeviceDiscovery();
 
+    // --- Proxy Server ---
+    proxyServer = new ProxyServer();
+    proxyServer.on('log', (msg: string) => {
+        outputChannel.appendLine(`[Proxy] ${msg}`);
+    });
+    proxyServer.on('error', (err: Error) => {
+        outputChannel.appendLine(`[Proxy] Error: ${err.message}`);
+    });
+    proxyServer.on('started', (port: number) => {
+        outputChannel.appendLine(`[Proxy] Started on port ${port}`);
+        updateProxyStatusBar();
+    });
+    proxyServer.on('stopped', () => {
+        outputChannel.appendLine('[Proxy] Stopped');
+        updateProxyStatusBar();
+    });
+
     // --- Status Bar ---
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     statusBarItem.command = 'whiteneedle.statusBarAction';
     updateStatusBar('disconnected');
     statusBarItem.show();
 
+    proxyStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
+    proxyStatusBarItem.command = 'whiteneedle.toggleProxy';
+    updateProxyStatusBar();
+    proxyStatusBarItem.show();
+
     deviceManager.on('stateChanged', (state: ConnectionState) => {
         updateStatusBar(state);
+        if (state === 'connected') {
+            syncProxyRules();
+        }
     });
 
     deviceManager.on('reconnected', (device: WNDevice) => {
         attachBridgeListeners();
         refreshAllViews();
+        syncProxyRules();
         appendLog('System', 'log', `Reconnected to ${device.deviceName || device.host}`);
         vscode.window.showInformationMessage(
             `WhiteNeedle: Reconnected to ${device.deviceName || device.host}`
@@ -379,6 +412,49 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('whiteneedle.openViewHierarchy', () => {
             ViewHierarchyPanel.createOrShow(context.extensionUri, deviceManager);
         }),
+
+        vscode.commands.registerCommand('whiteneedle.openHostMapping', () => {
+            HostMappingPanel.createOrShow(context.extensionUri, context.globalState, proxyServer);
+        }),
+
+        // --- Proxy commands ---
+        vscode.commands.registerCommand('whiteneedle.startProxy', async () => {
+            if (proxyServer.running) {
+                vscode.window.showInformationMessage(`WhiteNeedle Proxy already running on port ${proxyServer.port}`);
+                return;
+            }
+            const cfg = vscode.workspace.getConfiguration('whiteneedle');
+            const port = cfg.get<number>('proxyPort', 8899);
+            try {
+                const actualPort = await proxyServer.start(port);
+                vscode.window.showInformationMessage(
+                    `WhiteNeedle Proxy started on port ${actualPort}. Set your device HTTP proxy to this Mac's IP:${actualPort}`
+                );
+                syncProxyRules();
+            } catch (err: any) {
+                vscode.window.showErrorMessage(`Proxy start failed: ${err.message}`);
+            }
+        }),
+
+        vscode.commands.registerCommand('whiteneedle.stopProxy', () => {
+            proxyServer.stop();
+            vscode.window.showInformationMessage('WhiteNeedle Proxy stopped');
+        }),
+
+        vscode.commands.registerCommand('whiteneedle.toggleProxy', async () => {
+            if (proxyServer.running) {
+                proxyServer.stop();
+            } else {
+                const cfg = vscode.workspace.getConfiguration('whiteneedle');
+                const port = cfg.get<number>('proxyPort', 8899);
+                try {
+                    await proxyServer.start(port);
+                    syncProxyRules();
+                } catch (err: any) {
+                    vscode.window.showErrorMessage(`Proxy start failed: ${err.message}`);
+                }
+            }
+        }),
     );
 
     context.subscriptions.push(
@@ -398,14 +474,62 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
+    discovery.on('deviceFound', async (device: WNDevice) => {
+        if (deviceManager.isConnected) { return; }
+        const cfg = vscode.workspace.getConfiguration('whiteneedle');
+        const autoConnect = cfg.get<boolean>('autoConnect', true);
+        if (!autoConnect) { return; }
+
+        const lastHost = cfg.get<string>('deviceHost');
+        if (lastHost && device.host === lastHost) {
+            outputChannel.appendLine(
+                `[WhiteNeedle] Auto-reconnecting to previously connected device: ${device.deviceName} (${device.host}:${device.enginePort})`
+            );
+            try {
+                await deviceManager.connect(device);
+                attachBridgeListeners();
+                refreshAllViews();
+                vscode.window.showInformationMessage(
+                    `WhiteNeedle: Auto-connected to ${device.deviceName || device.host}`
+                );
+            } catch (err: any) {
+                outputChannel.appendLine(`[WhiteNeedle] Auto-connect failed: ${err.message}`);
+            }
+        }
+    });
+
     discovery.start();
     outputChannel.appendLine('[WhiteNeedle] Scanning for devices on LAN...');
     outputChannel.show();
+
+    scheduleLastDeviceFallback(context, attachBridgeListeners, refreshAllViews);
 }
 
 export function deactivate() {
+    proxyServer?.stop();
     discovery?.stop();
     deviceManager?.disconnect();
+}
+
+function updateProxyStatusBar(): void {
+    if (proxyServer.running) {
+        proxyStatusBarItem.text = `$(radio-tower) Proxy:${proxyServer.port}`;
+        proxyStatusBarItem.tooltip = `WhiteNeedle Proxy running on port ${proxyServer.port}\nClick to stop`;
+        proxyStatusBarItem.backgroundColor = undefined;
+    } else {
+        proxyStatusBarItem.text = '$(circle-slash) Proxy: Off';
+        proxyStatusBarItem.tooltip = 'WhiteNeedle Proxy is not running\nClick to start';
+        proxyStatusBarItem.backgroundColor = undefined;
+    }
+}
+
+function syncProxyRules(): void {
+    if (!proxyServer.running) {
+        return;
+    }
+    const effective = HostMappingPanel.getEffectiveRules(extensionContext.globalState);
+    proxyServer.updateRules(effective);
+    outputChannel.appendLine(`[Proxy] Synced ${effective.length} host mapping rules`);
 }
 
 function updateStatusBar(state: ConnectionState): void {
@@ -435,6 +559,82 @@ function updateStatusBar(state: ConnectionState): void {
             statusBarItem.backgroundColor = undefined;
             break;
     }
+}
+
+/**
+ * If Bonjour discovery doesn't find the device within a few seconds,
+ * attempt a direct TCP probe to the last-known host:port as fallback.
+ */
+function scheduleLastDeviceFallback(
+    context: vscode.ExtensionContext,
+    attachBridgeListeners: () => void,
+    refreshAllViews: () => void,
+): void {
+    const cfg = vscode.workspace.getConfiguration('whiteneedle');
+    const lastHost = cfg.get<string>('deviceHost');
+    const autoConnect = cfg.get<boolean>('autoConnect', true);
+    if (!lastHost || !autoConnect) { return; }
+
+    const fallbackDelay = 6000;
+    const timer = setTimeout(async () => {
+        if (deviceManager.isConnected) { return; }
+        if (discovery.getDevices().length > 0) { return; }
+
+        const port = 27042;
+        outputChannel.appendLine(
+            `[WhiteNeedle] Bonjour timeout — probing last device at ${lastHost}:${port}...`
+        );
+
+        const reachable = await tcpProbe(lastHost, port, 3000);
+        if (!reachable) {
+            outputChannel.appendLine(`[WhiteNeedle] Last device ${lastHost}:${port} not reachable.`);
+            return;
+        }
+        if (deviceManager.isConnected) { return; }
+
+        const fallbackDevice: WNDevice = {
+            name: `Fallback (${lastHost})`,
+            host: lastHost,
+            port,
+            bundleId: 'unknown',
+            deviceName: lastHost,
+            systemVersion: 'unknown',
+            model: 'unknown',
+            wnVersion: 'unknown',
+            enginePort: port,
+            engineType: 'jscore',
+            inspectorPort: cfg.get<number>('inspectorPort', 9222),
+        };
+
+        try {
+            await deviceManager.connect(fallbackDevice);
+            attachBridgeListeners();
+            refreshAllViews();
+            outputChannel.appendLine(`[WhiteNeedle] Fallback auto-connected to ${lastHost}:${port}`);
+            vscode.window.showInformationMessage(
+                `WhiteNeedle: Auto-connected to ${lastHost} (Bonjour unavailable, used direct TCP)`
+            );
+        } catch (err: any) {
+            outputChannel.appendLine(`[WhiteNeedle] Fallback connection failed: ${err.message}`);
+        }
+    }, fallbackDelay);
+
+    context.subscriptions.push({ dispose: () => clearTimeout(timer) });
+}
+
+function tcpProbe(host: string, port: number, timeoutMs: number): Promise<boolean> {
+    return new Promise((resolve) => {
+        const socket = new net.Socket();
+        const onDone = (ok: boolean) => {
+            socket.destroy();
+            resolve(ok);
+        };
+        socket.setTimeout(timeoutMs);
+        socket.once('connect', () => onDone(true));
+        socket.once('error', () => onDone(false));
+        socket.once('timeout', () => onDone(false));
+        socket.connect(port, host);
+    });
 }
 
 const SCRIPT_TEMPLATE = `// WhiteNeedle Script (JavaScriptCore)

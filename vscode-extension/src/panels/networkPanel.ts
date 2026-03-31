@@ -157,7 +157,12 @@ tr.selected { background: var(--vscode-list-activeSelectionBackground); color: v
 .badge-put { background: #ff9800; color: white; }
 .badge-delete { background: #f44336; color: white; }
 .badge-other { background: #9e9e9e; color: white; }
+.badge-dns { background: #9c27b0; color: white; font-size: 10px; padding: 1px 4px; margin-left: 4px; vertical-align: middle; }
 .detail-section { margin-bottom: 16px; }
+.detail-header { display: flex; align-items: center; justify-content: space-between; padding: 0 0 8px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.detail-header h3 { font-size: 13px; color: var(--accent); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.detail-close { background: none; border: none; color: var(--fg); font-size: 18px; cursor: pointer; padding: 2px 6px; border-radius: 3px; opacity: 0.7; flex-shrink: 0; }
+.detail-close:hover { opacity: 1; background: var(--hover); }
 .detail-section h3 { font-size: 13px; margin-bottom: 6px; color: var(--accent); }
 .detail-section pre { background: var(--vscode-textCodeBlock-background); padding: 8px; border-radius: 4px; overflow-x: auto; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
 .detail-kv { display: grid; grid-template-columns: 140px 1fr; gap: 2px 12px; font-size: 12px; }
@@ -177,7 +182,7 @@ tr.selected { background: var(--vscode-list-activeSelectionBackground); color: v
 </div>
 <div class="split">
   <div class="list-pane" id="listPane">
-    <table><thead><tr><th style="width:60px">Method</th><th style="width:50px">Status</th><th>URL</th><th style="width:70px">Duration</th><th style="width:60px">Size</th></tr></thead><tbody id="tbody"></tbody></table>
+    <table><thead><tr><th style="width:60px">Method</th><th style="width:50px">Status</th><th>URL</th><th style="width:70px">Duration</th><th style="width:60px">Size</th><th style="width:40px">DNS</th></tr></thead><tbody id="tbody"></tbody></table>
     <div id="emptyMsg" class="empty">No requests captured yet. Network traffic will appear here in real-time.</div>
   </div>
   <div class="detail-pane" id="detailPane"></div>
@@ -239,8 +244,13 @@ tr.selected { background: var(--vscode-list-activeSelectionBackground); color: v
             const dur = r.duration != null ? Math.round(r.duration) + 'ms' : '...';
             const size = r.size > 0 ? formatBytes(r.size) : '-';
             const urlPath = (r.url||'').replace(/^https?:\\/\\/[^/]+/, '');
-            tr.innerHTML = '<td><span class="' + methodCls + '">' + esc(r.method||'GET') + '</span></td><td class="' + statusCls + '">' + (r.status||'...') + '</td><td title="' + esc(r.url) + '">' + esc(urlPath || r.url) + '</td><td>' + dur + '</td><td>' + size + '</td>';
+            const dnsCell = r.hostMapped ? '<span class="badge badge-dns" title="→ ' + esc(r.resolvedIP||'') + ' (' + esc(r.matchedGroupTitle||'') + ')">⇄</span>' : '';
+            tr.innerHTML = '<td><span class="' + methodCls + '">' + esc(r.method||'GET') + '</span></td><td class="' + statusCls + '">' + (r.status||'...') + '</td><td title="' + esc(r.url) + '">' + esc(urlPath || r.url) + '</td><td>' + dur + '</td><td>' + size + '</td><td>' + dnsCell + '</td>';
             tr.addEventListener('click', () => {
+                if (selectedId === r.id) {
+                    closeDetail();
+                    return;
+                }
                 selectedId = r.id;
                 renderList();
                 vscode.postMessage({command:'getDetail', id:r.id});
@@ -249,15 +259,28 @@ tr.selected { background: var(--vscode-list-activeSelectionBackground); color: v
         }
     }
 
+    function closeDetail() {
+        selectedId = null;
+        detailPane.classList.remove('open');
+        detailPane.innerHTML = '';
+        renderList();
+    }
+
     function renderDetail(d) {
         if (!d) { detailPane.classList.remove('open'); return; }
         detailPane.classList.add('open');
-        let html = '<div class="detail-section"><h3>' + esc(d.method) + ' ' + esc(d.url) + '</h3><div class="detail-kv">';
+        let html = '<div class="detail-header"><h3>' + esc(d.method) + ' ' + esc(d.url) + '</h3><button class="detail-close" id="btnCloseDetail" title="Close detail panel">✕</button></div>';
+        html += '<div class="detail-section"><div class="detail-kv">';
         html += '<span class="k">Status</span><span>' + d.status + '</span>';
         html += '<span class="k">Duration</span><span>' + (d.duration != null ? Math.round(d.duration) + 'ms' : 'pending') + '</span>';
         html += '<span class="k">Size</span><span>' + formatBytes(d.size||0) + '</span>';
         html += '<span class="k">MIME</span><span>' + esc(d.mimeType||'') + '</span>';
         html += '<span class="k">Host</span><span>' + esc(d.host||'') + '</span>';
+        if (d.hostMapped) {
+            html += '<span class="k">DNS Mapped</span><span style="color:#9c27b0">→ ' + esc(d.resolvedIP||'') + '</span>';
+            if (d.matchedGroupTitle) html += '<span class="k">Group</span><span>' + esc(d.matchedGroupTitle) + '</span>';
+        }
+        if (d.source) html += '<span class="k">Source</span><span>' + esc(d.source) + '</span>';
         if (d.error) html += '<span class="k">Error</span><span style="color:#f44336">' + esc(d.error) + '</span>';
         html += '</div></div>';
         if (d.requestHeaders && Object.keys(d.requestHeaders).length) {
@@ -273,6 +296,8 @@ tr.selected { background: var(--vscode-list-activeSelectionBackground); color: v
             html += '<div class="detail-section"><h3>Response Body</h3><pre>' + esc(tryFormatJSON(d.responseBody)) + '</pre></div>';
         }
         detailPane.innerHTML = html;
+        var closeBtn = document.getElementById('btnCloseDetail');
+        if (closeBtn) { closeBtn.addEventListener('click', function() { closeDetail(); }); }
     }
 
     function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }

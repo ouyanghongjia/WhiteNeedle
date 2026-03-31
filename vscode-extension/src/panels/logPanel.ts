@@ -269,10 +269,11 @@ export class LogPanel {
 
     function matchSearch(msg) {
         if (!searchText) return true;
+        var text = String(msg || '');
         if (searchText.startsWith('/') && searchText.endsWith('/') && searchText.length > 2) {
-            try { return new RegExp(searchText.slice(1, -1), 'i').test(msg); } catch(e) { return false; }
+            try { return new RegExp(searchText.slice(1, -1), 'i').test(text); } catch(e) { return false; }
         }
-        return msg.toLowerCase().indexOf(searchText.toLowerCase()) !== -1;
+        return text.toLowerCase().indexOf(searchText.toLowerCase()) !== -1;
     }
 
     function getFilteredLogs() {
@@ -281,7 +282,8 @@ export class LogPanel {
             var e = allLogs[i];
             if (!activeCategories[e.category]) continue;
             if (!activeLevels[e.level]) continue;
-            if (!matchSearch(e.message)) continue;
+            var searchable = String(e.message || '') + ' ' + String(e.category || '') + ' ' + String(e.level || '') + ' ' + String(e.source || '');
+            if (!matchSearch(searchable)) continue;
             out.push(e);
         }
         return out;
@@ -325,7 +327,8 @@ export class LogPanel {
     function appendSingle(e) {
         if (!activeCategories[e.category]) return;
         if (!activeLevels[e.level]) return;
-        if (!matchSearch(e.message)) return;
+        var searchable = String(e.message || '') + ' ' + String(e.category || '') + ' ' + String(e.level || '') + ' ' + String(e.source || '');
+        if (!matchSearch(searchable)) return;
         var div = document.createElement('div');
         div.innerHTML = buildLogRow(e);
         container.appendChild(div.firstChild);

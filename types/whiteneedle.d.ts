@@ -665,6 +665,14 @@ declare namespace FileSystem {
     function write(path: string, content: string): boolean;
 
     /**
+     * 写入二进制数据到文件（自动创建中间目录）
+     * @param path 相对路径
+     * @param base64Data Base64 编码的二进制数据
+     * @returns 是否成功
+     */
+    function writeBytes(path: string, base64Data: string): boolean;
+
+    /**
      * 检查路径是否存在
      * @param path 相对路径
      */
@@ -792,6 +800,42 @@ declare namespace UIDebug {
 
     /** 获取当前的 ViewController 层级列表 */
     function viewControllers(): ViewControllerInfo[];
+}
+
+// ─── Host Mapping ────────────────────────────────────────────────
+
+declare namespace HostMapping {
+    interface HostGroup {
+        id: string;
+        title: string;
+        content: string;
+        enabled: boolean;
+        enabledAt: number;
+        ruleCount: number;
+    }
+
+    interface EffectiveRule {
+        hostname: string;
+        ip: string;
+        groupTitle: string;
+    }
+
+    /** 列出所有分组 */
+    function listGroups(): HostGroup[];
+    /** 创建新分组 */
+    function createGroup(title: string, content: string): HostGroup;
+    /** 更新分组的 hosts 文本内容 */
+    function updateGroup(groupId: string, content: string): void;
+    /** 启用/禁用分组 */
+    function toggleGroup(groupId: string, enabled: boolean): void;
+    /** 删除分组 */
+    function deleteGroup(groupId: string): void;
+    /** 清空所有分组 */
+    function clearAll(): void;
+    /** 获取当前生效的映射表 */
+    function getEffectiveMap(): EffectiveRule[];
+    /** 快捷方式：添加单条规则（自动创建或追加到指定分组） */
+    function addRule(ip: string, hostname: string, groupTitle?: string): void;
 }
 
 // ─── require（CommonJS 模块加载）────────────────────────────────

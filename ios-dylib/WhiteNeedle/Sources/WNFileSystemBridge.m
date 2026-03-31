@@ -88,6 +88,22 @@ static NSString *const kLogPrefix = @"[WNFileSystemBridge]";
         return ok;
     };
 
+    ns[@"writeBytes"] = ^BOOL(NSString *relPath, NSString *base64Data) {
+        if (!relPath || !base64Data) return NO;
+        NSData *data = [[NSData alloc] initWithBase64EncodedString:base64Data options:0];
+        if (!data) {
+            NSLog(@"%@ writeBytes error: invalid base64 data", kLogPrefix);
+            return NO;
+        }
+        NSString *absPath = [sandboxRoot stringByAppendingPathComponent:relPath];
+        NSString *dir = [absPath stringByDeletingLastPathComponent];
+        [[NSFileManager defaultManager] createDirectoryAtPath:dir
+                                  withIntermediateDirectories:YES attributes:nil error:nil];
+        BOOL ok = [data writeToFile:absPath atomically:YES];
+        if (!ok) NSLog(@"%@ writeBytes error: failed to write to %@", kLogPrefix, absPath);
+        return ok;
+    };
+
     ns[@"exists"] = ^JSValue *(NSString *relPath) {
         JSContext *ctx = [JSContext currentContext];
         if (!relPath) return [JSValue valueWithBool:NO inContext:ctx];

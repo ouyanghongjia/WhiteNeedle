@@ -2,6 +2,8 @@ import { EventEmitter } from 'events';
 import Bonjour, { type Service } from 'bonjour-service';
 
 const SERVICE_TYPE = 'whiteneedle';
+const REBROWSE_INTERVAL_MS = 5000;
+const MAX_REBROWSE_ATTEMPTS = 12;
 
 export interface WNDevice {
     name: string;
@@ -22,15 +24,23 @@ export class DeviceDiscovery extends EventEmitter {
     private bonjour: InstanceType<typeof Bonjour> | null = null;
     private browser: any = null;
     private devices: Map<string, WNDevice> = new Map();
+    private rebrowseTimer: ReturnType<typeof setInterval> | null = null;
+    private rebrowseCount = 0;
 
     start(): void {
+        this.stop();
         this.bonjour = new Bonjour();
+        this.rebrowseCount = 0;
         this.browse();
+        this.startRebrowseTimer();
     }
 
     stop(): void {
+        this.stopRebrowseTimer();
         this.browser?.stop();
         this.bonjour?.destroy();
+        this.bonjour = null;
+        this.browser = null;
         this.devices.clear();
     }
 
@@ -43,6 +53,46 @@ export class DeviceDiscovery extends EventEmitter {
         return Array.from(this.devices.values());
     }
 
+    /**
+     * Periodically re-create the mDNS browser to send fresh queries.
+     * Stops automatically after finding a device or after MAX_REBROWSE_ATTEMPTS.
+     */
+    private startRebrowseTimer(): void {
+        this.stopRebrowseTimer();
+        this.rebrowseTimer = setInterval(() => {
+            if (this.devices.size > 0) {
+                this.stopRebrowseTimer();
+                return;
+            }
+            this.rebrowseCount++;
+            if (this.rebrowseCount > MAX_REBROWSE_ATTEMPTS) {
+                this.stopRebrowseTimer();
+                return;
+            }
+            this.rebrowse();
+        }, REBROWSE_INTERVAL_MS);
+    }
+
+    private stopRebrowseTimer(): void {
+        if (this.rebrowseTimer) {
+            clearInterval(this.rebrowseTimer);
+            this.rebrowseTimer = null;
+        }
+    }
+
+    /**
+     * Destroy and recreate the Bonjour instance + browser to force
+     * fresh mDNS queries. Preserves existing device list.
+     */
+    private rebrowse(): void {
+        const savedDevices = new Map(this.devices);
+        this.browser?.stop();
+        this.bonjour?.destroy();
+        this.bonjour = new Bonjour();
+        this.devices = savedDevices;
+        this.browse();
+    }
+
     private browse(): void {
         if (!this.bonjour) { return; }
 
@@ -51,8 +101,11 @@ export class DeviceDiscovery extends EventEmitter {
             if (!device) { return; }
 
             const key = `${device.host}:${device.port}`;
+            const isNew = !this.devices.has(key);
             this.devices.set(key, device);
-            this.emit('deviceFound', device);
+            if (isNew) {
+                this.emit('deviceFound', device);
+            }
         });
 
         this.browser.on('down', (service: Service) => {
