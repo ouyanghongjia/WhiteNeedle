@@ -11,6 +11,7 @@ static NSString *const kLogPrefix = @"[WhiteNeedle:Hook]";
 
 @interface WNHookEntry : NSObject
 @property (nonatomic, strong) NSString *selectorKey;
+@property (nonatomic, copy)   NSString *className;
 @property (nonatomic, assign) Class targetClass;
 @property (nonatomic, assign) SEL originalSelector;
 @property (nonatomic, assign) SEL aliasSelector;
@@ -21,6 +22,9 @@ static NSString *const kLogPrefix = @"[WhiteNeedle:Hook]";
 @property (nonatomic, strong) JSManagedValue *onLeave;
 @property (nonatomic, strong) JSManagedValue *replacement;
 @property (nonatomic, assign) BOOL isClassMethod;
+@property (nonatomic, assign) BOOL paused;
+@property (nonatomic, assign) NSUInteger hitCount;
+@property (nonatomic, assign) NSTimeInterval lastHitTime;
 @end
 
 @implementation WNHookEntry
@@ -86,12 +90,56 @@ static NSMutableSet<NSString *> *g_reentrancyGuard = nil;
         return [WNHookEngine activeHooks];
     };
 
+    interceptor[@"listDetailed"] = ^NSArray<NSDictionary *> *{
+        return [WNHookEngine activeHooksDetailed];
+    };
+
+    interceptor[@"pause"] = ^BOOL(NSString *selectorKey) {
+        return [WNHookEngine pauseHook:selectorKey];
+    };
+
+    interceptor[@"resume"] = ^BOOL(NSString *selectorKey) {
+        return [WNHookEngine resumeHook:selectorKey];
+    };
+
     context[@"Interceptor"] = interceptor;
     NSLog(@"%@ Hook engine v2 registered (NSInvocation-based)", kLogPrefix);
 }
 
 + (NSArray<NSString *> *)activeHooks {
     return [g_hooks allKeys];
+}
+
++ (NSArray<NSDictionary *> *)activeHooksDetailed {
+    NSMutableArray *result = [NSMutableArray array];
+    [g_hooks enumerateKeysAndObjectsUsingBlock:^(NSString *key, WNHookEntry *entry, BOOL *stop) {
+        [result addObject:@{
+            @"selector": key,
+            @"className": entry.className ?: @"",
+            @"isClassMethod": @(entry.isClassMethod),
+            @"paused": @(entry.paused),
+            @"hitCount": @(entry.hitCount),
+            @"lastHitTime": @(entry.lastHitTime),
+            @"hasOnEnter": @(entry.onEnter != nil),
+            @"hasOnLeave": @(entry.onLeave != nil),
+            @"hasReplacement": @(entry.replacement != nil),
+        }];
+    }];
+    return result;
+}
+
++ (BOOL)pauseHook:(NSString *)selectorKey {
+    WNHookEntry *entry = g_hooks[selectorKey];
+    if (!entry) return NO;
+    entry.paused = YES;
+    return YES;
+}
+
++ (BOOL)resumeHook:(NSString *)selectorKey {
+    WNHookEntry *entry = g_hooks[selectorKey];
+    if (!entry) return NO;
+    entry.paused = NO;
+    return YES;
 }
 
 #pragma mark - Parse selector key
@@ -168,6 +216,7 @@ static NSMutableSet<NSString *> *g_reentrancyGuard = nil;
     entry.typeEncoding = @(typeEncoding);
     entry.methodSignature = sig;
     entry.isClassMethod = isClassMethod;
+    entry.className = className;
 
     JSValue *onEnter = callbacks[@"onEnter"];
     JSValue *onLeave = callbacks[@"onLeave"];
@@ -240,6 +289,7 @@ static NSMutableSet<NSString *> *g_reentrancyGuard = nil;
     entry.typeEncoding = @(typeEncoding);
     entry.methodSignature = sig;
     entry.isClassMethod = isClassMethod;
+    entry.className = className;
     entry.replacement = [JSManagedValue managedValueWithValue:replacementFn];
     [context.virtualMachine addManagedReference:entry.replacement withOwner:entry];
 
@@ -348,7 +398,18 @@ static NSMutableSet<NSString *> *g_reentrancyGuard = nil;
 + (void)handleHookedInvocation:(NSInvocation *)invocation
                           entry:(WNHookEntry *)entry
                          target:(id)target {
+    entry.hitCount++;
+    entry.lastHitTime = [[NSDate date] timeIntervalSince1970];
+
     NSString *guardKey = entry.selectorKey;
+
+    if (entry.paused) {
+        [invocation setSelector:entry.aliasSelector];
+        [invocation invoke];
+        [invocation setSelector:entry.originalSelector];
+        return;
+    }
+
     BOOL isReentrant = [g_reentrancyGuard containsObject:guardKey];
 
     if (isReentrant) {

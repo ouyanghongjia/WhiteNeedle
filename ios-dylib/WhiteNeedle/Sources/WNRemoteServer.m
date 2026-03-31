@@ -3,6 +3,8 @@
 #import "WNHookEngine.h"
 #import "WNObjCBridge.h"
 #import "WNNativeBridge.h"
+#import "WNNetworkMonitor.h"
+#import "WNUIDebugBridge.h"
 #import <sys/socket.h>
 #import <netinet/in.h>
 #import <arpa/inet.h>
@@ -300,6 +302,24 @@ static void WNSocketCallback(CFSocketRef socket, CFSocketCallBackType type,
         return @{@"hooks": all};
     }
 
+    if ([method isEqualToString:@"listHooksDetailed"]) {
+        return @{@"hooks": [WNHookEngine activeHooksDetailed]};
+    }
+
+    if ([method isEqualToString:@"pauseHook"]) {
+        NSString *selector = params[@"selector"];
+        if (!selector) return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Missing selector"}];
+        BOOL ok = [WNHookEngine pauseHook:selector];
+        return @{@"success": @(ok)};
+    }
+
+    if ([method isEqualToString:@"resumeHook"]) {
+        NSString *selector = params[@"selector"];
+        if (!selector) return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Missing selector"}];
+        BOOL ok = [WNHookEngine resumeHook:selector];
+        return @{@"success": @(ok)};
+    }
+
     if ([method isEqualToString:@"listModules"]) {
         JSValue *result = [self.engine evaluateScript:@"Module.enumerateModules()"];
         return @{@"modules": [result toArray] ?: @[]};
@@ -333,6 +353,79 @@ static void WNSocketCallback(CFSocketRef socket, CFSocketCallBackType type,
         if (!obj || [result isUndefined]) return [NSNull null];
         if ([NSJSONSerialization isValidJSONObject:obj]) return obj;
         return [result toString] ?: [NSNull null];
+    }
+
+    // --- Network Monitor ---
+
+    if ([method isEqualToString:@"listNetworkRequests"]) {
+        return @{@"requests": [[WNNetworkMonitor shared] capturedRequestList]};
+    }
+
+    if ([method isEqualToString:@"getNetworkRequest"]) {
+        NSString *reqId = params[@"id"];
+        if (!reqId) return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Missing id"}];
+        NSDictionary *detail = [[WNNetworkMonitor shared] requestDetailForId:reqId];
+        return detail ?: [NSNull null];
+    }
+
+    if ([method isEqualToString:@"clearNetworkRequests"]) {
+        [[WNNetworkMonitor shared] clearAll];
+        return @{@"success": @YES};
+    }
+
+    if ([method isEqualToString:@"setNetworkCapture"]) {
+        NSNumber *enabled = params[@"enabled"];
+        if (enabled) [WNNetworkMonitor shared].capturing = [enabled boolValue];
+        return @{@"capturing": @([WNNetworkMonitor shared].capturing)};
+    }
+
+    // --- View Hierarchy Inspector ---
+
+    if ([method isEqualToString:@"getViewHierarchy"]) {
+        return @{@"tree": [WNUIDebugBridge viewHierarchyTree]};
+    }
+
+    if ([method isEqualToString:@"getViewControllers"]) {
+        return @{@"controllers": [WNUIDebugBridge viewControllerStack]};
+    }
+
+    if ([method isEqualToString:@"getViewDetail"]) {
+        NSString *addr = params[@"address"];
+        if (!addr) return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Missing address"}];
+        NSDictionary *detail = [WNUIDebugBridge viewDetailForAddress:addr];
+        return detail ?: [NSNull null];
+    }
+
+    if ([method isEqualToString:@"setViewProperty"]) {
+        NSString *addr = params[@"address"];
+        NSString *key = params[@"key"];
+        id value = params[@"value"];
+        if (!addr || !key) return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Missing address or key"}];
+        BOOL ok = [WNUIDebugBridge setViewProperty:addr key:key value:value];
+        return @{@"success": @(ok)};
+    }
+
+    if ([method isEqualToString:@"highlightView"]) {
+        NSString *addr = params[@"address"];
+        if (!addr) return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Missing address"}];
+        BOOL ok = [WNUIDebugBridge highlightView:addr];
+        return @{@"success": @(ok)};
+    }
+
+    if ([method isEqualToString:@"clearHighlight"]) {
+        [WNUIDebugBridge clearHighlight];
+        return @{@"success": @YES};
+    }
+
+    if ([method isEqualToString:@"searchViews"]) {
+        NSString *className = params[@"className"];
+        if (!className) return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Missing className"}];
+        return @{@"views": [WNUIDebugBridge searchViewsByClassName:className]};
+    }
+
+    if ([method isEqualToString:@"getScreenshot"]) {
+        NSString *b64 = [WNUIDebugBridge screenshotBase64];
+        return @{@"base64": b64 ?: [NSNull null]};
     }
 
     return [NSError errorWithDomain:@"WN" code:-32601

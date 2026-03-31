@@ -1,13 +1,17 @@
 import * as vscode from 'vscode';
 import { DeviceDiscovery, WNDevice } from './discovery/bonjourDiscovery';
 import { DeviceTreeProvider } from './views/deviceTreeView';
-import { DeviceManager } from './device/deviceManager';
+import { DeviceManager, ConnectionState } from './device/deviceManager';
 import { ScriptRunner } from './scripting/scriptRunner';
-import { ObjCTreeProvider } from './views/objcTreeView';
 import { ScriptTreeProvider } from './views/scriptTreeView';
-import { CookieTreeProvider } from './views/cookieTreeView';
-import { UserDefaultsTreeProvider } from './views/userDefaultsTreeView';
-import { FileSystemTreeProvider } from './views/fileSystemTreeView';
+import { CookiePanel } from './panels/cookiePanel';
+import { UserDefaultsPanel } from './panels/userDefaultsPanel';
+import { SandboxPanel } from './panels/sandboxPanel';
+import { ObjCPanel } from './panels/objcPanel';
+import { LogPanel, LogCategory, LogLevel } from './panels/logPanel';
+import { HookPanel } from './panels/hookPanel';
+import { NetworkPanel } from './panels/networkPanel';
+import { ViewHierarchyPanel } from './panels/viewHierarchyPanel';
 import {
     WhiteNeedleConfigurationProvider,
     WhiteNeedleDebugAdapterFactory,
@@ -17,6 +21,12 @@ let discovery: DeviceDiscovery;
 let deviceManager: DeviceManager;
 let scriptRunner: ScriptRunner;
 let outputChannel: vscode.OutputChannel;
+let statusBarItem: vscode.StatusBarItem;
+
+function appendLog(category: LogCategory, level: LogLevel, message: string, source?: string): void {
+    outputChannel.appendLine(`[${category}:${level}] ${message}`);
+    LogPanel.getInstance()?.appendLog(category, level, message, source);
+}
 
 export function activate(context: vscode.ExtensionContext) {
     outputChannel = vscode.window.createOutputChannel('WhiteNeedle');
@@ -26,6 +36,34 @@ export function activate(context: vscode.ExtensionContext) {
     scriptRunner = new ScriptRunner(deviceManager, outputChannel);
     discovery = new DeviceDiscovery();
 
+    // --- Status Bar ---
+    statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    statusBarItem.command = 'whiteneedle.statusBarAction';
+    updateStatusBar('disconnected');
+    statusBarItem.show();
+
+    deviceManager.on('stateChanged', (state: ConnectionState) => {
+        updateStatusBar(state);
+    });
+
+    deviceManager.on('reconnected', (device: WNDevice) => {
+        attachBridgeListeners();
+        refreshAllViews();
+        appendLog('System', 'log', `Reconnected to ${device.deviceName || device.host}`);
+        vscode.window.showInformationMessage(
+            `WhiteNeedle: Reconnected to ${device.deviceName || device.host}`
+        );
+    });
+
+    deviceManager.on('reconnectFailed', (device: WNDevice) => {
+        refreshAllViews();
+        appendLog('System', 'error', `Failed to reconnect to ${device.deviceName || device.host}`);
+        vscode.window.showWarningMessage(
+            `WhiteNeedle: Failed to reconnect to ${device.deviceName || device.host}. Click status bar to reconnect manually.`
+        );
+    });
+
+    // --- Tree Views ---
     const deviceTreeProvider = new DeviceTreeProvider(discovery, deviceManager);
     const deviceTreeView = vscode.window.createTreeView('whiteneedle-devices', {
         treeDataProvider: deviceTreeProvider,
@@ -36,26 +74,7 @@ export function activate(context: vscode.ExtensionContext) {
         treeDataProvider: scriptTreeProvider,
     });
 
-    const objcTreeProvider = new ObjCTreeProvider(deviceManager);
-    const objcTreeView = vscode.window.createTreeView('whiteneedle-objc', {
-        treeDataProvider: objcTreeProvider,
-    });
-
-    const cookieTreeProvider = new CookieTreeProvider(deviceManager);
-    const cookieTreeView = vscode.window.createTreeView('whiteneedle-cookies', {
-        treeDataProvider: cookieTreeProvider,
-    });
-
-    const udTreeProvider = new UserDefaultsTreeProvider(deviceManager);
-    const udTreeView = vscode.window.createTreeView('whiteneedle-userdefaults', {
-        treeDataProvider: udTreeProvider,
-    });
-
-    const fsTreeProvider = new FileSystemTreeProvider(deviceManager);
-    const fsTreeView = vscode.window.createTreeView('whiteneedle-filesystem', {
-        treeDataProvider: fsTreeProvider,
-    });
-
+    // --- Debug ---
     const debugFactory = new WhiteNeedleDebugAdapterFactory();
     const debugConfigProvider = new WhiteNeedleConfigurationProvider();
     context.subscriptions.push(
@@ -77,15 +96,75 @@ export function activate(context: vscode.ExtensionContext) {
         scriptTreeProvider.refresh();
     };
 
+    const attachBridgeListeners = () => {
+        const bridge = deviceManager.getBridge();
+        if (!bridge) { return; }
+        bridge.on('console', (data: { message: string; level: string }) => {
+            const lvl = (data.level === 'warn' || data.level === 'error' || data.level === 'debug')
+                ? data.level as LogLevel : 'log';
+            appendLog('Console', lvl, data.message);
+        });
+        bridge.on('scriptError', (data: { error: string }) => {
+            appendLog('Error', 'error', data.error, 'script');
+        });
+        bridge.on('networkRequest', (data: any) => {
+            appendLog('Network', 'log', `${data.method} ${data.url}`, 'network');
+        });
+        bridge.on('networkResponse', (data: any) => {
+            const status = data.status || 0;
+            const lvl: LogLevel = status >= 400 ? 'error' : status >= 300 ? 'warn' : 'log';
+            appendLog('Network', lvl, `${data.method} ${data.url} → ${status}`, 'network');
+        });
+    };
+
     context.subscriptions.push(
         deviceTreeView,
         scriptTreeView,
-        objcTreeView,
-        cookieTreeView,
-        udTreeView,
-        fsTreeView,
         outputChannel,
+        statusBarItem,
 
+        // --- Status Bar Action ---
+        vscode.commands.registerCommand('whiteneedle.statusBarAction', async () => {
+            if (deviceManager.isConnected) {
+                const device = deviceManager.getConnectedDevice();
+                const action = await vscode.window.showQuickPick([
+                    { label: '$(debug-disconnect) Disconnect', id: 'disconnect' },
+                    { label: '$(refresh) Refresh Devices', id: 'refresh' },
+                    { label: '$(info) Device Info', id: 'info' },
+                ], { placeHolder: `Connected to ${device?.deviceName || device?.host}` });
+                if (!action) { return; }
+                switch (action.id) {
+                    case 'disconnect':
+                        vscode.commands.executeCommand('whiteneedle.disconnectDevice');
+                        break;
+                    case 'refresh':
+                        vscode.commands.executeCommand('whiteneedle.refreshDevices');
+                        break;
+                    case 'info':
+                        if (device) {
+                            outputChannel.appendLine(`[Device] ${device.deviceName} | ${device.model} | iOS ${device.systemVersion} | ${device.bundleId}`);
+                            outputChannel.show();
+                        }
+                        break;
+                }
+            } else {
+                const action = await vscode.window.showQuickPick([
+                    { label: '$(search) Browse Devices (Bonjour)', id: 'connect' },
+                    { label: '$(plug) Connect by IP', id: 'ip' },
+                ], { placeHolder: 'WhiteNeedle — Not Connected' });
+                if (!action) { return; }
+                switch (action.id) {
+                    case 'connect':
+                        vscode.commands.executeCommand('whiteneedle.connectDevice');
+                        break;
+                    case 'ip':
+                        vscode.commands.executeCommand('whiteneedle.connectByIP');
+                        break;
+                }
+            }
+        }),
+
+        // --- Device commands ---
         vscode.commands.registerCommand('whiteneedle.refreshDevices', () => {
             discovery.restart();
             deviceTreeProvider.refresh();
@@ -125,17 +204,7 @@ export function activate(context: vscode.ExtensionContext) {
                 outputChannel.appendLine(`[WhiteNeedle] Connecting to ${host}:${port}...`);
                 outputChannel.show();
                 await deviceManager.connect(manualDevice);
-
-                const bridge = deviceManager.getBridge();
-                if (bridge) {
-                    bridge.on('console', (data: { message: string; level: string }) => {
-                        outputChannel.appendLine(`[${data.level}] ${data.message}`);
-                    });
-                    bridge.on('scriptError', (data: { error: string }) => {
-                        outputChannel.appendLine(`[ScriptError] ${data.error}`);
-                    });
-                }
-
+                attachBridgeListeners();
                 refreshAllViews();
                 vscode.window.showInformationMessage(`Connected to ${host}:${port}`);
             } catch (err: any) {
@@ -172,17 +241,7 @@ export function activate(context: vscode.ExtensionContext) {
             }
             try {
                 await deviceManager.connect(device);
-
-                const bridge = deviceManager.getBridge();
-                if (bridge) {
-                    bridge.on('console', (data: { message: string; level: string }) => {
-                        outputChannel.appendLine(`[${data.level}] ${data.message}`);
-                    });
-                    bridge.on('scriptError', (data: { error: string }) => {
-                        outputChannel.appendLine(`[ScriptError] ${data.error}`);
-                    });
-                }
-
+                attachBridgeListeners();
                 refreshAllViews();
                 vscode.window.showInformationMessage(`Connected to ${device.deviceName || device.name}`);
                 outputChannel.appendLine(
@@ -200,6 +259,7 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.window.showInformationMessage('WhiteNeedle: Disconnected');
         }),
 
+        // --- Script commands ---
         vscode.commands.registerCommand('whiteneedle.pushScript', async () => {
             if (!deviceManager.isConnected) {
                 const action = await vscode.window.showWarningMessage(
@@ -272,47 +332,6 @@ export function activate(context: vscode.ExtensionContext) {
             await vscode.window.showTextDocument(doc);
         }),
 
-        vscode.commands.registerCommand('whiteneedle.loadClasses', () => {
-            objcTreeProvider.loadClasses();
-        }),
-
-        vscode.commands.registerCommand('whiteneedle.filterClasses', async () => {
-            const input = await vscode.window.showInputBox({
-                placeHolder: 'Filter classes (e.g., UIView, NS...)',
-                prompt: 'Enter class name filter',
-            });
-            if (input !== undefined) {
-                objcTreeProvider.setFilter(input);
-            }
-        }),
-
-        vscode.commands.registerCommand('whiteneedle.traceMethod', async (item: any) => {
-            if (!item?.className || !item?.methodSignature) { return; }
-            const isClassMethod = item.methodSignature.startsWith('+');
-            const sig = item.methodSignature.replace(/^[+-]\s*/, '');
-            const prefix = isClassMethod ? '+' : '-';
-            const hookKey = `${prefix}[${item.className} ${sig}]`;
-            const traceScript = `
-Interceptor.attach('${hookKey}', {
-    onEnter: function(self) {
-        console.log('[Trace] ${hookKey} called, self=' + self);
-    },
-    onLeave: function() {
-        console.log('[Trace] ${hookKey} returned');
-    }
-});
-console.log('[WhiteNeedle] Tracing: ${hookKey}');
-`;
-            try {
-                await scriptRunner.pushAndRun(traceScript, `trace-${item.className}`);
-                scriptTreeProvider.setActiveScript(null);
-                outputChannel.appendLine(`[WhiteNeedle] Tracing: ${hookKey}`);
-                outputChannel.show();
-            } catch (err: any) {
-                vscode.window.showErrorMessage(`Trace failed: ${err.message}`);
-            }
-        }),
-
         vscode.commands.registerCommand('whiteneedle.listHooks', async () => {
             try {
                 const hooks = await deviceManager.listHooks();
@@ -328,50 +347,37 @@ console.log('[WhiteNeedle] Tracing: ${hookKey}');
             }
         }),
 
-        vscode.commands.registerCommand('whiteneedle.loadCookies', () => {
-            cookieTreeProvider.loadCookies();
-        }),
-        vscode.commands.registerCommand('whiteneedle.filterCookies', async () => {
-            const input = await vscode.window.showInputBox({
-                prompt: 'Filter cookies by domain (e.g., .example.com)',
-                placeHolder: '.example.com',
-            });
-            if (input !== undefined) {
-                cookieTreeProvider.loadCookies(input || undefined);
-            }
-        }),
-        vscode.commands.registerCommand('whiteneedle.deleteCookie', (item: any) => {
-            cookieTreeProvider.deleteCookie(item);
+        // --- Webview Panel commands ---
+        vscode.commands.registerCommand('whiteneedle.openLogs', () => {
+            LogPanel.createOrShow(context.extensionUri);
         }),
 
-        vscode.commands.registerCommand('whiteneedle.loadUserDefaults', () => {
-            udTreeProvider.loadSuites();
-        }),
-        vscode.commands.registerCommand('whiteneedle.editUserDefault', (item: any) => {
-            udTreeProvider.editValue(item);
-        }),
-        vscode.commands.registerCommand('whiteneedle.deleteUserDefault', (item: any) => {
-            udTreeProvider.deleteKey(item);
+        vscode.commands.registerCommand('whiteneedle.openCookies', () => {
+            CookiePanel.createOrShow(context.extensionUri, deviceManager, outputChannel);
         }),
 
-        vscode.commands.registerCommand('whiteneedle.browseSandbox', () => {
-            fsTreeProvider.loadRoot();
+        vscode.commands.registerCommand('whiteneedle.openUserDefaults', () => {
+            UserDefaultsPanel.createOrShow(context.extensionUri, deviceManager, outputChannel);
         }),
-        vscode.commands.registerCommand('whiteneedle.refreshSandbox', () => {
-            fsTreeProvider.refresh();
-            fsTreeProvider.loadRoot();
+
+        vscode.commands.registerCommand('whiteneedle.openSandbox', () => {
+            SandboxPanel.createOrShow(context.extensionUri, deviceManager);
         }),
-        vscode.commands.registerCommand('whiteneedle.openSandboxFile', (item: any) => {
-            fsTreeProvider.readFile(item);
+
+        vscode.commands.registerCommand('whiteneedle.openObjC', () => {
+            ObjCPanel.createOrShow(context.extensionUri, deviceManager, scriptRunner);
         }),
-        vscode.commands.registerCommand('whiteneedle.downloadSandboxFile', (item: any) => {
-            fsTreeProvider.downloadFile(item);
+
+        vscode.commands.registerCommand('whiteneedle.openHooks', () => {
+            HookPanel.createOrShow(context.extensionUri, deviceManager);
         }),
-        vscode.commands.registerCommand('whiteneedle.downloadSandboxFolder', (item: any) => {
-            fsTreeProvider.downloadFolder(item);
+
+        vscode.commands.registerCommand('whiteneedle.openNetwork', () => {
+            NetworkPanel.createOrShow(context.extensionUri, deviceManager);
         }),
-        vscode.commands.registerCommand('whiteneedle.deleteSandboxEntry', (item: any) => {
-            fsTreeProvider.deleteEntry(item);
+
+        vscode.commands.registerCommand('whiteneedle.openViewHierarchy', () => {
+            ViewHierarchyPanel.createOrShow(context.extensionUri, deviceManager);
         }),
     );
 
@@ -400,6 +406,35 @@ console.log('[WhiteNeedle] Tracing: ${hookKey}');
 export function deactivate() {
     discovery?.stop();
     deviceManager?.disconnect();
+}
+
+function updateStatusBar(state: ConnectionState): void {
+    switch (state) {
+        case 'connected': {
+            const device = deviceManager.getConnectedDevice();
+            const label = device?.deviceName || device?.host || 'Device';
+            statusBarItem.text = `$(plug) WN: ${label}`;
+            statusBarItem.tooltip = `WhiteNeedle — Connected to ${label}\nClick for options`;
+            statusBarItem.backgroundColor = undefined;
+            break;
+        }
+        case 'connecting':
+            statusBarItem.text = '$(sync~spin) WN: Connecting...';
+            statusBarItem.tooltip = 'WhiteNeedle — Establishing connection...';
+            statusBarItem.backgroundColor = undefined;
+            break;
+        case 'reconnecting':
+            statusBarItem.text = '$(sync~spin) WN: Reconnecting...';
+            statusBarItem.tooltip = 'WhiteNeedle — Connection lost, attempting to reconnect...';
+            statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+            break;
+        case 'disconnected':
+        default:
+            statusBarItem.text = '$(debug-disconnect) WN: Disconnected';
+            statusBarItem.tooltip = 'WhiteNeedle — Not connected\nClick to connect';
+            statusBarItem.backgroundColor = undefined;
+            break;
+    }
 }
 
 const SCRIPT_TEMPLATE = `// WhiteNeedle Script (JavaScriptCore)

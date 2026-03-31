@@ -20,11 +20,14 @@
     "onCommand:whiteneedle.stopScript",
     "onCommand:whiteneedle.disconnectDevice",
     "onCommand:whiteneedle.newScript",
-    "onCommand:whiteneedle.loadClasses",
-    "onCommand:whiteneedle.filterClasses",
-    "onCommand:whiteneedle.traceMethod",
     "onCommand:whiteneedle.evaluate",
     "onCommand:whiteneedle.listHooks",
+    "onCommand:whiteneedle.openCookies",
+    "onCommand:whiteneedle.openUserDefaults",
+    "onCommand:whiteneedle.openSandbox",
+    "onCommand:whiteneedle.openObjC",
+    "onCommand:whiteneedle.openNetwork",
+    "onCommand:whiteneedle.openViewHierarchy",
     "onDebugResolve:whiteneedle"
   ],
   "main": "./out/extension.js",
@@ -47,25 +50,16 @@
         {
           "id": "whiteneedle-scripts",
           "name": "Scripts"
-        },
-        {
-          "id": "whiteneedle-objc",
-          "name": "ObjC Runtime"
-        },
-        {
-          "id": "whiteneedle-cookies",
-          "name": "Cookies"
-        },
-        {
-          "id": "whiteneedle-userdefaults",
-          "name": "UserDefaults"
-        },
-        {
-          "id": "whiteneedle-filesystem",
-          "name": "Sandbox Files"
         }
       ]
     },
+    "submenus": [
+      {
+        "id": "whiteneedle.devicesPanels",
+        "label": "Panels",
+        "icon": "$(layout-panel)"
+      }
+    ],
     "commands": [
       {
         "command": "whiteneedle.refreshDevices",
@@ -107,93 +101,56 @@
         "category": "WhiteNeedle"
       },
       {
-        "command": "whiteneedle.loadClasses",
-        "title": "Load ObjC Classes",
-        "icon": "$(cloud-download)",
+        "command": "whiteneedle.openCookies",
+        "title": "Cookies",
+        "icon": "$(database)",
         "category": "WhiteNeedle"
       },
       {
-        "command": "whiteneedle.filterClasses",
-        "title": "Filter Classes",
-        "icon": "$(search)",
+        "command": "whiteneedle.openUserDefaults",
+        "title": "UserDefaults",
+        "icon": "$(settings-gear)",
         "category": "WhiteNeedle"
       },
       {
-        "command": "whiteneedle.traceMethod",
-        "title": "Trace Method",
-        "icon": "$(pulse)",
+        "command": "whiteneedle.openSandbox",
+        "title": "Sandbox Files",
+        "icon": "$(folder-opened)",
         "category": "WhiteNeedle"
       },
       {
-        "command": "whiteneedle.loadCookies",
-        "title": "Load Cookies",
-        "icon": "$(cloud-download)",
+        "command": "whiteneedle.openObjC",
+        "title": "ObjC Runtime",
+        "icon": "$(symbol-class)",
         "category": "WhiteNeedle"
       },
       {
-        "command": "whiteneedle.filterCookies",
-        "title": "Filter by Domain",
-        "icon": "$(search)",
+        "command": "whiteneedle.statusBarAction",
+        "title": "Connection Status",
         "category": "WhiteNeedle"
       },
       {
-        "command": "whiteneedle.deleteCookie",
-        "title": "Delete Cookie",
-        "icon": "$(trash)",
+        "command": "whiteneedle.openLogs",
+        "title": "Structured Logs",
+        "icon": "$(output)",
         "category": "WhiteNeedle"
       },
       {
-        "command": "whiteneedle.loadUserDefaults",
-        "title": "Load UserDefaults",
-        "icon": "$(cloud-download)",
+        "command": "whiteneedle.openHooks",
+        "title": "Hook Manager",
+        "icon": "$(debug-breakpoint-function)",
         "category": "WhiteNeedle"
       },
       {
-        "command": "whiteneedle.editUserDefault",
-        "title": "Edit Value",
-        "icon": "$(edit)",
+        "command": "whiteneedle.openNetwork",
+        "title": "Network Monitor",
+        "icon": "$(globe)",
         "category": "WhiteNeedle"
       },
       {
-        "command": "whiteneedle.deleteUserDefault",
-        "title": "Delete Key",
-        "icon": "$(trash)",
-        "category": "WhiteNeedle"
-      },
-      {
-        "command": "whiteneedle.browseSandbox",
-        "title": "Browse Sandbox",
-        "icon": "$(cloud-download)",
-        "category": "WhiteNeedle"
-      },
-      {
-        "command": "whiteneedle.refreshSandbox",
-        "title": "Refresh",
-        "icon": "$(refresh)",
-        "category": "WhiteNeedle"
-      },
-      {
-        "command": "whiteneedle.openSandboxFile",
-        "title": "Open File",
-        "icon": "$(go-to-file)",
-        "category": "WhiteNeedle"
-      },
-      {
-        "command": "whiteneedle.deleteSandboxEntry",
-        "title": "Delete",
-        "icon": "$(trash)",
-        "category": "WhiteNeedle"
-      },
-      {
-        "command": "whiteneedle.downloadSandboxFile",
-        "title": "Download File",
-        "icon": "$(desktop-download)",
-        "category": "WhiteNeedle"
-      },
-      {
-        "command": "whiteneedle.downloadSandboxFolder",
-        "title": "Download Folder",
-        "icon": "$(desktop-download)",
+        "command": "whiteneedle.openViewHierarchy",
+        "title": "View Hierarchy Inspector",
+        "icon": "$(layers)",
         "category": "WhiteNeedle"
       }
     ],
@@ -210,6 +167,11 @@
           "group": "navigation@2"
         },
         {
+          "submenu": "whiteneedle.devicesPanels",
+          "when": "view == whiteneedle-devices",
+          "group": "navigation@3"
+        },
+        {
           "command": "whiteneedle.pushScript",
           "when": "view == whiteneedle-scripts",
           "group": "navigation@1"
@@ -218,83 +180,40 @@
           "command": "whiteneedle.stopScript",
           "when": "view == whiteneedle-scripts",
           "group": "navigation@2"
-        },
-        {
-          "command": "whiteneedle.loadClasses",
-          "when": "view == whiteneedle-objc",
-          "group": "navigation"
-        },
-        {
-          "command": "whiteneedle.filterClasses",
-          "when": "view == whiteneedle-objc",
-          "group": "navigation"
-        },
-        {
-          "command": "whiteneedle.loadCookies",
-          "when": "view == whiteneedle-cookies",
-          "group": "navigation@1"
-        },
-        {
-          "command": "whiteneedle.filterCookies",
-          "when": "view == whiteneedle-cookies",
-          "group": "navigation@2"
-        },
-        {
-          "command": "whiteneedle.loadUserDefaults",
-          "when": "view == whiteneedle-userdefaults",
-          "group": "navigation"
-        },
-        {
-          "command": "whiteneedle.browseSandbox",
-          "when": "view == whiteneedle-filesystem",
-          "group": "navigation@1"
-        },
-        {
-          "command": "whiteneedle.refreshSandbox",
-          "when": "view == whiteneedle-filesystem",
-          "group": "navigation@2"
         }
       ],
-      "view/item/context": [
+      "whiteneedle.devicesPanels": [
         {
-          "command": "whiteneedle.traceMethod",
-          "when": "viewItem == objcMethod",
-          "group": "inline"
+          "command": "whiteneedle.openLogs",
+          "group": "wn_logs@1"
         },
         {
-          "command": "whiteneedle.deleteCookie",
-          "when": "viewItem == cookieItem",
-          "group": "inline"
+          "command": "whiteneedle.openCookies",
+          "group": "wn_storage@1"
         },
         {
-          "command": "whiteneedle.editUserDefault",
-          "when": "viewItem == udKeyValue",
-          "group": "inline@1"
+          "command": "whiteneedle.openUserDefaults",
+          "group": "wn_storage@2"
         },
         {
-          "command": "whiteneedle.deleteUserDefault",
-          "when": "viewItem == udKeyValue",
-          "group": "inline@2"
+          "command": "whiteneedle.openSandbox",
+          "group": "wn_storage@3"
         },
         {
-          "command": "whiteneedle.openSandboxFile",
-          "when": "viewItem == fsFile",
-          "group": "inline@1"
+          "command": "whiteneedle.openObjC",
+          "group": "wn_runtime@1"
         },
         {
-          "command": "whiteneedle.downloadSandboxFile",
-          "when": "viewItem == fsFile",
-          "group": "inline@2"
+          "command": "whiteneedle.openHooks",
+          "group": "wn_runtime@2"
         },
         {
-          "command": "whiteneedle.downloadSandboxFolder",
-          "when": "viewItem == fsFolder",
-          "group": "inline@2"
+          "command": "whiteneedle.openNetwork",
+          "group": "wn_live@1"
         },
         {
-          "command": "whiteneedle.deleteSandboxEntry",
-          "when": "viewItem == fsFile || viewItem == fsFolder",
-          "group": "inline@3"
+          "command": "whiteneedle.openViewHierarchy",
+          "group": "wn_live@2"
         }
       ],
       "editor/title": [

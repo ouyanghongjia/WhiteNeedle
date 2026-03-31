@@ -37,6 +37,12 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (NSArray<NSString *> *)activeHooks;
 
++ (NSArray<NSDictionary *> *)activeHooksDetailed;
+
++ (BOOL)pauseHook:(NSString *)selectorKey;
+
++ (BOOL)resumeHook:(NSString *)selectorKey;
+
 @end
 
 NS_ASSUME_NONNULL_END

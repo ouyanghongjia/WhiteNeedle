@@ -3,6 +3,7 @@
 #import "WNJSEngine.h"
 #import "WNRemoteServer.h"
 #import "WNBonjourAdvertiser.h"
+#import "WNNetworkMonitor.h"
 #import "Inspector/WNInspectorServer.h"
 
 /*
@@ -53,6 +54,8 @@ static void WhiteNeedleInit(void) {
             g_inspectorServer = [[WNInspectorServer alloc] initWithContext:ctx
                                                                      port:(uint16_t)kDefaultInspectorPort];
             [g_inspectorServer start];
+
+            [[WNNetworkMonitor shared] startWithServer:g_remoteServer];
 
             g_advertiser = [[WNBonjourAdvertiser alloc] init];
             [g_advertiser startWithPort:kDefaultEnginePort inspectorPort:kDefaultInspectorPort];
