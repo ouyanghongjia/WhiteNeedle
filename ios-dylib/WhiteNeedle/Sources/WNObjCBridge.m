@@ -257,12 +257,7 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
         return [JSValue valueWithUndefinedInContext:context];
     }
 
-    NSMethodSignature *sig;
-    if (isClass) {
-        sig = [target methodSignatureForSelector:selector];
-    } else {
-        sig = [target methodSignatureForSelector:selector];
-    }
+    NSMethodSignature *sig = [target methodSignatureForSelector:selector];
 
     if (!sig) {
         NSLog(@"%@ Cannot get method signature for: %@", kLogPrefix, selectorString);
@@ -283,6 +278,28 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
         void *argBuf = calloc(1, argSize);
 
         id jsArg = jsArgs[i];
+
+        if ([jsArg isKindOfClass:[WNBoxing class]]) {
+            WNBoxing *box = (WNBoxing *)jsArg;
+            if (box.isPointer) {
+                *(void **)argBuf = [box unboxPointer];
+            } else {
+                id unboxed = [box unbox];
+                *(void **)argBuf = (__bridge void *)unboxed;
+            }
+            [invocation setArgument:argBuf atIndex:i + 2];
+            free(argBuf);
+            continue;
+        }
+
+        if ([jsArg isKindOfClass:[WNObjCProxy class]]) {
+            id target = [(WNObjCProxy *)jsArg target];
+            *(void **)argBuf = (__bridge void *)target;
+            [invocation setArgument:argBuf atIndex:i + 2];
+            free(argBuf);
+            continue;
+        }
+
         JSValue *jsValue;
         if ([jsArg isKindOfClass:[JSValue class]]) {
             jsValue = (JSValue *)jsArg;

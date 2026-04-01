@@ -12,16 +12,26 @@ C_SOURCES     := $(wildcard WhiteNeedle/Sources/*.c) $(wildcard WhiteNeedle/Sour
 CXX_SOURCES   := $(wildcard WhiteNeedle/Sources/Inspector/*.cpp)
 INSP_M_SOURCES := $(wildcard WhiteNeedle/Sources/Inspector/*.m)
 
+# libffi sources (arm64 only)
+FFI_C_SOURCES := WhiteNeedle/Sources/libffi/src/ffi_arm64.c \
+                 WhiteNeedle/Sources/libffi/src/prep_cif.c \
+                 WhiteNeedle/Sources/libffi/src/types.c \
+                 WhiteNeedle/Sources/libffi/src/closures.c
+FFI_ASM_SOURCES := WhiteNeedle/Sources/libffi/src/sysv_arm64.S
+
 OBJC_OBJECTS   := $(patsubst %.m,build/%.o,$(notdir $(OBJC_SOURCES)))
 OBJCXX_OBJECTS := $(patsubst %.mm,build/%.o,$(notdir $(OBJCXX_SOURCES)))
 C_OBJECTS      := $(patsubst %.c,build/%.o,$(notdir $(C_SOURCES)))
 CXX_OBJECTS    := $(patsubst %.cpp,build/%.o,$(notdir $(CXX_SOURCES)))
 INSPM_OBJECTS  := $(patsubst %.m,build/insp_%.o,$(notdir $(INSP_M_SOURCES)))
-OBJECTS        := $(OBJC_OBJECTS) $(OBJCXX_OBJECTS) $(C_OBJECTS) $(CXX_OBJECTS) $(INSPM_OBJECTS)
+FFI_C_OBJECTS  := $(patsubst %.c,build/ffi_%.o,$(notdir $(FFI_C_SOURCES)))
+FFI_ASM_OBJECTS := $(patsubst %.S,build/ffi_%.o,$(notdir $(FFI_ASM_SOURCES)))
+OBJECTS        := $(OBJC_OBJECTS) $(OBJCXX_OBJECTS) $(C_OBJECTS) $(CXX_OBJECTS) $(INSPM_OBJECTS) $(FFI_C_OBJECTS) $(FFI_ASM_OBJECTS)
 
 OUTPUT       := build/WhiteNeedle.dylib
 
-COMMON_FLAGS := $(ARCH) $(SYSROOT) $(MIN_VER) -O2 -IWhiteNeedle/Sources -IWhiteNeedle/Sources/Inspector
+FFI_INCLUDE  := -IWhiteNeedle/Sources/libffi/include -IWhiteNeedle/Sources/libffi/src
+COMMON_FLAGS := $(ARCH) $(SYSROOT) $(MIN_VER) -O2 -IWhiteNeedle/Sources -IWhiteNeedle/Sources/Inspector $(FFI_INCLUDE)
 CFLAGS       := $(COMMON_FLAGS) -fobjc-arc -fmodules
 CXXFLAGS     := $(COMMON_FLAGS) -std=c++17 -fno-exceptions -fno-rtti
 OBJCXXFLAGS  := $(COMMON_FLAGS) -fobjc-arc -fmodules -std=c++17 -fno-exceptions -fno-rtti
@@ -65,6 +75,16 @@ build/%.o: WhiteNeedle/Sources/Inspector/%.mm
 build/insp_%.o: WhiteNeedle/Sources/Inspector/%.m
 	@mkdir -p build
 	$(CC) $(CFLAGS) -c -o $@ $<
+
+# libffi C sources
+build/ffi_%.o: WhiteNeedle/Sources/libffi/src/%.c
+	@mkdir -p build
+	$(CC) $(ARCH) $(SYSROOT) $(MIN_VER) -O2 $(FFI_INCLUDE) -c -o $@ $<
+
+# libffi assembly
+build/ffi_%.o: WhiteNeedle/Sources/libffi/src/%.S
+	@mkdir -p build
+	$(CC) $(ARCH) $(SYSROOT) $(MIN_VER) $(FFI_INCLUDE) -c -o $@ $<
 
 clean:
 	rm -rf build

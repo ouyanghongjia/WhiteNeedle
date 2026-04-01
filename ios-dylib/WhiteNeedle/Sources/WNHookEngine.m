@@ -312,27 +312,36 @@ static NSMutableSet<NSString *> *g_reentrancyGuard = nil;
     state.targetClass = cls;
 
     // Swizzle methodSignatureForSelector:
+    // NOTE: class_replaceMethod returns NULL when the method is inherited (not
+    // overridden by cls).  We must capture the current IMP *before* replacing
+    // so we can still call through to the original (possibly inherited) version.
     SEL sigSel = @selector(methodSignatureForSelector:);
-    state.origMethodSignatureForSelector = class_replaceMethod(
+    Method sigMethod = class_getInstanceMethod(cls, sigSel);
+    IMP origSigIMP = sigMethod ? method_getImplementation(sigMethod) : NULL;
+
+    class_replaceMethod(
         cls, sigSel,
         imp_implementationWithBlock(^NSMethodSignature *(id _self, SEL selector) {
             WNHookEntry *entry = [WNHookEngine findEntryForClass:object_getClass(_self) selector:selector];
             if (entry) {
                 return entry.methodSignature;
             }
-            // Call original
             WNClassHookState *st = g_classStates[NSStringFromClass(cls)];
             if (st && st.origMethodSignatureForSelector) {
                 return ((NSMethodSignature *(*)(id, SEL, SEL))st.origMethodSignatureForSelector)(_self, sigSel, selector);
             }
             return nil;
         }),
-        method_getTypeEncoding(class_getInstanceMethod(cls, sigSel) ?: class_getInstanceMethod([NSObject class], sigSel))
+        method_getTypeEncoding(sigMethod ?: class_getInstanceMethod([NSObject class], sigSel))
     );
+    state.origMethodSignatureForSelector = origSigIMP;
 
     // Swizzle forwardInvocation:
     SEL fwdSel = @selector(forwardInvocation:);
-    state.origForwardInvocation = class_replaceMethod(
+    Method fwdMethod = class_getInstanceMethod(cls, fwdSel);
+    IMP origFwdIMP = fwdMethod ? method_getImplementation(fwdMethod) : NULL;
+
+    class_replaceMethod(
         cls, fwdSel,
         imp_implementationWithBlock(^(id _self, NSInvocation *invocation) {
             SEL selector = invocation.selector;
@@ -342,7 +351,6 @@ static NSMutableSet<NSString *> *g_reentrancyGuard = nil;
                 [WNHookEngine handleHookedInvocation:invocation entry:entry target:_self];
                 return;
             }
-            // Not our hook — forward to original
             WNClassHookState *st = g_classStates[NSStringFromClass(cls)];
             if (st && st.origForwardInvocation) {
                 ((void (*)(id, SEL, NSInvocation *))st.origForwardInvocation)(_self, fwdSel, invocation);
@@ -350,8 +358,9 @@ static NSMutableSet<NSString *> *g_reentrancyGuard = nil;
                 [_self doesNotRecognizeSelector:selector];
             }
         }),
-        method_getTypeEncoding(class_getInstanceMethod(cls, fwdSel) ?: class_getInstanceMethod([NSObject class], fwdSel))
+        method_getTypeEncoding(fwdMethod ?: class_getInstanceMethod([NSObject class], fwdSel))
     );
+    state.origForwardInvocation = origFwdIMP;
 
     g_classStates[classKey] = state;
     NSLog(@"%@ Class hooked for forwarding: %@", kLogPrefix, classKey);

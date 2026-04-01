@@ -10,7 +10,6 @@
 #import "WNFileSystemBridge.h"
 #import "WNPerformanceBridge.h"
 #import "WNUIDebugBridge.h"
-#import "WNHostMapping.h"
 #import <objc/runtime.h>
 
 static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
@@ -82,7 +81,6 @@ static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
     [WNFileSystemBridge registerInContext:self.context];
     [WNPerformanceBridge registerInContext:self.context];
     [WNUIDebugBridge registerInContext:self.context];
-    [WNHostMapping registerInContext:self.context];
 
     self.isReady = YES;
     NSLog(@"%@ Engine initialized (JavaScriptCore)", kWNLogPrefix);

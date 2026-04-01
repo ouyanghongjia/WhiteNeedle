@@ -129,9 +129,12 @@ export function activate(context: vscode.ExtensionContext) {
         scriptTreeProvider.refresh();
     };
 
+    const attachedBridges = new WeakSet<object>();
     const attachBridgeListeners = () => {
         const bridge = deviceManager.getBridge();
         if (!bridge) { return; }
+        if (attachedBridges.has(bridge as object)) { return; }
+        attachedBridges.add(bridge as object);
         bridge.on('console', (data: { message: string; level: string }) => {
             const lvl = (data.level === 'warn' || data.level === 'error' || data.level === 'debug')
                 ? data.level as LogLevel : 'log';

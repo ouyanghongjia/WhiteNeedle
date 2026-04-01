@@ -14,10 +14,17 @@ Pod::Spec.new do |s|
   s.platform         = :ios, '15.0'
   s.requires_arc     = true
 
-  s.source_files     = 'Sources/**/*.{h,hpp,m,mm,c,cpp}'
+  s.source_files     = 'Sources/**/*.{h,hpp,m,mm,c,cpp,S}'
+  s.exclude_files    = 'Sources/libffi/src/dlmalloc.c',
+                       'Sources/libffi/src/debug.c',
+                       'Sources/libffi/src/java_raw_api.c',
+                       'Sources/libffi/src/raw_api.c'
   s.public_header_files = 'Sources/*.h', 'Sources/Inspector/WNInspectorBridge.h', 'Sources/Inspector/WNInspectorServer.h'
 
   s.frameworks       = 'Foundation', 'UIKit', 'JavaScriptCore', 'Security'
   s.libraries        = 'c++'
   s.xcconfig         = { 'CLANG_CXX_LANGUAGE_STANDARD' => 'c++17' }
+  s.pod_target_xcconfig = {
+    'HEADER_SEARCH_PATHS' => '"${PODS_TARGET_SRCROOT}/Sources/libffi/include" "${PODS_TARGET_SRCROOT}/Sources/libffi/src"'
+  }
 end

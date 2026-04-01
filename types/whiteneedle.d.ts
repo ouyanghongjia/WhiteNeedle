@@ -403,9 +403,16 @@ declare function $struct(name: string, fields: StructField[]): StructConstructor
 interface BoxedBlock {}
 
 /**
+ * 将 ObjC 风格 Block 签名解析为类型编码（如 "void (^)(id, double)" → "v@?@d"）
+ * @param signature 含 `(^)` 的签名，如 void (^)(id)、void(^)(BOOL)
+ * @returns 编码字符串，解析失败为 null
+ */
+declare function $blockSig(signature: string): string | null;
+
+/**
  * 将 JavaScript 函数包装为 ObjC Block 对象
  * @param fn JavaScript 回调函数
- * @param typeEncoding Block 的 ObjC 类型编码（如 "v@?", "v@?@", "@@?@"）
+ * @param typeEncoding Block 的 ObjC 类型编码（如 "v@?", "v@?@", "@@?@"），或 ObjC 风格签名（须含 "(^)"）
  * @returns 封装后的 Block 对象
  */
 declare function $block(fn: (...args: any[]) => any, typeEncoding: string): BoxedBlock;
@@ -413,7 +420,7 @@ declare function $block(fn: (...args: any[]) => any, typeEncoding: string): Boxe
 /**
  * 从 JavaScript 调用一个 ObjC Block
  * @param block Block 对象
- * @param typeEncoding Block 的类型编码
+ * @param typeEncoding Block 的类型编码或 ObjC 风格签名（须含 "(^)"）
  * @param args 传递给 Block 的参数
  * @returns Block 的返回值
  */

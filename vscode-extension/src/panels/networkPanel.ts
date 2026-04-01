@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { DeviceManager } from '../device/deviceManager';
+import { DeviceManager, ConnectionState } from '../device/deviceManager';
+import { TcpBridge } from '../bridge/tcpBridge';
 
 export class NetworkPanel {
     public static currentPanel: NetworkPanel | undefined;
@@ -8,6 +9,9 @@ export class NetworkPanel {
     private disposables: vscode.Disposable[] = [];
     private autoRefreshTimer: ReturnType<typeof setInterval> | null = null;
     private capturing = true;
+    /** Avoid duplicate bridge.on; rebind after reconnect (new TcpBridge instance). */
+    private boundBridge: TcpBridge | null = null;
+    private bridgeNetCleanup: (() => void) | null = null;
 
     public static createOrShow(extensionUri: vscode.Uri, deviceManager: DeviceManager): void {
         if (NetworkPanel.currentPanel) {
@@ -51,23 +55,52 @@ export class NetworkPanel {
             }
         }, null, this.disposables);
 
+        const onStateChanged = (s: ConnectionState) => {
+            if (s === 'connected' || s === 'disconnected' || s === 'reconnecting') {
+                this.syncBridgeNetworkListeners();
+            }
+        };
+        const onReconnected = () => this.syncBridgeNetworkListeners();
+        this.deviceManager.on('stateChanged', onStateChanged);
+        this.deviceManager.on('reconnected', onReconnected);
+        this.disposables.push(new vscode.Disposable(() => {
+            this.deviceManager.removeListener('stateChanged', onStateChanged);
+            this.deviceManager.removeListener('reconnected', onReconnected);
+        }));
+
+        this.syncBridgeNetworkListeners();
+        this.loadRequests();
+    }
+
+    /** Attach network stream listeners to current bridge; detach from previous when TcpBridge is replaced. */
+    private syncBridgeNetworkListeners(): void {
         const bridge = this.deviceManager.getBridge();
-        if (bridge) {
-            const onNetReq = (data: any) => {
-                this.panel.webview.postMessage({ command: 'networkEvent', type: 'request', data });
-            };
-            const onNetResp = (data: any) => {
-                this.panel.webview.postMessage({ command: 'networkEvent', type: 'response', data });
-            };
-            bridge.on('networkRequest', onNetReq);
-            bridge.on('networkResponse', onNetResp);
-            this.disposables.push(new vscode.Disposable(() => {
-                bridge.removeListener('networkRequest', onNetReq);
-                bridge.removeListener('networkResponse', onNetResp);
-            }));
+        if (bridge === this.boundBridge) {
+            return;
+        }
+        if (this.bridgeNetCleanup) {
+            this.bridgeNetCleanup();
+            this.bridgeNetCleanup = null;
+        }
+        this.boundBridge = null;
+
+        if (!bridge) {
+            return;
         }
 
-        this.loadRequests();
+        const onNetReq = (data: any) => {
+            this.panel.webview.postMessage({ command: 'networkEvent', type: 'request', data });
+        };
+        const onNetResp = (data: any) => {
+            this.panel.webview.postMessage({ command: 'networkEvent', type: 'response', data });
+        };
+        bridge.on('networkRequest', onNetReq);
+        bridge.on('networkResponse', onNetResp);
+        this.boundBridge = bridge;
+        this.bridgeNetCleanup = () => {
+            bridge.removeListener('networkRequest', onNetReq);
+            bridge.removeListener('networkResponse', onNetResp);
+        };
     }
 
     private async loadRequests(): Promise<void> {
@@ -116,6 +149,11 @@ export class NetworkPanel {
     private dispose(): void {
         NetworkPanel.currentPanel = undefined;
         if (this.autoRefreshTimer) { clearInterval(this.autoRefreshTimer); }
+        if (this.bridgeNetCleanup) {
+            this.bridgeNetCleanup();
+            this.bridgeNetCleanup = null;
+        }
+        this.boundBridge = null;
         this.disposables.forEach(d => d.dispose());
         this.panel.dispose();
     }

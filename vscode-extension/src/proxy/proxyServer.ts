@@ -4,6 +4,11 @@ import * as url from 'url';
 import { Duplex } from 'stream';
 import { EventEmitter } from 'events';
 
+interface ConnectTunnel {
+    client: Duplex;
+    server: net.Socket | null;
+}
+
 export interface HostMappingRule {
     hostname: string;
     ip: string;
@@ -22,18 +27,56 @@ export interface HostMappingRule {
 export class ProxyServer extends EventEmitter {
     private server: http.Server | null = null;
     private rules: Map<string, string> = new Map();
+    private connectTunnels: Set<ConnectTunnel> = new Set();
     private _port = 0;
     private _running = false;
 
     get port(): number { return this._port; }
     get running(): boolean { return this._running; }
 
-    updateRules(rules: HostMappingRule[]): void {
-        this.rules.clear();
-        for (const r of rules) {
-            this.rules.set(r.hostname.toLowerCase(), r.ip);
+    /**
+     * Drop all active HTTPS CONNECT tunnels so the next request re-resolves host mapping.
+     * Call when rules change so clients cannot keep using an upstream opened with old IP.
+     */
+    private closeAllConnectTunnels(reason: string): void {
+        if (this.connectTunnels.size === 0) {
+            return;
         }
+        const n = this.connectTunnels.size;
+        for (const t of this.connectTunnels) {
+            try {
+                t.server?.destroy();
+                t.client.destroy();
+            } catch {
+                /* ignore */
+            }
+        }
+        this.connectTunnels.clear();
+        this.emit('log', `Closed ${n} HTTPS tunnel(s): ${reason}`);
+    }
+
+    updateRules(rules: HostMappingRule[]): void {
+        const next = new Map<string, string>();
+        for (const r of rules) {
+            next.set(r.hostname.toLowerCase(), r.ip);
+        }
+        if (!this.rulesMapsEqual(this.rules, next)) {
+            this.closeAllConnectTunnels('host mapping rules updated');
+        }
+        this.rules = next;
         this.emit('rulesUpdated', rules.length);
+    }
+
+    private rulesMapsEqual(a: Map<string, string>, b: Map<string, string>): boolean {
+        if (a.size !== b.size) {
+            return false;
+        }
+        for (const [k, v] of a) {
+            if (b.get(k) !== v) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private resolveHost(hostname: string): string {
@@ -71,6 +114,7 @@ export class ProxyServer extends EventEmitter {
     }
 
     stop(): void {
+        this.closeAllConnectTunnels('proxy stopped');
         if (this.server) {
             this.server.close();
             this.server = null;
@@ -95,11 +139,19 @@ export class ProxyServer extends EventEmitter {
         const [hostname, portStr] = reqUrl.split(':');
         const port = parseInt(portStr, 10) || 443;
         const resolvedHost = this.resolveHost(hostname);
-
         const mapped = resolvedHost !== hostname;
-        if (mapped) {
-            this.emit('log', `CONNECT ${hostname}:${port} → ${resolvedHost}:${port}`);
-        }
+        const clientIp = req.socket.remoteAddress || 'unknown';
+        this.emit(
+            'log',
+            `CONNECT ${hostname}:${port} -> ${resolvedHost}:${port} (mapped=${mapped ? 'yes' : 'no'}, client=${clientIp})`,
+        );
+
+        const tunnel: ConnectTunnel = { client: clientSocket, server: null };
+        this.connectTunnels.add(tunnel);
+        const detachTunnel = () => {
+            this.connectTunnels.delete(tunnel);
+        };
+        clientSocket.once('close', detachTunnel);
 
         const serverSocket = net.connect(port, resolvedHost, () => {
             clientSocket.write(
@@ -114,12 +166,17 @@ export class ProxyServer extends EventEmitter {
             clientSocket.pipe(serverSocket);
         });
 
+        tunnel.server = serverSocket;
+        serverSocket.once('close', detachTunnel);
+
         serverSocket.on('error', (err) => {
             this.emit('log', `CONNECT error ${hostname}:${port} → ${err.message}`);
+            detachTunnel();
             clientSocket.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
         });
 
         clientSocket.on('error', () => {
+            detachTunnel();
             serverSocket.destroy();
         });
     }
@@ -146,10 +203,11 @@ export class ProxyServer extends EventEmitter {
         const port = parseInt(parsed.port, 10) || 80;
         const resolvedHost = this.resolveHost(hostname);
         const mapped = resolvedHost !== hostname;
-
-        if (mapped) {
-            this.emit('log', `HTTP ${clientReq.method} ${hostname} → ${resolvedHost}`);
-        }
+        const clientIp = clientReq.socket.remoteAddress || 'unknown';
+        this.emit(
+            'log',
+            `HTTP ${clientReq.method || 'GET'} ${hostname}:${port}${parsed.pathname}${parsed.search} -> ${resolvedHost}:${port} (mapped=${mapped ? 'yes' : 'no'}, client=${clientIp})`,
+        );
 
         const headers = { ...clientReq.headers };
         delete headers['proxy-connection'];

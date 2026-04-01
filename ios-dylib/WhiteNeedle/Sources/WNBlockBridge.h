@@ -23,6 +23,9 @@ NS_ASSUME_NONNULL_BEGIN
  *   "v@?B"          → void (^)(BOOL)
  *   "@@?@"          → id (^)(id)
  *   "v@?@d"         → void (^)(id, double)
+ *
+ * ObjC-style signatures (e.g. void (^)(id, double)) are accepted by $block / $callBlock
+ * when the string contains "(^)". Use $blockSig() to convert a signature to an encoding only.
  */
 @interface WNBlockBridge : NSObject
 
