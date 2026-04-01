@@ -456,16 +456,57 @@ static NSMutableSet<NSString *> *g_reentrancyGuard = nil;
     }
 
     if (entry.replacement) {
-        // Full replacement mode
         JSValue *replaceFn = entry.replacement.value;
         if (replaceFn && ![replaceFn isUndefined]) {
             JSValue *selfProxy = [WNObjCBridge createInstanceProxy:target inContext:ctx];
             JSValue *argsArray = [JSValue valueWithObject:jsArgs inContext:ctx];
-            JSValue *result = [replaceFn callWithArguments:@[selfProxy, argsArray]];
+
+            __block BOOL originalCalled = NO;
+            __block JSValue *originalResult = nil;
+
+            JSValue *originalFn = [JSValue valueWithObject:^JSValue *(JSValue *overrideArgs) {
+                originalCalled = YES;
+
+                if (overrideArgs && ![overrideArgs isUndefined] && ![overrideArgs isNull]) {
+                    NSUInteger argCount = [[overrideArgs[@"length"] toNumber] unsignedIntegerValue];
+                    for (NSUInteger i = 0; i < argCount && (i + 2) < sig.numberOfArguments; i++) {
+                        const char *argType = [sig getArgumentTypeAtIndex:i + 2];
+                        NSUInteger argSize = 0;
+                        NSGetSizeAndAlignment(argType, &argSize, NULL);
+                        void *buf = calloc(1, argSize);
+                        JSValue *jsVal = [overrideArgs valueAtIndex:i];
+                        [WNTypeConversion convertJSValue:jsVal toTypeEncoding:argType buffer:buf inContext:ctx];
+                        [invocation setArgument:buf atIndex:i + 2];
+                        free(buf);
+                    }
+                }
+
+                [invocation setSelector:entry.aliasSelector];
+                [invocation invoke];
+                [invocation setSelector:entry.originalSelector];
+
+                const char *retType = sig.methodReturnType;
+                if (retType[0] == 'v') {
+                    return [JSValue valueWithUndefinedInContext:ctx];
+                }
+                NSUInteger retSize = sig.methodReturnLength;
+                void *retBuf = calloc(1, retSize);
+                [invocation getReturnValue:retBuf];
+                JSValue *ret = [WNTypeConversion convertToJSValue:retBuf typeEncoding:retType inContext:ctx];
+                free(retBuf);
+                originalResult = ret;
+                return ret;
+            } inContext:ctx];
+
+            JSValue *result = [replaceFn callWithArguments:@[selfProxy, argsArray, originalFn]];
 
             const char *retType = sig.methodReturnType;
             if (retType[0] != 'v') {
-                [WNTypeConversion setInvocationReturnValue:invocation fromJSValue:result inContext:ctx];
+                if (result && ![result isUndefined]) {
+                    [WNTypeConversion setInvocationReturnValue:invocation fromJSValue:result inContext:ctx];
+                } else if (originalCalled && originalResult && ![originalResult isUndefined]) {
+                    [WNTypeConversion setInvocationReturnValue:invocation fromJSValue:originalResult inContext:ctx];
+                }
             }
         }
         [g_reentrancyGuard removeObject:guardKey];

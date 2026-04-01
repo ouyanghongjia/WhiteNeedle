@@ -136,6 +136,7 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
 
     JSValue *jsProxy = [JSValue valueWithObject:proxy inContext:context];
     [self attachInvokeMethod:jsProxy context:context proxy:proxy];
+    jsProxy[@"__wnNativeRef__"] = [JSValue valueWithObject:proxy inContext:context];
     return jsProxy;
 }
 
@@ -149,6 +150,7 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
 
     JSValue *jsProxy = [JSValue valueWithObject:proxy inContext:context];
     [self attachInvokeMethod:jsProxy context:context proxy:proxy];
+    jsProxy[@"__wnNativeRef__"] = [JSValue valueWithObject:proxy inContext:context];
     return jsProxy;
 }
 
@@ -162,9 +164,25 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
         }
         JSContext *ctx = [JSContext currentContext];
 
-        NSArray *jsArgs = @[];
+        NSMutableArray *jsArgs = [NSMutableArray array];
         if (argsArray && ![argsArray isUndefined] && ![argsArray isNull]) {
-            jsArgs = [argsArray toArray];
+            uint32_t len = [[argsArray[@"length"] toNumber] unsignedIntValue];
+            for (uint32_t i = 0; i < len; i++) {
+                JSValue *elem = [argsArray valueAtIndex:i];
+                id obj = [elem toObject];
+
+                if (obj && ![obj isKindOfClass:[WNObjCProxy class]] && ![obj isKindOfClass:[WNBoxing class]]) {
+                    JSValue *nativeRef = elem[@"__wnNativeRef__"];
+                    if (nativeRef && ![nativeRef isUndefined] && ![nativeRef isNull]) {
+                        id ref = [nativeRef toObject];
+                        if ([ref isKindOfClass:[WNObjCProxy class]] || [ref isKindOfClass:[WNBoxing class]]) {
+                            obj = ref;
+                        }
+                    }
+                }
+
+                [jsArgs addObject:obj ?: [NSNull null]];
+            }
         }
 
         return [WNObjCBridge invokeSelector:selectorString
@@ -269,7 +287,14 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
     [invocation setSelector:selector];
     [invocation retainArguments];
 
-    // Arguments start at index 2 (0=self, 1=_cmd)
+    NSLog(@"[WN-DIAG] invokeSelector:%@ target:%@ isClass:%d argCount:%lu sigArgCount:%lu",
+          selectorString, NSStringFromClass([target class]), isClass,
+          (unsigned long)jsArgs.count, (unsigned long)sig.numberOfArguments);
+    for (NSUInteger i = 0; i < jsArgs.count; i++) {
+        NSLog(@"[WN-DIAG]   arg[%lu] class=%@ value=%@", (unsigned long)i,
+              NSStringFromClass([jsArgs[i] class]), jsArgs[i]);
+    }
+
     for (NSUInteger i = 0; i < jsArgs.count && (i + 2) < sig.numberOfArguments; i++) {
         const char *argType = [sig getArgumentTypeAtIndex:i + 2];
         NSUInteger argSize = 0;
@@ -312,10 +337,12 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
         free(argBuf);
     }
 
+    NSLog(@"[WN-DIAG] about to [invocation invoke] for %@", selectorString);
     @try {
         [invocation invoke];
+        NSLog(@"[WN-DIAG] [invocation invoke] completed for %@", selectorString);
     } @catch (NSException *exception) {
-        NSLog(@"%@ Invocation exception: %@", kLogPrefix, exception);
+        NSLog(@"%@ Invocation exception for %@: %@ — %@", kLogPrefix, selectorString, exception.name, exception.reason);
         return [JSValue valueWithUndefinedInContext:context];
     }
 

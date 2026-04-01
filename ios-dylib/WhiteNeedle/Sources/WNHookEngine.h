@@ -23,9 +23,15 @@ NS_ASSUME_NONNULL_BEGIN
  *       }
  *   });
  *
- *   Interceptor.replace("-[MyClass myMethod:]", function(self, args) {
+ *   Interceptor.replace("-[MyClass myMethod:]", function(self, args, original) {
  *       console.log("arg0:", args[0]);
- *       return "replaced result";
+ *       return "replaced result";    // 不调 original → 原方法不执行
+ *   });
+ *
+ *   // 调用原方法 + 修改返回值:
+ *   Interceptor.replace("-[MyClass myMethod:]", function(self, args, original) {
+ *       var result = original(args);  // 调用原方法（可传修改后的 args）
+ *       return result + " (modified)";
  *   });
  *
  *   Interceptor.detach("-[UIViewController viewDidLoad]");

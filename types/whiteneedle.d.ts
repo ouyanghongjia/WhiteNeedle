@@ -193,7 +193,21 @@ interface AttachCallbacks {
     onLeave?(retval: any): any;
 }
 
-type ReplacementFunction = (self: ObjCProxy, args: any[]) => any;
+/**
+ * 调用原方法的函数。
+ * @param args 可选，传入修改后的参数数组；不传则使用原始参数。
+ * @returns 原方法的返回值
+ */
+type OriginalFunction = (args?: any[]) => any;
+
+/**
+ * replace 替换函数。
+ * @param self  被 hook 对象的代理
+ * @param args  原始调用参数
+ * @param original 调用原方法的函数（不调用则原方法不执行）
+ * @returns 作为方法返回值；若返回 undefined 且调用了 original，则使用 original 的返回值
+ */
+type ReplacementFunction = (self: ObjCProxy, args: any[], original: OriginalFunction) => any;
 
 interface HookCFunctionResult {
     success: boolean;
