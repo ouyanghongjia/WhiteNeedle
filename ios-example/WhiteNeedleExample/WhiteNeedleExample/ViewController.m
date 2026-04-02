@@ -7,6 +7,10 @@
 static NSString *const kCellID = @"ScriptCell";
 static NSString *const kNetworkCellID = @"NetworkCell";
 
+@interface CycleRetain : NSObject
+@property (nonatomic, strong) id obj;
+@end
+
 @interface ViewController ()
 @property (nonatomic, strong) UITableView *tableView;
 @property (nonatomic, strong) UITextView  *consoleView;
@@ -19,6 +23,8 @@ static NSString *const kNetworkCellID = @"NetworkCell";
 @property (nonatomic, strong) NSArray<NSString *> *scriptFiles;
 @property (nonatomic, strong) NSArray<NSDictionary *> *networkTests;
 @property (nonatomic, strong) NSMutableString *consoleLog;
+
+@property (nonatomic, strong) CycleRetain *cycleRetain;
 @end
 
 @implementation ViewController
@@ -35,6 +41,9 @@ static NSString *const kNetworkCellID = @"NetworkCell";
     [self loadScriptList];
     [self setupNetworkTests];
     [self buildUI];
+    
+    self.cycleRetain = [CycleRetain new];
+    self.cycleRetain.obj = self;
 }
 
 #pragma mark - Engine

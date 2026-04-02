@@ -15,6 +15,16 @@
  * Device -> Extension (Notifications):
  *   console        { level: string, message: string }
  *   scriptError    { message: string }
+ *
+ * Leak Detector JS API (via evaluate):
+ *   LeakDetector.takeSnapshot(tag?, filter?)       → snapshotId
+ *   LeakDetector.diffSnapshots(tagBefore, tagAfter) → { grown: [...] }
+ *   LeakDetector.clearSnapshot(tag)
+ *   LeakDetector.clearAllSnapshots()
+ *   LeakDetector.getStrongReferences(addressHex)   → [{ name, type, address, className }]
+ *   LeakDetector.scanReferences(addressHex, max?)  → [{ offset, address, className }]
+ *   LeakDetector.detectCycles(addressHex, depth?)   → [[cycle nodes...], ...]
+ *   LeakDetector.findInstances(className, subs?, max?) → [{ address, className, size }]
  */
 
 export interface LoadScriptParams {

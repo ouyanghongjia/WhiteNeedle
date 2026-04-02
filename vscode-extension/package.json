@@ -32,6 +32,7 @@
     "onCommand:whiteneedle.startProxy",
     "onCommand:whiteneedle.stopProxy",
     "onCommand:whiteneedle.openSnippets",
+    "onCommand:whiteneedle.openLeakDetector",
     "onCommand:whiteneedle.toggleProxy",
     "onDebugResolve:whiteneedle"
   ],
@@ -198,6 +199,12 @@
         "title": "Script Snippets",
         "icon": "$(library)",
         "category": "WhiteNeedle"
+      },
+      {
+        "command": "whiteneedle.openLeakDetector",
+        "title": "Leak Detector",
+        "icon": "$(search-fuzzy)",
+        "category": "WhiteNeedle"
       }
     ],
     "menus": {
@@ -268,6 +275,10 @@
         {
           "command": "whiteneedle.openSnippets",
           "group": "wn_scripts@1"
+        },
+        {
+          "command": "whiteneedle.openLeakDetector",
+          "group": "wn_live@4"
         },
         {
           "command": "whiteneedle.startProxy",

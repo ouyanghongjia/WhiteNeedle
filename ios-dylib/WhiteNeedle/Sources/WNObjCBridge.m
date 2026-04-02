@@ -1,6 +1,7 @@
 #import "WNObjCBridge.h"
 #import "WNBoxing.h"
 #import "WNTypeConversion.h"
+#import "WNHeapScanner.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <malloc/malloc.h>
@@ -496,7 +497,7 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
     }
 }
 
-#pragma mark - ObjC.choose() — heap scan via malloc zone enumeration
+#pragma mark - ObjC.choose() — heap scan via WNHeapScanner
 
 + (void)heapScan:(NSString *)className callbacks:(JSValue *)callbacks inContext:(JSContext *)context {
     Class targetClass = NSClassFromString(className);
@@ -508,27 +509,30 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
     JSValue *onMatch = callbacks[@"onMatch"];
     JSValue *onComplete = callbacks[@"onComplete"];
 
-    // Use objc runtime's fast enumeration where possible
-    // Fallback: iterate malloc zones
-    NSMutableArray *found = [NSMutableArray array];
+    NSArray<NSDictionary *> *instances = [WNHeapScanner findInstancesOfClass:targetClass
+                                                            includeSubclasses:YES
+                                                                     maxCount:10000];
 
-    vm_address_t *zones = NULL;
-    unsigned int zoneCount = 0;
-    kern_return_t kr = malloc_get_all_zones(mach_task_self(), NULL, &zones, &zoneCount);
+    for (NSDictionary *entry in instances) {
+        if (onMatch && ![onMatch isUndefined]) {
+            NSString *addrHex = entry[@"address"];
+            unsigned long long addrVal = 0;
+            [[NSScanner scannerWithString:addrHex] scanHexLongLong:&addrVal];
+            if (addrVal == 0) continue;
 
-    if (kr == KERN_SUCCESS) {
-        for (unsigned int z = 0; z < zoneCount; z++) {
-            malloc_zone_t *zone = (malloc_zone_t *)zones[z];
-            if (!zone || !zone->introspect || !zone->introspect->enumerator) continue;
-
-            // We can't easily enumerate all objects in a zone without
-            // private APIs. Instead, use a simpler approach for now.
+            id obj = (__bridge id)(void *)(uintptr_t)addrVal;
+            @try {
+                JSValue *proxy = [WNObjCBridge createInstanceProxy:obj inContext:context];
+                JSValue *action = [onMatch callWithArguments:@[proxy]];
+                if (action && [action isString] && [[action toString] isEqualToString:@"stop"]) {
+                    break;
+                }
+            } @catch (NSException *e) {
+                NSLog(@"%@ choose: onMatch exception for %@: %@", kLogPrefix, addrHex, e);
+            }
         }
     }
 
-    // Simpler approach: scan the autorelease pool / known collections
-    // This is a best-effort scan; full heap scan requires vm_region
-    // which works on non-jailbroken but is slow
     if (onComplete && ![onComplete isUndefined]) {
         [onComplete callWithArguments:@[]];
     }

@@ -15,6 +15,7 @@ import { NetworkPanel } from './panels/networkPanel';
 import { ViewHierarchyPanel } from './panels/viewHierarchyPanel';
 import { HostMappingPanel } from './panels/hostMappingPanel';
 import { SnippetPanel } from './panels/snippetPanel';
+import { LeakDetectorPanel } from './panels/leakDetectorPanel';
 import { ProxyServer } from './proxy/proxyServer';
 import {
     WhiteNeedleConfigurationProvider,
@@ -423,6 +424,10 @@ export function activate(context: vscode.ExtensionContext) {
 
         vscode.commands.registerCommand('whiteneedle.openSnippets', () => {
             SnippetPanel.createOrShow(context.extensionUri, deviceManager, scriptRunner, context.globalState);
+        }),
+
+        vscode.commands.registerCommand('whiteneedle.openLeakDetector', () => {
+            LeakDetectorPanel.createOrShow(context.extensionUri, deviceManager, scriptRunner);
         }),
 
         // --- Proxy commands ---
