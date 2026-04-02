@@ -5,6 +5,7 @@ import {
     ScriptSnippet,
     ScriptHistoryEntry,
     SnippetCategory,
+    SnippetParam,
     resolveSnippet,
     searchSnippets,
     exportSnippets,
@@ -225,6 +226,10 @@ export class SnippetPanel {
                 this.panel.webview.postMessage({ command: 'historyData', history: [] });
                 break;
             }
+            case 'quickAddSnippet': {
+                await this.handleQuickAdd(msg);
+                break;
+            }
             case 'rerunFromHistory': {
                 const histSnippet = this.findSnippet(msg.snippetId);
                 if (!histSnippet) {
@@ -315,6 +320,60 @@ export class SnippetPanel {
         const content = exportSnippets(snippets);
         await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
         vscode.window.showInformationMessage(`Exported ${snippets.length} snippet(s).`);
+    }
+
+    private async handleQuickAdd(msg: {
+        name: string; code: string; category?: string;
+        description?: string; tags?: string[]; params?: Array<{ name: string; placeholder: string; description: string }>;
+    }): Promise<void> {
+        const { name, code } = msg;
+        if (!name || typeof name !== 'string' || !name.trim()) {
+            vscode.window.showErrorMessage('Snippet name is required.');
+            return;
+        }
+        if (!code || typeof code !== 'string' || !code.trim()) {
+            vscode.window.showErrorMessage('Snippet code is required.');
+            return;
+        }
+
+        const VALID_CATEGORIES: SnippetCategory[] = ['hook', 'runtime', 'network', 'ui', 'storage', 'performance', 'utility'];
+        const cat: SnippetCategory = (typeof msg.category === 'string' && VALID_CATEGORIES.includes(msg.category as SnippetCategory))
+            ? msg.category as SnippetCategory
+            : 'utility';
+
+        const tags: string[] = ['custom'];
+        if (Array.isArray(msg.tags)) {
+            for (const t of msg.tags) {
+                const trimmed = typeof t === 'string' ? t.trim().toLowerCase() : '';
+                if (trimmed && !tags.includes(trimmed)) { tags.push(trimmed); }
+            }
+        }
+
+        const params: SnippetParam[] | undefined = Array.isArray(msg.params)
+            ? msg.params
+                .filter(p => p && typeof p.name === 'string' && p.name.trim())
+                .map(p => ({
+                    name: p.name.trim(),
+                    placeholder: typeof p.placeholder === 'string' ? p.placeholder.trim() : '',
+                    description: typeof p.description === 'string' ? p.description.trim() : '',
+                }))
+            : undefined;
+
+        const newSnippet: ScriptSnippet = {
+            id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            name: name.trim(),
+            category: cat,
+            description: typeof msg.description === 'string' ? msg.description.trim() : '',
+            tags,
+            code: code,
+            params: params && params.length > 0 ? params : undefined,
+        };
+
+        const custom = this.getCustomSnippets();
+        custom.push(newSnippet);
+        await this.saveCustomSnippets(custom);
+        this.refreshWebview();
+        vscode.window.showInformationMessage(`Snippet "${newSnippet.name}" added.`);
     }
 
     private refreshWebview(): void {
@@ -457,6 +516,50 @@ export class SnippetPanel {
     .empty-state { text-align: center; padding: 40px; opacity: 0.6; }
     .count-label { font-size: 11px; opacity: 0.6; margin-left: auto; }
 
+    .quick-add-backdrop {
+        display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 100;
+        align-items: center; justify-content: center;
+    }
+    .quick-add-backdrop.visible { display: flex; }
+    .quick-add-dialog {
+        background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+        padding: 20px; width: 90%; max-width: 560px; max-height: 85vh; overflow-y: auto;
+    }
+    .quick-add-dialog h3 { margin: 0 0 14px; font-size: 15px; }
+    .qa-field { margin-bottom: 12px; }
+    .qa-field label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+    .qa-field input, .qa-field select, .qa-field textarea {
+        width: 100%; box-sizing: border-box; padding: 6px 10px;
+        background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px;
+        font-family: inherit; font-size: 13px;
+    }
+    .qa-field textarea { min-height: 180px; font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 12px; resize: vertical; }
+    .qa-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+    .qa-actions button { padding: 6px 16px; border-radius: 4px; border: 1px solid var(--border); cursor: pointer; font-size: 13px; }
+    .qa-actions .qa-save { background: var(--highlight); color: var(--bg); font-weight: 600; border-color: var(--highlight); }
+    .qa-actions .qa-cancel { background: transparent; color: var(--fg); }
+    .qa-row-2 { display: flex; gap: 12px; }
+    .qa-params-section { margin-bottom: 12px; }
+    .qa-params-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+    .qa-params-header label { font-size: 12px; font-weight: 600; }
+    .qa-add-param-btn { font-size: 11px !important; padding: 2px 10px !important; }
+    .qa-param-row {
+        display: flex; gap: 6px; align-items: center; margin-bottom: 6px;
+        padding: 8px; border: 1px solid var(--border); border-radius: 4px; background: rgba(128,128,128,0.05);
+    }
+    .qa-param-row input {
+        flex: 1; padding: 4px 8px; background: var(--bg); color: var(--fg);
+        border: 1px solid var(--border); border-radius: 3px; font-size: 12px;
+    }
+    .qa-param-row input:first-child { flex: 0.8; }
+    .qa-param-remove {
+        background: transparent; border: none; color: #f66; cursor: pointer;
+        font-size: 16px; padding: 0 4px; line-height: 1; flex-shrink: 0;
+    }
+    .qa-param-remove:hover { color: #f33; }
+    .qa-field code { font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 11px; background: rgba(128,128,128,0.15); padding: 1px 4px; border-radius: 2px; }
+    .qa-params-header code { font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 11px; background: rgba(128,128,128,0.15); padding: 1px 4px; border-radius: 2px; }
+
     .fav-btn {
         background: transparent; border: none; cursor: pointer; font-size: 16px;
         padding: 2px 6px; line-height: 1; opacity: 0.5; flex-shrink: 0;
@@ -487,6 +590,7 @@ ${OVERLAY_HTML}
 <div class="tab-content active" id="tab-snippets">
     <div class="toolbar">
         <input class="search-input" id="searchInput" placeholder="Search snippets... (e.g. hook, network, viewcontroller)" />
+        <button class="io-btn" id="btnQuickAdd" title="Create a new custom snippet">+ New</button>
         <button class="io-btn" id="btnImport" title="Import snippets from JSON file">Import</button>
         <button class="io-btn" id="btnExport" title="Export snippets to JSON file">Export</button>
         <span class="count-label" id="countLabel"></span>
@@ -504,6 +608,53 @@ ${OVERLAY_HTML}
         <button class="io-btn" id="btnClearHistory">Clear History</button>
     </div>
     <div id="historyList"></div>
+</div>
+
+<div class="quick-add-backdrop" id="quickAddBackdrop">
+    <div class="quick-add-dialog">
+        <h3>New Custom Snippet</h3>
+        <div class="qa-field">
+            <label>Name *</label>
+            <input id="qaName" placeholder="e.g. Dump Keychain" />
+        </div>
+        <div class="qa-row-2">
+            <div class="qa-field" style="flex:1">
+                <label>Category</label>
+                <select id="qaCategory">
+                    <option value="utility">Utility</option>
+                    <option value="hook">Hook</option>
+                    <option value="runtime">Runtime</option>
+                    <option value="network">Network</option>
+                    <option value="ui">UI</option>
+                    <option value="storage">Storage</option>
+                    <option value="performance">Performance</option>
+                </select>
+            </div>
+            <div class="qa-field" style="flex:2">
+                <label>Tags <span style="opacity:0.5">(comma separated)</span></label>
+                <input id="qaTags" placeholder="e.g. hook, trace, network" />
+            </div>
+        </div>
+        <div class="qa-field">
+            <label>Description</label>
+            <input id="qaDesc" placeholder="Brief description (optional)" />
+        </div>
+        <div class="qa-field">
+            <label>JavaScript Code * <span style="opacity:0.5">Use <code>{{PARAM_NAME}}</code> as placeholders for parameters</span></label>
+            <textarea id="qaCode" placeholder="Paste your JavaScript code here...&#10;&#10;Tip: Use {{CLASS_NAME}} style placeholders, then add matching parameters below."></textarea>
+        </div>
+        <div class="qa-params-section">
+            <div class="qa-params-header">
+                <label>Parameters <span style="opacity:0.5">(match <code>{{NAME}}</code> in code)</span></label>
+                <button class="io-btn qa-add-param-btn" id="qaAddParam" type="button">+ Add Param</button>
+            </div>
+            <div id="qaParamsList"></div>
+        </div>
+        <div class="qa-actions">
+            <button class="qa-cancel" id="qaCancel">Cancel</button>
+            <button class="qa-save" id="qaSave">Add Snippet</button>
+        </div>
+    </div>
 </div>
 
 <script nonce="${nonce}">
@@ -526,6 +677,79 @@ ${OVERLAY_JS}
         renderHistory();
 
         document.getElementById('searchInput').addEventListener('input', onSearch);
+        document.getElementById('btnQuickAdd').addEventListener('click', () => {
+            document.getElementById('quickAddBackdrop').classList.add('visible');
+            document.getElementById('qaName').focus();
+        });
+        document.getElementById('qaCancel').addEventListener('click', () => {
+            qaReset();
+            document.getElementById('quickAddBackdrop').classList.remove('visible');
+        });
+        document.getElementById('quickAddBackdrop').addEventListener('click', (e) => {
+            if (e.target === document.getElementById('quickAddBackdrop')) {
+                qaReset();
+                document.getElementById('quickAddBackdrop').classList.remove('visible');
+            }
+        });
+        document.getElementById('qaAddParam').addEventListener('click', () => qaAddParamRow('', '', ''));
+        document.getElementById('qaCode').addEventListener('blur', qaAutoDetectParams);
+        document.getElementById('qaSave').addEventListener('click', () => {
+            const name = document.getElementById('qaName').value.trim();
+            const code = document.getElementById('qaCode').value;
+            const category = document.getElementById('qaCategory').value;
+            const description = document.getElementById('qaDesc').value.trim();
+            const tagsRaw = document.getElementById('qaTags').value;
+            const tags = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
+            if (!name) { document.getElementById('qaName').focus(); return; }
+            if (!code.trim()) { document.getElementById('qaCode').focus(); return; }
+            var params = [];
+            document.querySelectorAll('.qa-param-row').forEach(row => {
+                const inputs = row.querySelectorAll('input');
+                const pName = inputs[0].value.trim();
+                if (pName) {
+                    params.push({ name: pName, placeholder: inputs[1].value.trim(), description: inputs[2].value.trim() });
+                }
+            });
+            vscode.postMessage({ command: 'quickAddSnippet', name, code, category, description, tags, params: params.length ? params : undefined });
+            qaReset();
+            document.getElementById('quickAddBackdrop').classList.remove('visible');
+        });
+        function qaAddParamRow(name, placeholder, desc) {
+            var row = document.createElement('div');
+            row.className = 'qa-param-row';
+            row.innerHTML =
+                '<input placeholder="Name (e.g. CLASS_NAME)" value="' + escapeHtml(name) + '" />' +
+                '<input placeholder="Default value" value="' + escapeHtml(placeholder) + '" />' +
+                '<input placeholder="Description" value="' + escapeHtml(desc) + '" />' +
+                '<button class="qa-param-remove" title="Remove">&times;</button>';
+            row.querySelector('.qa-param-remove').addEventListener('click', () => row.remove());
+            document.getElementById('qaParamsList').appendChild(row);
+        }
+        function qaAutoDetectParams() {
+            var code = document.getElementById('qaCode').value;
+            var matches = code.match(/\\{\\{([A-Z_][A-Z0-9_]*)\\}\\}/g);
+            if (!matches) return;
+            var existing = new Set();
+            document.querySelectorAll('.qa-param-row').forEach(row => {
+                existing.add(row.querySelector('input').value.trim());
+            });
+            var seen = new Set();
+            matches.forEach(m => {
+                var name = m.replace(/\\{\\{|\\}\\}/g, '');
+                if (!seen.has(name) && !existing.has(name)) {
+                    seen.add(name);
+                    qaAddParamRow(name, '', '');
+                }
+            });
+        }
+        function qaReset() {
+            document.getElementById('qaName').value = '';
+            document.getElementById('qaCode').value = '';
+            document.getElementById('qaDesc').value = '';
+            document.getElementById('qaTags').value = '';
+            document.getElementById('qaCategory').value = 'utility';
+            document.getElementById('qaParamsList').innerHTML = '';
+        }
         document.getElementById('btnImport').addEventListener('click', () => {
             vscode.postMessage({ command: 'importSnippets' });
         });
