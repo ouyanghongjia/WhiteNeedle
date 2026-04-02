@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { DeviceManager, ConnectionState } from '../device/deviceManager';
 import { TcpBridge } from '../bridge/tcpBridge';
+import { bindConnectionState, OVERLAY_CSS, OVERLAY_HTML, OVERLAY_JS } from './connectionOverlay';
 
 export class NetworkPanel {
     public static currentPanel: NetworkPanel | undefined;
@@ -68,6 +69,7 @@ export class NetworkPanel {
             this.deviceManager.removeListener('reconnected', onReconnected);
         }));
 
+        bindConnectionState(this.panel, this.deviceManager, this.disposables);
         this.syncBridgeNetworkListeners();
         this.loadRequests();
     }
@@ -207,9 +209,11 @@ tr.selected { background: var(--vscode-list-activeSelectionBackground); color: v
 .detail-kv .k { font-weight: 600; opacity: 0.7; }
 .empty { text-align: center; padding: 40px; opacity: 0.5; }
 .count-badge { margin-left: auto; font-size: 11px; opacity: 0.7; }
+${OVERLAY_CSS}
 </style>
 </head>
 <body>
+${OVERLAY_HTML}
 <div class="toolbar">
   <button id="btnRefresh">↻ Refresh</button>
   <button id="btnClear">✕ Clear</button>
@@ -342,6 +346,9 @@ tr.selected { background: var(--vscode-list-activeSelectionBackground); color: v
     function formatBytes(b) { if (b < 1024) return b + 'B'; if (b < 1048576) return (b/1024).toFixed(1) + 'KB'; return (b/1048576).toFixed(1) + 'MB'; }
     function tryFormatJSON(s) { try { return JSON.stringify(JSON.parse(s), null, 2); } catch(_) { return s; } }
 })();
+</script>
+<script nonce="${nonce}">
+${OVERLAY_JS}
 </script>
 </body>
 </html>`;

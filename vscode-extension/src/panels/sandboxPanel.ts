@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { DeviceManager } from '../device/deviceManager';
+import { bindConnectionState, OVERLAY_CSS, OVERLAY_HTML, OVERLAY_JS } from './connectionOverlay';
 
 interface FileEntry {
     name: string;
@@ -50,6 +51,7 @@ export class SandboxPanel {
 
         this.panel.webview.html = this.getHtml();
         this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
+        bindConnectionState(this.panel, this.deviceManager, this.disposables);
 
         this.panel.webview.onDidReceiveMessage(
             async (msg) => {
@@ -323,9 +325,11 @@ export class SandboxPanel {
     .toast { position: fixed; bottom: 16px; right: 16px; padding: 8px 16px; border-radius: 4px; background: var(--btn-bg); color: var(--btn-fg); z-index: 100; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
     .toast.show { opacity: 1; }
     .toast.error { background: var(--error-fg); }
+${OVERLAY_CSS}
 </style>
 </head>
 <body>
+${OVERLAY_HTML}
 <div class="toolbar">
     <div class="breadcrumb" id="breadcrumb"></div>
     <button id="uploadBtn">⬆ Upload</button>
@@ -337,6 +341,7 @@ export class SandboxPanel {
 <div class="toast" id="toast"></div>
 
 <script>
+${OVERLAY_JS}
 const vscode = acquireVsCodeApi();
 let currentPath = '/';
 let pathStack = ['/'];

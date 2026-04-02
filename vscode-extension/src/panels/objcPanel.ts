@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { DeviceManager } from '../device/deviceManager';
 import { ScriptRunner } from '../scripting/scriptRunner';
+import { bindConnectionState, OVERLAY_CSS, OVERLAY_HTML, OVERLAY_JS } from './connectionOverlay';
 
 export class ObjCPanel {
     public static currentPanel: ObjCPanel | undefined;
@@ -44,6 +45,7 @@ export class ObjCPanel {
 
         this.panel.webview.html = this.getHtml();
         this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
+        bindConnectionState(this.panel, this.deviceManager, this.disposables);
 
         this.panel.webview.onDidReceiveMessage(
             async (msg) => {
@@ -189,9 +191,11 @@ console.log('[WhiteNeedle] Tracing: ${hookKey}');
     .toast { position: fixed; bottom: 16px; right: 16px; padding: 8px 16px; border-radius: 4px; background: var(--btn-bg); color: var(--btn-fg); z-index: 100; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
     .toast.show { opacity: 1; }
     .toast.error { background: var(--error-fg); }
+${OVERLAY_CSS}
 </style>
 </head>
 <body>
+${OVERLAY_HTML}
 <div class="toolbar">
     <input id="filterInput" placeholder="Filter classes (e.g. UIView, NS...)" />
     <button id="loadBtn">Load Classes</button>
@@ -332,6 +336,9 @@ function showToast(text, isError) {
     t.className = 'toast show' + (isError ? ' error' : '');
     setTimeout(() => t.className = 'toast', 2500);
 }
+</script>
+<script>
+${OVERLAY_JS}
 </script>
 </body>
 </html>`;

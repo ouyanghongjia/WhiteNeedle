@@ -22,6 +22,9 @@ interface JsonRpcNotification {
     params: Record<string, unknown>;
 }
 
+const HEARTBEAT_INTERVAL_MS = 15000;
+const HEARTBEAT_TIMEOUT_MS = 10000;
+
 export class TcpBridge extends EventEmitter {
     private socket: net.Socket | null = null;
     private nextId = 1;
@@ -30,6 +33,8 @@ export class TcpBridge extends EventEmitter {
         reject: (err: Error) => void;
     }>();
     private buffer = '';
+    private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+    private heartbeatPending = false;
 
     constructor(private outputChannel: vscode.OutputChannel) {
         super();
@@ -42,6 +47,7 @@ export class TcpBridge extends EventEmitter {
     async connect(host: string, port: number): Promise<void> {
         return new Promise((resolve, reject) => {
             this.socket = new net.Socket();
+            this.socket.setKeepAlive(true, 5000);
 
             const timeout = setTimeout(() => {
                 this.socket?.destroy();
@@ -51,6 +57,7 @@ export class TcpBridge extends EventEmitter {
             this.socket.connect(port, host, () => {
                 clearTimeout(timeout);
                 this.outputChannel.appendLine(`[TcpBridge] Connected to ${host}:${port}`);
+                this.startHeartbeat();
                 resolve();
             });
 
@@ -68,6 +75,7 @@ export class TcpBridge extends EventEmitter {
 
             this.socket.on('close', () => {
                 this.outputChannel.appendLine('[TcpBridge] Connection closed');
+                this.stopHeartbeat();
                 this.rejectAllPending(new Error('Connection closed'));
                 this.socket = null;
                 this.emit('disconnected');
@@ -76,11 +84,46 @@ export class TcpBridge extends EventEmitter {
     }
 
     disconnect(): void {
+        this.stopHeartbeat();
         if (this.socket) {
             this.socket.destroy();
             this.socket = null;
         }
         this.rejectAllPending(new Error('Disconnected'));
+    }
+
+    private startHeartbeat(): void {
+        this.stopHeartbeat();
+        this.heartbeatTimer = setInterval(() => {
+            if (!this.isConnected || this.heartbeatPending) {
+                return;
+            }
+            this.heartbeatPending = true;
+            const timer = setTimeout(() => {
+                if (this.heartbeatPending) {
+                    this.outputChannel.appendLine('[TcpBridge] Heartbeat timeout — connection lost');
+                    this.socket?.destroy();
+                }
+            }, HEARTBEAT_TIMEOUT_MS);
+
+            this.call('ping', {})
+                .then(() => {
+                    this.heartbeatPending = false;
+                    clearTimeout(timer);
+                })
+                .catch(() => {
+                    this.heartbeatPending = false;
+                    clearTimeout(timer);
+                });
+        }, HEARTBEAT_INTERVAL_MS);
+    }
+
+    private stopHeartbeat(): void {
+        if (this.heartbeatTimer) {
+            clearInterval(this.heartbeatTimer);
+            this.heartbeatTimer = null;
+        }
+        this.heartbeatPending = false;
     }
 
     async call(method: string, params: Record<string, unknown> = {}): Promise<unknown> {

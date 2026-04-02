@@ -14,6 +14,7 @@ import { HookPanel } from './panels/hookPanel';
 import { NetworkPanel } from './panels/networkPanel';
 import { ViewHierarchyPanel } from './panels/viewHierarchyPanel';
 import { HostMappingPanel } from './panels/hostMappingPanel';
+import { SnippetPanel } from './panels/snippetPanel';
 import { ProxyServer } from './proxy/proxyServer';
 import {
     WhiteNeedleConfigurationProvider,
@@ -418,6 +419,10 @@ export function activate(context: vscode.ExtensionContext) {
 
         vscode.commands.registerCommand('whiteneedle.openHostMapping', () => {
             HostMappingPanel.createOrShow(context.extensionUri, context.globalState, proxyServer);
+        }),
+
+        vscode.commands.registerCommand('whiteneedle.openSnippets', () => {
+            SnippetPanel.createOrShow(context.extensionUri, deviceManager, scriptRunner, context.globalState);
         }),
 
         // --- Proxy commands ---

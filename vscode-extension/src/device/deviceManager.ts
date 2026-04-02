@@ -5,9 +5,9 @@ import { TcpBridge } from '../bridge/tcpBridge';
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 
-const MAX_RECONNECT_ATTEMPTS = 5;
+const MAX_RECONNECT_ATTEMPTS = 10;
 const RECONNECT_BASE_DELAY_MS = 1000;
-const RECONNECT_MAX_DELAY_MS = 16000;
+const RECONNECT_MAX_DELAY_MS = 30000;
 
 export class DeviceManager extends EventEmitter {
     private bridge: TcpBridge | null = null;
@@ -17,6 +17,7 @@ export class DeviceManager extends EventEmitter {
     private reconnectAttempt = 0;
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private lastActiveScripts: string[] = [];
+    private lastLoadedScript: { code: string; name: string } | null = null;
 
     constructor(private outputChannel: vscode.OutputChannel) {
         super();
@@ -100,6 +101,7 @@ export class DeviceManager extends EventEmitter {
             throw new Error('Not connected to any device');
         }
         await this.bridge.call('loadScript', { code, name });
+        this.lastLoadedScript = { code, name };
     }
 
     async unloadScript(name?: string): Promise<void> {
@@ -176,7 +178,7 @@ export class DeviceManager extends EventEmitter {
         if (!this.bridge?.isConnected) {
             throw new Error('Not connected to any device');
         }
-        await this.evaluate(`Interceptor.detach("${selector.replace(/"/g, '\\"')}")`);
+        await this.evaluate(`Interceptor.detach(${JSON.stringify(selector)})`);
     }
 
     // --- Network Monitor ---
@@ -259,6 +261,26 @@ export class DeviceManager extends EventEmitter {
         return this.bridge;
     }
 
+    private async restoreSessionState(): Promise<void> {
+        if (!this.lastLoadedScript || !this.bridge?.isConnected) {
+            return;
+        }
+        try {
+            const { code, name } = this.lastLoadedScript;
+            this.outputChannel.appendLine(
+                `[DeviceManager] Restoring script "${name}" after reconnect...`
+            );
+            await this.bridge.call('loadScript', { code, name });
+            this.outputChannel.appendLine(
+                `[DeviceManager] Script "${name}" restored`
+            );
+        } catch (err: any) {
+            this.outputChannel.appendLine(
+                `[DeviceManager] Failed to restore script: ${err.message}`
+            );
+        }
+    }
+
     private setState(state: ConnectionState): void {
         if (this._state === state) { return; }
         this._state = state;
@@ -314,11 +336,13 @@ export class DeviceManager extends EventEmitter {
                 this.connectedDevice = device;
                 this.reconnectAttempt = 0;
                 this.setState('connected');
-                this.emit('reconnected', device);
 
                 this.outputChannel.appendLine(
                     `[DeviceManager] Reconnected to ${device.deviceName || device.host}`
                 );
+
+                await this.restoreSessionState();
+                this.emit('reconnected', device);
             } catch (err: any) {
                 this.outputChannel.appendLine(
                     `[DeviceManager] Reconnect attempt ${this.reconnectAttempt} failed: ${err.message}`

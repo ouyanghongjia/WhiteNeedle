@@ -230,15 +230,19 @@ server.tool(
     async ({ target }) => {
         await ensureConnected();
         const scriptName = `trace_${target.replace(/[^a-zA-Z0-9]/g, '_')}`;
+        const safeTarget = JSON.stringify(target);
         const code = `
-Interceptor.attach('${target}', {
-    onEnter: function(self) {
-        console.log('[TRACE] ${target} called on: ' + self);
-    },
-    onLeave: function() {
-        console.log('[TRACE] ${target} returned');
-    }
-});
+(function() {
+    var t = ${safeTarget};
+    Interceptor.attach(t, {
+        onEnter: function(self) {
+            console.log('[TRACE] ' + t + ' called on: ' + self);
+        },
+        onLeave: function() {
+            console.log('[TRACE] ' + t + ' returned');
+        }
+    });
+})();
 `;
         try {
             await client.call('loadScript', { name: scriptName, code });
@@ -286,10 +290,14 @@ server.tool(
         await ensureConnected();
         const code = `
 (function() {
-    var obj = ${expression};
-    if (!obj) return JSON.stringify({ error: 'Expression returned null' });
-    var desc = obj.toString ? obj.toString() : String(obj);
-    return JSON.stringify({ description: desc });
+    try {
+        var obj = eval(${JSON.stringify(expression)});
+        if (!obj) return JSON.stringify({ error: 'Expression returned null' });
+        var desc = obj.toString ? obj.toString() : String(obj);
+        return JSON.stringify({ description: desc });
+    } catch(e) {
+        return JSON.stringify({ error: e.message || String(e) });
+    }
 })()
 `;
         try {
@@ -311,9 +319,10 @@ server.tool(
     },
     async ({ className }) => {
         await ensureConnected();
+        const safeClassName = JSON.stringify(className);
         const code = `
 (function() {
-    var instances = ObjC.chooseSync('${className}');
+    var instances = ObjC.chooseSync(${safeClassName});
     return JSON.stringify({
         count: instances.length,
         samples: instances.slice(0, 10).map(function(i) { return String(i); })

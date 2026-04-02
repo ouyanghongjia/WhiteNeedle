@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { DeviceManager } from '../device/deviceManager';
+import { bindConnectionState, OVERLAY_CSS, OVERLAY_HTML, OVERLAY_JS } from './connectionOverlay';
 
 export class ViewHierarchyPanel {
     public static currentPanel: ViewHierarchyPanel | undefined;
@@ -27,6 +28,7 @@ export class ViewHierarchyPanel {
 
         this.panel.webview.html = this.getHtmlContent();
         this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
+        bindConnectionState(this.panel, this.deviceManager, this.disposables);
 
         this.panel.webview.onDidReceiveMessage(async (msg) => {
             switch (msg.command) {
@@ -191,9 +193,11 @@ body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size
 .screenshot-container { text-align: center; padding: 10px; }
 .screenshot-container img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; }
 .empty { text-align: center; padding: 40px; opacity: 0.5; }
+${OVERLAY_CSS}
 </style>
 </head>
 <body>
+${OVERLAY_HTML}
 <div class="toolbar">
   <button id="btnRefresh">↻ Refresh</button>
   <button id="btnScreenshot">📷 Screenshot</button>
@@ -405,6 +409,9 @@ body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size
 
     function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 })();
+</script>
+<script nonce="${nonce}">
+${OVERLAY_JS}
 </script>
 </body>
 </html>`;

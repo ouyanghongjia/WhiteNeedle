@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { DeviceManager } from '../device/deviceManager';
+import { bindConnectionState, OVERLAY_CSS, OVERLAY_HTML, OVERLAY_JS } from './connectionOverlay';
 
 export class CookiePanel {
     public static currentPanel: CookiePanel | undefined;
@@ -44,6 +45,7 @@ export class CookiePanel {
         this.outputChannel = outputChannel;
 
         this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
+        bindConnectionState(this.panel, this.deviceManager, this.disposables);
 
         this.panel.webview.onDidReceiveMessage(
             async (msg) => {
@@ -154,9 +156,11 @@ export class CookiePanel {
     .toast.show { opacity: 1; }
     .toast.error { background: var(--error-fg); }
     #status { margin-left: 8px; font-size: 12px; opacity: 0.7; }
+${OVERLAY_CSS}
 </style>
 </head>
 <body>
+${OVERLAY_HTML}
 <div class="toolbar">
     <input id="domainFilter" placeholder="Filter by domain..." />
     <button id="loadBtn">Load Cookies</button>
@@ -166,6 +170,7 @@ export class CookiePanel {
 <div class="toast" id="toast"></div>
 
 <script nonce="${nonce}">
+${OVERLAY_JS}
 (function() {
     var vscode = acquireVsCodeApi();
     var cookiesData = [];

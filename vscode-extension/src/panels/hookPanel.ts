@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { DeviceManager } from '../device/deviceManager';
+import { bindConnectionState, OVERLAY_CSS, OVERLAY_HTML, OVERLAY_JS } from './connectionOverlay';
 
 export interface HookInfo {
     selector: string;
@@ -85,6 +86,7 @@ export class HookPanel {
 
         this.panel.webview.html = this.getHtmlContent();
         this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
+        bindConnectionState(this.panel, this.deviceManager, this.disposables);
 
         this.panel.webview.onDidReceiveMessage(async (msg) => {
             switch (msg.command) {
@@ -236,9 +238,11 @@ export class HookPanel {
     .badge-replace { background: #8b5cf670; color: #a78bfa; }
     .empty { text-align: center; padding: 40px; color: var(--vscode-descriptionForeground); }
     .empty h3 { margin-bottom: 8px; }
+${OVERLAY_CSS}
 </style>
 </head>
 <body>
+${OVERLAY_HTML}
 <div class="toolbar">
     <button id="btnRefresh">⟳ Refresh</button>
     <select id="templateSelect">${templateOptions}</select>
@@ -342,6 +346,7 @@ export class HookPanel {
         }
     });
 })();
+${OVERLAY_JS}
 </script>
 </body>
 </html>`;
