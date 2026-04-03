@@ -25,6 +25,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable JSValue *)evaluateScript:(NSString *)code;
 - (NSArray<NSString *> *)loadedScriptNames;
 
+- (void)addObserver:(id<WNJSEngineDelegate>)observer;
+- (void)removeObserver:(id<WNJSEngineDelegate>)observer;
+
 @end
 
 NS_ASSUME_NONNULL_END

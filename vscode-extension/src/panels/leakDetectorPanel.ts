@@ -75,7 +75,11 @@ export class LeakDetectorPanel {
             return null;
         }
         try {
-            return await this.deviceManager.evaluate(code);
+            const raw = await this.deviceManager.evaluate(code);
+            if (raw && typeof raw === 'object' && 'value' in raw) {
+                return (raw as { value: unknown }).value;
+            }
+            return raw;
         } catch (err: any) {
             this.postMessage({ command: 'error', text: err.message });
             return null;
@@ -489,10 +493,14 @@ function renderCycles(data, address) {
         let html = '<strong style="color:var(--danger)">Cycle ' + (i+1) + ':</strong><br>';
         for (let j = 0; j < cycle.length; j++) {
             const node = cycle[j];
-            html += '<span class="addr" onclick="inspectAddr(\\''+node.address+'\\')">'+node.className+' ('+node.address+')</span>';
-            if (j < cycle.length - 1) html += ' → ';
+            const ivar = node.retainedVia ? esc(node.retainedVia) : '?';
+            html += '<span class="addr" onclick="inspectAddr(\\''+node.address+'\\')">'+esc(node.className)+' ('+node.address+')</span>';
+            const nextIdx = (j + 1) % cycle.length;
+            const nextLabel = j < cycle.length - 1
+                ? esc(cycle[nextIdx].className)
+                : esc(cycle[0].className) + ' ↺';
+            html += ' <span style="color:var(--danger)">—[' + ivar + ']→</span> ';
         }
-        html += ' → <em>(back to start)</em>';
         div.innerHTML = html;
         container.appendChild(div);
     }

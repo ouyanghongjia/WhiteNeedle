@@ -10,6 +10,16 @@ static NSString *const kLogPrefix = @"[WNLeakDetector]";
 
 static NSMutableDictionary<NSString *, NSDictionary *> *sSnapshots;
 
+static dispatch_queue_t WNScanQueue(void) {
+    static dispatch_queue_t q;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        q = dispatch_queue_create("com.whiteneedle.heapscan", DISPATCH_QUEUE_SERIAL);
+        dispatch_set_target_queue(q, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0));
+    });
+    return q;
+}
+
 static void EnsureSnapshotStore(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -62,31 +72,27 @@ static NSArray *DetectCyclesFromObject(id startObj, NSUInteger maxDepth) {
 
     NSMutableArray *cycles = [NSMutableArray array];
     NSMutableDictionary *visited = [NSMutableDictionary dictionary]; // address -> pathIndex
-    NSMutableArray *pathStack = [NSMutableArray array]; // array of { className, ivarName, address }
+    NSMutableArray *pathStack = [NSMutableArray array]; // entries: { address, className, retainedVia }
 
     void (^__block dfs)(id, NSUInteger);
     dfs = ^(id obj, NSUInteger depth) {
         if (!obj || depth > maxDepth) return;
 
         NSString *addr = [NSString stringWithFormat:@"%p", obj];
+
         if (visited[addr]) {
             NSUInteger cycleStart = [visited[addr] unsignedIntegerValue];
             NSMutableArray *cycle = [NSMutableArray array];
             for (NSUInteger idx = cycleStart; idx < pathStack.count; idx++) {
                 [cycle addObject:pathStack[idx]];
             }
-            if (cycle.count > 1) {
+            if (cycle.count > 0) {
                 [cycles addObject:cycle];
             }
             return;
         }
 
-        NSDictionary *node = @{
-            @"address":   addr,
-            @"className": NSStringFromClass([obj class]) ?: @"?",
-        };
         visited[addr] = @(pathStack.count);
-        [pathStack addObject:node];
 
         NSArray *ivarRefs = GetStrongIvarReferences(obj);
         for (NSDictionary *ref in ivarRefs) {
@@ -101,15 +107,18 @@ static NSArray *DetectCyclesFromObject(id startObj, NSUInteger maxDepth) {
             id refObj = (__bridge id)(void *)(uintptr_t)addrVal;
             if (!refObj) continue;
 
-            NSMutableDictionary *edgeNode = [ref mutableCopy];
-            visited[refAddr] = @(pathStack.count);
-            [pathStack addObject:edgeNode];
+            NSDictionary *node = @{
+                @"address":     addr,
+                @"className":   NSStringFromClass([obj class]) ?: @"?",
+                @"retainedVia": ref[@"name"] ?: @"?",
+            };
+            [pathStack addObject:node];
+
             dfs(refObj, depth + 1);
+
             [pathStack removeLastObject];
-            [visited removeObjectForKey:refAddr];
         }
 
-        [pathStack removeLastObject];
         [visited removeObjectForKey:addr];
     };
 
@@ -134,7 +143,12 @@ static NSArray *DetectCyclesFromObject(id startObj, NSUInteger maxDepth) {
             ? [filterVal toString] : nil;
 
         NSLog(@"%@ Taking snapshot: %@", kLogPrefix, tag);
-        NSDictionary *snapshot = [WNHeapScanner heapSnapshotWithFilter:filter maxCount:0];
+        __block NSDictionary *snapshot = nil;
+        dispatch_sync(WNScanQueue(), ^{
+            @autoreleasepool {
+                snapshot = [WNHeapScanner heapSnapshotWithFilter:filter maxCount:0];
+            }
+        });
         @synchronized (sSnapshots) {
             sSnapshots[tag] = snapshot;
         }
@@ -225,8 +239,13 @@ static NSArray *DetectCyclesFromObject(id startObj, NSUInteger maxDepth) {
             maxRefs = [maxRefsVal toUInt32];
         }
 
-        NSArray *refs = [WNHeapScanner scanReferencesFrom:(uintptr_t)addrVal maxDepth:maxRefs];
-        return [JSValue valueWithObject:refs inContext:ctx];
+        __block NSArray *refs = nil;
+        dispatch_sync(WNScanQueue(), ^{
+            @autoreleasepool {
+                refs = [WNHeapScanner scanReferencesFrom:(uintptr_t)addrVal maxDepth:maxRefs];
+            }
+        });
+        return [JSValue valueWithObject:(refs ?: @[]) inContext:ctx];
     };
 
     // LeakDetector.detectCycles(addressHex, maxDepth?) → [[{address,className}, ...], ...]
@@ -258,10 +277,15 @@ static NSArray *DetectCyclesFromObject(id startObj, NSUInteger maxDepth) {
         BOOL includeSubs = (subVal && ![subVal isUndefined]) ? [subVal toBool] : YES;
         NSUInteger maxCount = (maxVal && ![maxVal isUndefined]) ? [maxVal toUInt32] : 1000;
 
-        NSArray *instances = [WNHeapScanner findInstancesOfClass:cls
+        __block NSArray *instances = nil;
+        dispatch_sync(WNScanQueue(), ^{
+            @autoreleasepool {
+                instances = [WNHeapScanner findInstancesOfClass:cls
                                                 includeSubclasses:includeSubs
                                                          maxCount:maxCount];
-        return [JSValue valueWithObject:instances inContext:ctx];
+            }
+        });
+        return [JSValue valueWithObject:(instances ?: @[]) inContext:ctx];
     };
 
     context[@"LeakDetector"] = ns;

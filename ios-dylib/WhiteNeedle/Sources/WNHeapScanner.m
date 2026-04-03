@@ -3,11 +3,58 @@
 #import <malloc/malloc.h>
 #import <mach/mach.h>
 #import <mach/vm_map.h>
+#import <dlfcn.h>
 #if __has_feature(ptrauth_calls)
 #import <ptrauth.h>
 #endif
 
 static NSString *const kLogPrefix = @"[WNHeapScanner]";
+
+#pragma mark - Known class registry (internal)
+
+static CFMutableSetRef sKnownClasses = NULL;
+
+static void WNRefreshKnownClasses(void) {
+    unsigned int count = 0;
+    Class *list = objc_copyClassList(&count);
+    if (!list) return;
+
+    CFMutableSetRef newSet = CFSetCreateMutable(kCFAllocatorDefault, count, NULL);
+    for (unsigned int i = 0; i < count; i++) {
+        CFSetAddValue(newSet, (__bridge const void *)list[i]);
+    }
+    free(list);
+
+    CFMutableSetRef old = sKnownClasses;
+    sKnownClasses = newSet;
+    if (old) CFRelease(old);
+}
+
+#pragma mark - ISA mask (internal)
+
+static uintptr_t WNGetIsaMask(void) {
+    static uintptr_t mask = 0;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        uintptr_t *exported = (uintptr_t *)dlsym(RTLD_DEFAULT, "objc_debug_isa_class_mask");
+        if (exported) {
+            mask = *exported;
+        } else {
+#if __arm64__
+  #if __has_feature(ptrauth_calls)
+            mask = 0x007ffffffffffff8ULL;
+  #else
+            mask = 0x0000000ffffffff8ULL;
+  #endif
+#elif __x86_64__
+            mask = 0x00007ffffffffff8ULL;
+#else
+            mask = 0x00007ffffffffff8ULL;
+#endif
+        }
+    });
+    return mask;
+}
 
 #pragma mark - Pointer validation (internal)
 
@@ -32,15 +79,17 @@ static BOOL WNIsReadableAddress(uintptr_t addr) {
 static Class WNClassFromIsa(uintptr_t isa) {
     if (isa == 0) return nil;
 
-    uintptr_t clsPtr = isa;
+    uintptr_t clsPtr = isa & WNGetIsaMask();
+
 #if __has_feature(ptrauth_calls)
-    clsPtr = (uintptr_t)ptrauth_strip((void *)isa, ptrauth_key_process_dependent_data);
-#else
-    clsPtr = isa & (uintptr_t)0xfffffffffffffff8ULL;
+    clsPtr = (uintptr_t)ptrauth_strip((void *)clsPtr, ptrauth_key_process_dependent_data);
 #endif
+
     if (clsPtr == 0 || clsPtr % sizeof(void *) != 0) return nil;
 
-    if (!WNIsReadableAddress(clsPtr)) return nil;
+    if (!sKnownClasses || !CFSetContainsValue(sKnownClasses, (const void *)clsPtr)) {
+        return nil;
+    }
 
     return (__bridge Class)(void *)clsPtr;
 }
@@ -57,9 +106,6 @@ static BOOL WNIsObjCObject(uintptr_t addr, Class *outClass) {
 
     Class cls = WNClassFromIsa(isa);
     if (!cls) return NO;
-
-    const char *name = class_getName(cls);
-    if (!name || name[0] == '\0') return NO;
 
     if (outClass) *outClass = cls;
     return YES;
@@ -80,7 +126,9 @@ static void WNMallocEnumerator(task_t task, void *baton,
                                 unsigned type, vm_range_t *ranges,
                                 unsigned rangeCount) {
     WNHeapScanContext *ctx = (WNHeapScanContext *)baton;
-    if (!ctx) return;
+    if (!ctx || !sKnownClasses) return;
+
+    const uintptr_t isaMask = WNGetIsaMask();
 
     for (unsigned i = 0; i < rangeCount; i++) {
         if (ctx->maxCount > 0 && ctx->results.count >= ctx->maxCount) return;
@@ -90,20 +138,26 @@ static void WNMallocEnumerator(task_t task, void *baton,
 
         if (size < sizeof(void *) * 2) continue;
 
-        Class cls = nil;
-        @try {
-            if (!WNIsObjCObject((uintptr_t)addr, &cls)) continue;
-        } @catch (NSException *e) {
-            continue;
-        }
+        uintptr_t isa = *(const uintptr_t *)addr;
+        if (isa == 0) continue;
 
-        if (!cls) continue;
+        uintptr_t clsPtr = isa & isaMask;
+#if __has_feature(ptrauth_calls)
+        clsPtr = (uintptr_t)ptrauth_strip((void *)clsPtr, ptrauth_key_process_dependent_data);
+#endif
+        if (clsPtr == 0) continue;
+
+        if (!CFSetContainsValue(sKnownClasses, (const void *)clsPtr)) continue;
+
+        Class cls = (__bridge Class)(void *)clsPtr;
 
         if (ctx->collectCounts) {
-            NSString *name = NSStringFromClass(cls);
-            if (name) {
-                NSNumber *prev = ctx->countMap[name];
-                ctx->countMap[name] = @(prev.unsignedIntegerValue + 1);
+            @autoreleasepool {
+                NSString *name = NSStringFromClass(cls);
+                if (name) {
+                    NSNumber *prev = ctx->countMap[name];
+                    ctx->countMap[name] = @(prev.unsignedIntegerValue + 1);
+                }
             }
             continue;
         }
@@ -122,14 +176,16 @@ static void WNMallocEnumerator(task_t task, void *baton,
             if (!match) continue;
         }
 
-        NSString *className = NSStringFromClass(cls);
-        if (!className) continue;
+        @autoreleasepool {
+            NSString *className = NSStringFromClass(cls);
+            if (!className) continue;
 
-        [ctx->results addObject:@{
-            @"address":   [NSString stringWithFormat:@"0x%lx", (unsigned long)addr],
-            @"className": className,
-            @"size":      @(size),
-        }];
+            [ctx->results addObject:@{
+                @"address":   [NSString stringWithFormat:@"0x%lx", (unsigned long)addr],
+                @"className": className,
+                @"size":      @(size),
+            }];
+        }
     }
 }
 
@@ -141,6 +197,8 @@ static void WNMallocEnumerator(task_t task, void *baton,
                                   includeSubclasses:(BOOL)includeSubs
                                            maxCount:(NSUInteger)maxCount {
     if (!targetClass) return @[];
+
+    WNRefreshKnownClasses();
 
     NSMutableArray *results = [NSMutableArray array];
 
@@ -184,6 +242,8 @@ static void WNMallocEnumerator(task_t task, void *baton,
 
 + (NSDictionary<NSString *, NSNumber *> *)heapSnapshotWithFilter:(nullable NSString *)filter
                                                         maxCount:(NSUInteger)maxCount {
+    WNRefreshKnownClasses();
+
     NSMutableDictionary *countMap = [NSMutableDictionary dictionary];
     NSMutableArray *dummy = [NSMutableArray array];
 
@@ -232,6 +292,8 @@ static void WNMallocEnumerator(task_t task, void *baton,
 
 + (NSArray<NSDictionary *> *)scanReferencesFrom:(uintptr_t)objectAddress
                                        maxDepth:(NSUInteger)maxRefs {
+    WNRefreshKnownClasses();
+
     if (!WNIsReadableAddress(objectAddress)) return @[];
 
     size_t objectSize = malloc_size((void *)objectAddress);

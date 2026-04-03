@@ -37,6 +37,7 @@ static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, WNTimerHandle *> *timers;
 @property (nonatomic, assign) NSUInteger nextTimerId;
 @property (nonatomic, assign) BOOL isReady;
+@property (nonatomic, strong) NSHashTable<id<WNJSEngineDelegate>> *observers;
 @end
 
 @implementation WNJSEngine
@@ -57,8 +58,21 @@ static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
         _timers = [NSMutableDictionary dictionary];
         _nextTimerId = 1;
         _isReady = NO;
+        _observers = [NSHashTable weakObjectsHashTable];
     }
     return self;
+}
+
+- (void)addObserver:(id<WNJSEngineDelegate>)observer {
+    @synchronized (self.observers) {
+        [self.observers addObject:observer];
+    }
+}
+
+- (void)removeObserver:(id<WNJSEngineDelegate>)observer {
+    @synchronized (self.observers) {
+        [self.observers removeObject:observer];
+    }
 }
 
 #pragma mark - Lifecycle
@@ -180,6 +194,16 @@ static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
 
     if ([self.delegate respondsToSelector:@selector(jsEngine:didReceiveConsoleMessage:level:)]) {
         [self.delegate jsEngine:self didReceiveConsoleMessage:message level:level];
+    }
+
+    NSArray *snapshot;
+    @synchronized (self.observers) {
+        snapshot = self.observers.allObjects;
+    }
+    for (id<WNJSEngineDelegate> obs in snapshot) {
+        if (obs != self.delegate && [obs respondsToSelector:@selector(jsEngine:didReceiveConsoleMessage:level:)]) {
+            [obs jsEngine:self didReceiveConsoleMessage:message level:level];
+        }
     }
 }
 
@@ -401,6 +425,16 @@ static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if ([strongSelf.delegate respondsToSelector:@selector(jsEngine:didReceiveScriptError:)]) {
             [strongSelf.delegate jsEngine:strongSelf didReceiveScriptError:errorMsg];
+        }
+
+        NSArray *snapshot;
+        @synchronized (strongSelf.observers) {
+            snapshot = strongSelf.observers.allObjects;
+        }
+        for (id<WNJSEngineDelegate> obs in snapshot) {
+            if (obs != strongSelf.delegate && [obs respondsToSelector:@selector(jsEngine:didReceiveScriptError:)]) {
+                [obs jsEngine:strongSelf didReceiveScriptError:errorMsg];
+            }
         }
 
         isHandling = NO;

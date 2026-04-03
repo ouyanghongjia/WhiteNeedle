@@ -1,4 +1,5 @@
 #import "ViewController.h"
+#import "WNLeakExamples.h"
 #import <WhiteNeedle/WNJSEngine.h>
 #import <WhiteNeedle/WNHookEngine.h>
 #import <WhiteNeedle/WNNativeBridge.h>
@@ -6,10 +7,6 @@
 
 static NSString *const kCellID = @"ScriptCell";
 static NSString *const kNetworkCellID = @"NetworkCell";
-
-@interface CycleRetain : NSObject
-@property (nonatomic, strong) id obj;
-@end
 
 @interface ViewController ()
 @property (nonatomic, strong) UITableView *tableView;
@@ -23,11 +20,9 @@ static NSString *const kNetworkCellID = @"NetworkCell";
 @property (nonatomic, strong) NSArray<NSString *> *scriptFiles;
 @property (nonatomic, strong) NSArray<NSDictionary *> *networkTests;
 @property (nonatomic, strong) NSMutableString *consoleLog;
-
-@property (nonatomic, strong) CycleRetain *cycleRetain;
 @end
 
-@implementation ViewController
+@implementation ViewController	
 
 #pragma mark - Lifecycle
 
@@ -41,9 +36,6 @@ static NSString *const kNetworkCellID = @"NetworkCell";
     [self loadScriptList];
     [self setupNetworkTests];
     [self buildUI];
-    
-    self.cycleRetain = [CycleRetain new];
-    self.cycleRetain.obj = self;
 }
 
 #pragma mark - Engine
@@ -317,9 +309,11 @@ static NSString *const kNetworkCellID = @"NetworkCell";
 
     self.runAllButton   = [self makeButton:@"▶ Run All"  color:UIColor.systemGreenColor  action:@selector(runAllScripts)];
     self.networkButton  = [self makeButton:@"🌐 Net All" color:UIColor.systemBlueColor   action:@selector(fireAllNetworkTests)];
+    UIButton *leakBtn   = [self makeButton:@"💧 Leak"    color:UIColor.systemOrangeColor  action:@selector(createLeakExamples)];
     self.clearButton    = [self makeButton:@"✕ Clear"    color:UIColor.systemRedColor     action:@selector(clearConsole)];
     [btnStack addArrangedSubview:self.runAllButton];
     [btnStack addArrangedSubview:self.networkButton];
+    [btnStack addArrangedSubview:leakBtn];
     [btnStack addArrangedSubview:self.clearButton];
 
     [self.view addSubview:self.segmentControl];
@@ -384,11 +378,18 @@ static NSString *const kNetworkCellID = @"NetworkCell";
 }
 
 - (void)clearConsole {
-//    [self.consoleLog setString:@""];
-//    self.consoleView.text = @"";
-    ViewController *vc = [ViewController new];
-    vc.title = @"测试";
-    [self presentViewController:vc animated:YES completion:nil];
+    [self.consoleLog setString:@""];
+    self.consoleView.text = @"";
+}
+
+- (void)createLeakExamples {
+    [self log:@"LEAK" message:@"═══ Creating memory leak examples ═══"];
+    [WNLeakExamples createAllLeaks];
+    [self log:@"LEAK" message:[NSString stringWithFormat:
+        @"Done. Orphaned pool: %lu objects. Run test_leak_detector.js to detect.",
+        (unsigned long)[WNLeakExamples orphanedCount]]];
+    self.segmentControl.selectedSegmentIndex = 2;
+    [self segmentChanged:self.segmentControl];
 }
 
 - (void)runScriptFile:(NSString *)fileName {

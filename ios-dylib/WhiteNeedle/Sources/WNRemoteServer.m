@@ -144,11 +144,12 @@ static void WNSocketCallback(CFSocketRef socket, CFSocketCallBackType type,
     self.isListening = YES;
     NSLog(@"%@ Listening on port %d", kLogPrefix, self.port);
 
-    // Wire up engine delegate for console forwarding
-    self.engine.delegate = (id<WNJSEngineDelegate>)self;
+    [self.engine addObserver:(id<WNJSEngineDelegate>)self];
 }
 
 - (void)stop {
+    [self.engine removeObserver:(id<WNJSEngineDelegate>)self];
+
     if (self.listenSocket) {
         CFSocketInvalidate(self.listenSocket);
         CFRelease(self.listenSocket);
