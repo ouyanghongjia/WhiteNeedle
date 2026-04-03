@@ -31,8 +31,15 @@ OBJECTS        := $(OBJC_OBJECTS) $(OBJCXX_OBJECTS) $(C_OBJECTS) $(CXX_OBJECTS) 
 OUTPUT       := build/WhiteNeedle.dylib
 
 FFI_INCLUDE  := -IWhiteNeedle/Sources/libffi/include -IWhiteNeedle/Sources/libffi/src
+# RefGraph module (set WN_REFGRAPH=0 to disable)
+WN_REFGRAPH ?= 1
+
 COMMON_FLAGS := $(ARCH) $(SYSROOT) $(MIN_VER) -O2 -IWhiteNeedle/Sources -IWhiteNeedle/Sources/Inspector $(FFI_INCLUDE)
 CFLAGS       := $(COMMON_FLAGS) -fobjc-arc -fmodules
+
+ifeq ($(WN_REFGRAPH),1)
+CFLAGS += -DWN_ENABLE_REFGRAPH=1
+endif
 CXXFLAGS     := $(COMMON_FLAGS) -std=c++17 -fno-exceptions -fno-rtti
 OBJCXXFLAGS  := $(COMMON_FLAGS) -fobjc-arc -fmodules -std=c++17 -fno-exceptions -fno-rtti
 LDFLAGS      := -dynamiclib -install_name @rpath/WhiteNeedle.dylib $(FRAMEWORKS) -lc++

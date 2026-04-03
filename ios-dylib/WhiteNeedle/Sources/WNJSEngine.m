@@ -11,6 +11,9 @@
 #import "WNPerformanceBridge.h"
 #import "WNUIDebugBridge.h"
 #import "WNLeakDetector.h"
+#if WN_ENABLE_REFGRAPH
+#import "WNRefGraphDetector.h"
+#endif
 #import <objc/runtime.h>
 
 static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
@@ -83,6 +86,9 @@ static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
     [WNPerformanceBridge registerInContext:self.context];
     [WNUIDebugBridge registerInContext:self.context];
     [WNLeakDetector registerInContext:self.context];
+#if WN_ENABLE_REFGRAPH
+    [WNRefGraphDetector registerInContext:self.context];
+#endif
 
     self.isReady = YES;
     NSLog(@"%@ Engine initialized (JavaScriptCore)", kWNLogPrefix);

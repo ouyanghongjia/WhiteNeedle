@@ -16,6 +16,7 @@ import { ViewHierarchyPanel } from './panels/viewHierarchyPanel';
 import { HostMappingPanel } from './panels/hostMappingPanel';
 import { SnippetPanel } from './panels/snippetPanel';
 import { LeakDetectorPanel } from './panels/leakDetectorPanel';
+import { RetainGraphPanel } from './panels/retainGraphPanel';
 import { ProxyServer } from './proxy/proxyServer';
 import {
     WhiteNeedleConfigurationProvider,
@@ -428,6 +429,18 @@ export function activate(context: vscode.ExtensionContext) {
 
         vscode.commands.registerCommand('whiteneedle.openLeakDetector', () => {
             LeakDetectorPanel.createOrShow(context.extensionUri, deviceManager, scriptRunner);
+        }),
+
+        vscode.commands.registerCommand('whiteneedle.openRetainGraph', () => {
+            RetainGraphPanel.createOrShow(context.extensionUri, deviceManager);
+        }),
+
+        vscode.commands.registerCommand('whiteneedle.openRetainGraphAt', (address: string) => {
+            RetainGraphPanel.createOrShowAt(context.extensionUri, deviceManager, address);
+        }),
+
+        vscode.commands.registerCommand('whiteneedle.inspectInGraph', (address: string) => {
+            RetainGraphPanel.createOrShowAt(context.extensionUri, deviceManager, address);
         }),
 
         // --- Proxy commands ---

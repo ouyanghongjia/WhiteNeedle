@@ -33,6 +33,7 @@
     "onCommand:whiteneedle.stopProxy",
     "onCommand:whiteneedle.openSnippets",
     "onCommand:whiteneedle.openLeakDetector",
+    "onCommand:whiteneedle.openRetainGraph",
     "onCommand:whiteneedle.toggleProxy",
     "onDebugResolve:whiteneedle"
   ],
@@ -205,6 +206,12 @@
         "title": "Leak Detector",
         "icon": "$(search-fuzzy)",
         "category": "WhiteNeedle"
+      },
+      {
+        "command": "whiteneedle.openRetainGraph",
+        "title": "Retain Graph",
+        "icon": "$(type-hierarchy)",
+        "category": "WhiteNeedle"
       }
     ],
     "menus": {
@@ -279,6 +286,10 @@
         {
           "command": "whiteneedle.openLeakDetector",
           "group": "wn_live@4"
+        },
+        {
+          "command": "whiteneedle.openRetainGraph",
+          "group": "wn_live@5"
         },
         {
           "command": "whiteneedle.startProxy",
