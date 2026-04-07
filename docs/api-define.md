@@ -11,11 +11,13 @@
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `name` | `string` | ✅ | 类名（必须唯一） |
-| `super` | `string` | ❌ | 父类名，默认 `"NSObject"` |
-| `protocols` | `Array<string>` | ❌ | 要遵循的协议名称列表 |
-| `properties` | `object` | ❌ | 属性定义，键为属性名，值为类型（目前均为 `id` 类型） |
-| `methods` | `object` | ❌ | 方法定义，键为选择器名称，值为 JS 回调函数 |
+| `name` | `string` | ✅ | 类名。若同名类已存在，仅追加 `methods`（不会重建类） |
+| `super` | `string` | ❌ | 父类名，默认 `"NSObject"`（仅新建类时生效） |
+| `protocols` | `Array<string>` | ❌ | 要遵循的协议名称列表（仅新建类时生效） |
+| `properties` | `Record<string, string>` | ❌ | 属性定义，键为属性名，值为可读类型名（仅新建类时生效） |
+| `methods` | `object` | ❌ | 方法定义，键为选择器名称，值为 `{type, func}` 对象 |
+
+> ⚠️ 当 `name` 指定的类已存在时，`protocols` 和 `properties` 会被忽略，仅 `methods` 生效。
 
 ### 方法定义规则
 
@@ -23,26 +25,52 @@
 
 ```javascript
 // ✅ 正确
-"greeting": function(self, args) { ... }
-"addA:toB:": function(self, args) { ... }
+"greeting": { type: "void", func: function(self, args) { ... } }
+"addA:toB:": { type: "int (int, int)", func: function(self, args) { ... } }
 
 // ❌ 错误 — 不要加前缀
-"- greeting": function(self, args) { ... }
-"+ addA:toB:": function(self, args) { ... }
+"- greeting": { ... }
+"+ addA:toB:": { ... }
 ```
 
-**回调函数签名**：`function(self, args)`
+**方法值格式**：每个方法必须是 `{ type, func }` 对象。
 
-- **self** `Proxy` — 当前实例的代理对象
-- **args** `Array` — 方法参数数组
+- **type** `string` — 类型签名，格式：`returnType (paramType1, paramType2, ...)`
+- **func** `function(self, args)` — JS 回调函数
 
 ```javascript
-"doSomethingWith:and:": function(self, args) {
-    var param1 = args[0]; // 第一个参数
-    var param2 = args[1]; // 第二个参数
-    console.log("参数:", param1, param2);
+"doWork:": {
+    type: "void (NSString *)",
+    func: function(self, args) {
+        console.log(args[0]); // args[0] 是 NSString
+    }
 }
 ```
+
+#### type 格式
+
+与 block 签名格式类似，但**不含 `(^)`**。支持的类型与 `$block` 的 `blockSig` 相同：
+
+| 类型 | 说明 | 类型 | 说明 |
+|------|------|------|------|
+| `void` | 无返回值 | `id` | 任意 ObjC 对象 |
+| `NSString *` | 字符串 | `BOOL` / `bool` | 布尔 |
+| `int` | 整型 | `float` / `double` | 浮点 |
+| `CGFloat` | 平台浮点 | `NSInteger` / `NSUInteger` | 平台整型 |
+| `long long` | 64 位整型 | `CGRect` / `CGPoint` / `CGSize` | 结构体 |
+
+无参方法的写法：
+
+```javascript
+"greeting": { type: "void", func: function(self, args) { ... } }
+"greeting": { type: "void ()", func: function(self, args) { ... } }
+"greeting": { type: "void (void)", func: function(self, args) { ... } }
+```
+
+#### func 回调
+
+- **self** `Proxy` — 当前实例的代理对象
+- **args** `Array` — 方法参数数组，按 `type` 中声明的类型自动转换
 
 ### 基本用法
 
@@ -51,38 +79,25 @@ var MyClass = ObjC.define({
     name: "MyHelper",
     super: "NSObject",
     methods: {
-        "greeting": function(self, args) {
-            console.log("Hello from MyHelper!");
+        "greeting": {
+            type: "void",
+            func: function(self, args) {
+                console.log("Hello from MyHelper!");
+            }
         },
-        "addA:toB:": function(self, args) {
-            var result = args[0] + args[1];
-            console.log("计算结果:", result);
+        "addA:toB:": {
+            type: "int (int, int)",
+            func: function(self, args) {
+                return args[0] + args[1];
+            }
         }
     }
 });
 
-// 实例化
 var obj = MyClass.invoke("new");
-
-// 调用无参方法
 obj.invoke("greeting");
-
-// 调用带参方法
-obj.invoke("addA:toB:", [10, 20]);
+obj.invoke("addA:toB:", [10, 20]); // ObjC 端也可安全调用：[obj addA:10 toB:20]
 ```
-
-### 类型编码自动推导
-
-`ObjC.define` 会根据选择器中的冒号数量自动生成正确的 ObjC 类型编码：
-
-| 选择器 | 冒号数 | 自动编码 | 含义 |
-|--------|--------|----------|------|
-| `greeting` | 0 | `v@:` | `void (self, _cmd)` |
-| `doWork:` | 1 | `v@:@` | `void (self, _cmd, id)` |
-| `addA:toB:` | 2 | `v@:@@` | `void (self, _cmd, id, id)` |
-| `setX:y:z:` | 3 | `v@:@@@` | `void (self, _cmd, id, id, id)` |
-
-> 注意：自动生成的类型编码默认返回值为 `void`，参数类型为 `id`。如果方法覆盖了已有方法（如 `NSObject` 的方法），则使用原方法的类型编码。
 
 ### 状态管理
 
@@ -96,14 +111,23 @@ var Person = ObjC.define({
     name: "WNPerson",
     super: "NSObject",
     methods: {
-        "setName:": function(self, args) {
-            stateStore.name = args[0];
+        "setName:": {
+            type: "void (NSString *)",
+            func: function(self, args) {
+                stateStore.name = args[0];
+            }
         },
-        "getName": function(self, args) {
-            return stateStore.name;
+        "getName": {
+            type: "id",
+            func: function(self, args) {
+                return stateStore.name;
+            }
         },
-        "greet": function(self, args) {
-            console.log("Hello, " + (stateStore.name || "unknown") + "!");
+        "greet": {
+            type: "void",
+            func: function(self, args) {
+                console.log("Hello, " + (stateStore.name || "unknown") + "!");
+            }
         }
     }
 });
@@ -120,8 +144,11 @@ var Bad = ObjC.define({
     name: "BadExample",
     super: "NSObject",
     methods: {
-        "setName:": function(self, args) {
-            self.setProperty("name", args[0]); // ⚠️ 可能递归
+        "setName:": {
+            type: "void (NSString *)",
+            func: function(self, args) {
+                self.setProperty("name", args[0]); // ⚠️ 可能递归
+            }
         }
     }
 });
@@ -135,11 +162,17 @@ var MyDelegate = ObjC.define({
     super: "NSObject",
     protocols: ["UITableViewDelegate", "UITableViewDataSource"],
     methods: {
-        "tableView:numberOfRowsInSection:": function(self, args) {
-            return 10;
+        "tableView:numberOfRowsInSection:": {
+            type: "NSInteger (id, NSInteger)",
+            func: function(self, args) {
+                return 10;
+            }
         },
-        "tableView:cellForRowAtIndexPath:": function(self, args) {
-            // ...
+        "tableView:cellForRowAtIndexPath:": {
+            type: "id (id, id)",
+            func: function(self, args) {
+                // ...
+            }
         }
     }
 });
@@ -147,17 +180,39 @@ var MyDelegate = ObjC.define({
 
 ### 添加属性
 
+属性值支持**可读类型名**，会自动转换为对应的 ObjC 类型编码：
+
+| 类型写法 | 编码 | 说明 |
+|----------|------|------|
+| `"id"` 或 `"@"` | `@` | 通用对象 |
+| `"NSString *"` 或 `"NSString"` | `@"NSString"` | 具体 ObjC 类（带或不带 `*`） |
+| `"int"` | `i` | 整型 |
+| `"BOOL"` / `"bool"` | `B` | 布尔 |
+| `"float"` / `"double"` | `f` / `d` | 浮点 |
+| `"CGFloat"` | `d`(64-bit) | CGFloat |
+| `"NSInteger"` / `"NSUInteger"` | `q` / `Q`(64-bit) | 平台整型 |
+| `"CGRect"` / `"CGPoint"` / `"CGSize"` | struct 编码 | 常用结构体 |
+| `"long long"` / `"char"` / `"short"` | `q` / `c` / `s` | 基础 C 类型 |
+
+对象类型（编码以 `@` 开头）的属性自动添加 `retain` 语义（`&` 属性标记），同时为每个属性创建 `_<propName>` ivar。
+
+> ⚠️ `properties` 只会添加属性元数据和 ivar，**不会自动生成 getter/setter 方法**。如需从 ObjC 访问属性，请在 `methods` 中手动实现 getter/setter 并用闭包管理状态。
+
 ```javascript
 var Model = ObjC.define({
     name: "DataModel",
     super: "NSObject",
     properties: {
-        "title": "@",   // id 类型
-        "count": "@"
+        "title": "NSString *",   // 具体类类型
+        "count": "int",           // 基础类型
+        "frame": "CGRect"         // 结构体类型
     },
     methods: {
-        "initialize": function(self, args) {
-            console.log("DataModel initialized");
+        "initialize": {
+            type: "void",
+            func: function(self, args) {
+                console.log("DataModel initialized");
+            }
         }
     }
 });
@@ -165,15 +220,18 @@ var Model = ObjC.define({
 
 ### 已存在类的扩展
 
-如果 `name` 指定的类已经存在，`ObjC.define` 不会重新创建类，而是将 `methods` 中的方法添加到已有类上。
+如果 `name` 指定的类已经存在，`ObjC.define` 不会重新创建类，而是将 `methods` 中的方法添加到已有类上。此时 `protocols` 和 `properties` 会被**忽略**。
 
 ```javascript
 // 为已有类添加方法
 ObjC.define({
     name: "NSObject",
     methods: {
-        "myCustomMethod": function(self, args) {
-            console.log("自定义方法被调用, class:", self.className());
+        "myCustomMethod": {
+            type: "void",
+            func: function(self, args) {
+                console.log("自定义方法被调用, class:", self.className());
+            }
         }
     }
 });
@@ -205,13 +263,19 @@ obj.invoke("myCustomMethod");
 var delegate = ObjC.delegate({
     protocols: ["UITableViewDelegate"],
     methods: {
-        "tableView:didSelectRowAtIndexPath:": function(self, args) {
-            var tableView = args[0];
-            var indexPath = args[1];
-            console.log("选中行:", indexPath.invoke("row"));
+        "tableView:didSelectRowAtIndexPath:": {
+            type: "void (id, id)",
+            func: function(self, args) {
+                var tableView = args[0];
+                var indexPath = args[1];
+                console.log("选中行:", indexPath.invoke("row"));
+            }
         },
-        "tableView:heightForRowAtIndexPath:": function(self, args) {
-            return 44.0;
+        "tableView:heightForRowAtIndexPath:": {
+            type: "CGFloat (id, id)",
+            func: function(self, args) {
+                return 44.0;
+            }
         }
     }
 });

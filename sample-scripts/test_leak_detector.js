@@ -1,222 +1,238 @@
-// test_leak_detector.js — LeakDetector 完整测试
-// 演示: 快照对比、实例搜索、引用扫描、循环检测
+// test_leak_detector.js — LeakDetector API 完整测试
+// 快照对比、实例搜索、引用扫描、循环检测
 
-(function () {
-    console.log("=== test_leak_detector.js START ===");
-    console.log("");
-
-    // ─────────────────────────────────────────────
-    // Step 1: 拍摄基线快照
-    // ─────────────────────────────────────────────
-    console.log("▶ Step 1: 拍摄基线快照 (before)...");
-    var beforeTag = LeakDetector.takeSnapshot("before");
-    console.log("  快照 ID:", beforeTag);
-    console.log("");
-
-    // ─────────────────────────────────────────────
-    // Step 2: 制造内存泄漏
-    // ─────────────────────────────────────────────
-    console.log("▶ Step 2: 制造内存泄漏...");
-
-    var LeakExamples = ObjC.use("WNLeakExamples");
-    if (!LeakExamples) {
-        console.error("  ✗ WNLeakExamples 类未找到，请确保已添加到工程中");
-        return;
-    }
-
-    // 2a: 创建循环引用 (A <-> B)
-    console.log("  2a. 创建 3 组循环引用 (WNRetainCycleA <-> WNRetainCycleB)...");
-    LeakExamples.invoke("createRetainCycle");
-    LeakExamples.invoke("createRetainCycle");
-    LeakExamples.invoke("createRetainCycle");
-
-    // 2b: 创建 Timer 泄漏
-    console.log("  2b. 创建 Timer 泄漏 (WNTimerLeaker)...");
-    LeakExamples.invoke("createTimerLeak");
-
-    // 2c: 创建 Block 捕获泄漏
-    console.log("  2c. 创建 2 个 Block 捕获泄漏 (WNBlockCaptureLeak)...");
-    LeakExamples.invoke("createBlockCaptureLeak");
-    LeakExamples.invoke("createBlockCaptureLeak");
-
-    // 2d: 累积孤立对象
-    console.log("  2d. 累积 20 个孤立对象 (WNOrphanedObject)...");
-    LeakExamples.invoke("accumulateOrphanedObjects:", [20]);
-
-    console.log("  ✓ 所有泄漏场景已创建");
-    console.log("");
-
-    // ─────────────────────────────────────────────
-    // Step 3: 拍摄第二次快照
-    // ─────────────────────────────────────────────
-    console.log("▶ Step 3: 拍摄操作后快照 (after)...");
-    var afterTag = LeakDetector.takeSnapshot("after");
-    console.log("  快照 ID:", afterTag);
-    console.log("");
-
-    // ─────────────────────────────────────────────
-    // Step 4: 对比快照 — 找出增长的类
-    // ─────────────────────────────────────────────
-    console.log("▶ Step 4: 对比快照差异...");
-    var diff = LeakDetector.diffSnapshots("before", "after");
-
-    if (!diff || !diff.grown || diff.grown.length === 0) {
-        console.warn("  ⚠ 未检测到实例增长（可能快照间隔太短）");
-    } else {
-        console.log("  检测到 " + diff.grown.length + " 个类的实例数增长:");
-        console.log("  ┌─────────────────────────────┬────────┬────────┬───────┐");
-        console.log("  │ 类名                        │ 之前   │ 之后   │ 增量  │");
-        console.log("  ├─────────────────────────────┼────────┼────────┼───────┤");
-
-        var leakyClasses = [
-            "WNRetainCycleA", "WNRetainCycleB",
-            "WNTimerLeaker", "WNBlockCaptureLeak", "WNOrphanedObject"
-        ];
-        var foundLeaks = [];
-
-        for (var i = 0; i < diff.grown.length && i < 30; i++) {
-            var item = diff.grown[i];
-            var name = item.className;
-            var padded = name + "                              ".substring(0, 28 - name.length);
-            var marker = "";
-            if (leakyClasses.indexOf(name) >= 0) {
-                marker = " ← LEAK!";
-                foundLeaks.push(name);
-            }
-            console.log("  │ " + padded + "│ " +
-                        padLeft(item.before, 6) + " │ " +
-                        padLeft(item.after, 6) + " │ " +
-                        padLeft("+" + item.delta, 5) + " │" + marker);
+// ─── Inline Test Harness ─────────────────────────────────────
+var _r = [], _suite = 'leak_detector', _async = 0;
+function _log(s, n, d) {
+    _r.push({ s: s, n: n, d: d || '' });
+    var p = s === 'PASS' ? '  ✓' : s === 'FAIL' ? '  ✗' : '  ⊘';
+    var m = p + ' ' + n + (d ? ' — ' + d : '');
+    if (s === 'FAIL') console.error(m);
+    else if (s === 'SKIP') console.warn(m);
+    else console.log(m);
+}
+var T = {
+    suite: function(n) { console.log('\n▸ ' + n); },
+    ok: function(c, n) { _log(c ? 'PASS' : 'FAIL', n, c ? '' : 'assertion false'); },
+    eq: function(a, b, n) { var p = a === b; _log(p ? 'PASS' : 'FAIL', n, p ? '' : 'got ' + JSON.stringify(a) + ', want ' + JSON.stringify(b)); },
+    neq: function(a, b, n) { var p = a !== b; _log(p ? 'PASS' : 'FAIL', n, p ? '' : 'values are equal: ' + JSON.stringify(a)); },
+    type: function(v, t, n) { var p = typeof v === t; _log(p ? 'PASS' : 'FAIL', n, p ? '' : 'typeof is ' + typeof v + ', want ' + t); },
+    gt: function(a, b, n) { var p = a > b; _log(p ? 'PASS' : 'FAIL', n, p ? '' : a + ' not > ' + b); },
+    safe: function(fn, n) { try { fn(); _log('PASS', n); } catch(e) { _log('FAIL', n, String(e).substring(0, 120)); } },
+    skip: function(n, reason) { _log('SKIP', n, reason || ''); },
+    done: function() {
+        var p = 0, f = 0, s = 0, fails = [];
+        for (var i = 0; i < _r.length; i++) {
+            if (_r[i].s === 'PASS') p++;
+            else if (_r[i].s === 'FAIL') { f++; fails.push(_r[i].n + ': ' + _r[i].d); }
+            else s++;
         }
-        console.log("  └─────────────────────────────┴────────┴────────┴───────┘");
-
-        if (diff.grown.length > 30) {
-            console.log("  ... 还有 " + (diff.grown.length - 30) + " 个类省略");
-        }
-
-        console.log("");
-        console.log("  检测到的泄漏类: " + (foundLeaks.length > 0 ? foundLeaks.join(", ") : "无"));
+        console.log('\n══════════════════════════════════════');
+        console.log('SUITE: ' + _suite);
+        console.log('TOTAL: ' + _r.length + '  PASSED: ' + p + '  FAILED: ' + f + '  SKIPPED: ' + s);
+        if (f > 0) { console.error('FAILURES:'); for (var j = 0; j < fails.length; j++) console.error('  • ' + fails[j]); }
+        console.log('══════════════════════════════════════');
+        console.log('[RESULT_JSON] ' + JSON.stringify({ suite: _suite, total: _r.length, passed: p, failed: f, skipped: s, failures: fails }));
     }
-    console.log("");
+};
 
-    // ─────────────────────────────────────────────
-    // Step 5: 搜索特定泄漏类的实例
-    // ─────────────────────────────────────────────
-    console.log("▶ Step 5: 搜索堆上的泄漏实例...");
+// ═══════════════════════════════════════════════════════════════
+// Guard: LeakDetector available?
+// ═══════════════════════════════════════════════════════════════
+if (typeof LeakDetector === 'undefined') {
+    T.skip('LeakDetector (all)', 'LeakDetector not available');
+    T.done();
+} else {
 
-    var searchTargets = [
-        "WNRetainCycleA",
-        "WNRetainCycleB",
-        "WNTimerLeaker",
-        "WNBlockCaptureLeak",
-        "WNOrphanedObject"
-    ];
+// ═══════════════════════════════════════════════════════════════
+// 1. API 存在性检查
+// ═══════════════════════════════════════════════════════════════
+T.suite('LeakDetector API existence');
 
-    var foundAddresses = {};
+T.type(LeakDetector.takeSnapshot, 'function', 'takeSnapshot exists');
+T.type(LeakDetector.diffSnapshots, 'function', 'diffSnapshots exists');
+T.type(LeakDetector.findInstances, 'function', 'findInstances exists');
+T.type(LeakDetector.detectCycles, 'function', 'detectCycles exists');
+T.type(LeakDetector.getStrongReferences, 'function', 'getStrongReferences exists');
+T.type(LeakDetector.clearAllSnapshots, 'function', 'clearAllSnapshots exists');
 
-    for (var t = 0; t < searchTargets.length; t++) {
-        var target = searchTargets[t];
-        var instances = LeakDetector.findInstances(target, false, 50);
-        if (instances && instances.length > 0) {
-            console.log("  " + target + ": 找到 " + instances.length + " 个实例");
-            for (var j = 0; j < instances.length && j < 3; j++) {
-                console.log("    [" + j + "] addr=" + instances[j].address +
-                            " size=" + instances[j].size + "B");
-            }
-            if (instances.length > 3) {
-                console.log("    ... 还有 " + (instances.length - 3) + " 个");
-            }
-            foundAddresses[target] = instances[0].address;
-        } else {
-            console.log("  " + target + ": 未找到实例");
-        }
+// ═══════════════════════════════════════════════════════════════
+// 2. 拍摄基线快照
+// ═══════════════════════════════════════════════════════════════
+T.suite('Snapshot: baseline');
+
+var beforeTag = null;
+T.safe(function () {
+    beforeTag = LeakDetector.takeSnapshot('before_leak_test');
+}, 'takeSnapshot(before) no crash');
+T.ok(beforeTag !== null && beforeTag !== undefined, 'takeSnapshot returns tag: ' + beforeTag);
+
+// ═══════════════════════════════════════════════════════════════
+// 3. 制造泄漏场景
+// ═══════════════════════════════════════════════════════════════
+T.suite('Create leak scenarios');
+
+var LeakExamples = ObjC.use('WNLeakExamples');
+if (!LeakExamples) {
+    T.skip('leak scenarios (all)', 'WNLeakExamples class not found');
+} else {
+
+// 3a: 循环引用 (A <-> B)
+T.safe(function () {
+    LeakExamples.invoke('createRetainCycle');
+    LeakExamples.invoke('createRetainCycle');
+    LeakExamples.invoke('createRetainCycle');
+}, 'create 3 retain cycles');
+
+// 3b: Timer 泄漏
+T.safe(function () {
+    LeakExamples.invoke('createTimerLeak');
+}, 'create timer leak');
+
+// 3c: Block 捕获泄漏
+T.safe(function () {
+    LeakExamples.invoke('createBlockCaptureLeak');
+    LeakExamples.invoke('createBlockCaptureLeak');
+}, 'create 2 block capture leaks');
+
+// 3d: 孤立对象
+T.safe(function () {
+    LeakExamples.invoke('accumulateOrphanedObjects:', [20]);
+}, 'accumulate 20 orphaned objects');
+
+// ═══════════════════════════════════════════════════════════════
+// 4. 拍摄操作后快照 & 对比
+// ═══════════════════════════════════════════════════════════════
+T.suite('Snapshot: diff');
+
+var afterTag = null;
+T.safe(function () {
+    afterTag = LeakDetector.takeSnapshot('after_leak_test');
+}, 'takeSnapshot(after) no crash');
+T.ok(afterTag !== null && afterTag !== undefined, 'takeSnapshot(after) returns tag: ' + afterTag);
+
+var diff = null;
+T.safe(function () {
+    diff = LeakDetector.diffSnapshots('before_leak_test', 'after_leak_test');
+}, 'diffSnapshots no crash');
+T.ok(diff !== null && diff !== undefined, 'diffSnapshots returns result');
+T.ok(diff && diff.grown && diff.grown.length > 0, 'diff.grown has entries: ' + (diff && diff.grown ? diff.grown.length : 0));
+
+var leakyClasses = ['WNRetainCycleA', 'WNRetainCycleB', 'WNTimerLeaker', 'WNBlockCaptureLeak', 'WNOrphanedObject'];
+if (diff && diff.grown) {
+    var grownNames = [];
+    for (var i = 0; i < diff.grown.length; i++) grownNames.push(diff.grown[i].className);
+    for (var k = 0; k < leakyClasses.length; k++) {
+        T.ok(grownNames.indexOf(leakyClasses[k]) >= 0, 'diff detects growth of ' + leakyClasses[k]);
     }
-    console.log("");
+}
 
-    // ─────────────────────────────────────────────
-    // Step 6: 检查循环引用链
-    // ─────────────────────────────────────────────
-    console.log("▶ Step 6: 循环引用检测...");
+// ═══════════════════════════════════════════════════════════════
+// 5. 搜索泄漏实例
+// ═══════════════════════════════════════════════════════════════
+T.suite('findInstances');
 
-    if (foundAddresses["WNRetainCycleA"]) {
-        var addr = foundAddresses["WNRetainCycleA"];
-        console.log("  对 WNRetainCycleA (" + addr + ") 进行循环检测:");
-        var cycles = LeakDetector.detectCycles(addr, 10);
-        if (cycles && cycles.length > 0) {
-            console.log("  ✓ 检测到 " + cycles.length + " 个循环引用!");
-            for (var c = 0; c < cycles.length; c++) {
-                var cycle = cycles[c];
-                var chain = [];
-                for (var n = 0; n < cycle.length; n++) {
-                    chain.push(cycle[n].className + "(" + cycle[n].address + ")");
-                }
-                console.log("    Cycle " + (c + 1) + ": " + chain.join(" → "));
-            }
-        } else {
-            console.log("  ⚠ 未检测到循环（可能对象已被回收或深度不足）");
-        }
-    } else {
-        console.log("  跳过: 未找到 WNRetainCycleA 实例");
+var foundAddresses = {};
+var searchTargets = ['WNRetainCycleA', 'WNRetainCycleB', 'WNTimerLeaker', 'WNBlockCaptureLeak', 'WNOrphanedObject'];
+
+for (var t = 0; t < searchTargets.length; t++) {
+    var target = searchTargets[t];
+    var instances = null;
+    T.safe(function () {
+        instances = LeakDetector.findInstances(target, false, 50);
+    }, 'findInstances(' + target + ') no crash');
+    T.ok(instances && instances.length > 0, target + ' found ' + (instances ? instances.length : 0) + ' instances');
+    if (instances && instances.length > 0) {
+        T.ok(instances[0].address !== undefined, target + '[0] has address');
+        T.ok(instances[0].size !== undefined, target + '[0] has size');
+        foundAddresses[target] = instances[0].address;
     }
-    console.log("");
+}
 
-    // ─────────────────────────────────────────────
-    // Step 7: 查看强引用关系
-    // ─────────────────────────────────────────────
-    console.log("▶ Step 7: 查看强引用关系 (ivar 扫描)...");
+// findInstances 边界: 不存在的类
+var noInstances = null;
+T.safe(function () {
+    noInstances = LeakDetector.findInstances('NonExistentClassName12345', false, 10);
+}, 'findInstances nonexistent no crash');
+T.ok(!noInstances || noInstances.length === 0, 'nonexistent class returns empty');
 
-    if (foundAddresses["WNRetainCycleA"]) {
-        var addrA = foundAddresses["WNRetainCycleA"];
-        console.log("  WNRetainCycleA (" + addrA + ") 的强引用:");
-        var refsA = LeakDetector.getStrongReferences(addrA);
-        if (refsA && refsA.length > 0) {
-            for (var r = 0; r < refsA.length; r++) {
-                console.log("    ivar: " + refsA[r].name +
-                            "  type: " + refsA[r].type +
-                            "  → " + refsA[r].className + "(" + refsA[r].address + ")");
-            }
-        } else {
-            console.log("    无强引用");
-        }
+// ═══════════════════════════════════════════════════════════════
+// 6. 循环引用检测
+// ═══════════════════════════════════════════════════════════════
+T.suite('detectCycles');
+
+if (foundAddresses['WNRetainCycleA']) {
+    var addr = foundAddresses['WNRetainCycleA'];
+    var cycles = null;
+    T.safe(function () {
+        cycles = LeakDetector.detectCycles(addr, 10);
+    }, 'detectCycles no crash');
+    T.ok(cycles !== null && cycles !== undefined, 'detectCycles returns result');
+    T.ok(cycles && cycles.length > 0, 'detected ' + (cycles ? cycles.length : 0) + ' cycle(s)');
+
+    if (cycles && cycles.length > 0) {
+        var chain = cycles[0];
+        T.ok(chain.length >= 2, 'cycle chain has >= 2 nodes');
+        T.ok(chain[0].className !== undefined, 'cycle node has className');
+        T.ok(chain[0].address !== undefined, 'cycle node has address');
     }
+} else {
+    T.skip('detectCycles', 'no WNRetainCycleA address');
+}
 
-    if (foundAddresses["WNBlockCaptureLeak"]) {
-        var addrB = foundAddresses["WNBlockCaptureLeak"];
-        console.log("  WNBlockCaptureLeak (" + addrB + ") 的强引用:");
-        var refsB = LeakDetector.getStrongReferences(addrB);
-        if (refsB && refsB.length > 0) {
-            for (var r2 = 0; r2 < refsB.length; r2++) {
-                console.log("    ivar: " + refsB[r2].name +
-                            "  type: " + refsB[r2].type +
-                            "  → " + refsB[r2].className + "(" + refsB[r2].address + ")");
-            }
-        }
+// ═══════════════════════════════════════════════════════════════
+// 7. 强引用扫描
+// ═══════════════════════════════════════════════════════════════
+T.suite('getStrongReferences');
+
+if (foundAddresses['WNRetainCycleA']) {
+    var refsA = null;
+    T.safe(function () {
+        refsA = LeakDetector.getStrongReferences(foundAddresses['WNRetainCycleA']);
+    }, 'getStrongReferences(WNRetainCycleA) no crash');
+    T.ok(refsA !== null && refsA !== undefined, 'returns result');
+    if (refsA && refsA.length > 0) {
+        T.ok(refsA[0].name !== undefined, 'ref has name');
+        T.ok(refsA[0].type !== undefined, 'ref has type');
+        T.ok(refsA[0].className !== undefined, 'ref has className');
+        T.ok(refsA[0].address !== undefined, 'ref has address');
     }
-    console.log("");
+} else {
+    T.skip('getStrongReferences(A)', 'no address');
+}
 
-    // ─────────────────────────────────────────────
-    // Step 8: 清理快照
-    // ─────────────────────────────────────────────
-    console.log("▶ Step 8: 清理快照...");
+if (foundAddresses['WNBlockCaptureLeak']) {
+    var refsB = null;
+    T.safe(function () {
+        refsB = LeakDetector.getStrongReferences(foundAddresses['WNBlockCaptureLeak']);
+    }, 'getStrongReferences(WNBlockCaptureLeak) no crash');
+    T.ok(refsB !== null && refsB !== undefined, 'returns result');
+} else {
+    T.skip('getStrongReferences(Block)', 'no address');
+}
+
+} // end WNLeakExamples guard
+
+// ═══════════════════════════════════════════════════════════════
+// 8. 清理快照
+// ═══════════════════════════════════════════════════════════════
+T.suite('clearAllSnapshots');
+
+T.safe(function () {
     LeakDetector.clearAllSnapshots();
-    console.log("  ✓ 快照已清理");
-    console.log("");
+}, 'clearAllSnapshots no crash');
 
-    // ─────────────────────────────────────────────
-    // 结果汇总
-    // ─────────────────────────────────────────────
-    console.log("═══════════════════════════════════════════");
-    console.log("  LeakDetector 测试完成!");
-    console.log("  已验证功能: takeSnapshot / diffSnapshots /");
-    console.log("    findInstances / detectCycles /");
-    console.log("    getStrongReferences / clearAllSnapshots");
-    console.log("═══════════════════════════════════════════");
-    console.log("");
-    console.log("=== test_leak_detector.js END ===");
+// 清理后再拍快照验证不受影响
+var cleanTag = null;
+T.safe(function () {
+    cleanTag = LeakDetector.takeSnapshot('clean_test');
+}, 'takeSnapshot after clear no crash');
+T.ok(cleanTag !== null, 'post-clear snapshot works: ' + cleanTag);
 
-    function padLeft(val, width) {
-        var s = String(val);
-        while (s.length < width) s = " " + s;
-        return s;
-    }
-})();
+T.safe(function () {
+    LeakDetector.clearAllSnapshots();
+}, 'final clearAllSnapshots');
+
+} // end LeakDetector guard
+
+T.done();

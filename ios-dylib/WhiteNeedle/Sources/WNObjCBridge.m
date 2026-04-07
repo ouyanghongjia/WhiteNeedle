@@ -653,41 +653,40 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
     for (NSString *selName in methodDict) {
         SEL sel = NSSelectorFromString(selName);
 
-        JSValue *jsFunc = methods[selName];
-        if (!jsFunc || [jsFunc isUndefined]) continue;
+        JSValue *entry = methods[selName];
+        if (!entry || [entry isUndefined]) continue;
 
-        Method existingMethod = class_getInstanceMethod(cls, sel);
-        const char *typeEncoding = "v@:";
-        NSString *generatedEncoding = nil;
-        if (existingMethod) {
-            typeEncoding = method_getTypeEncoding(existingMethod);
-        } else {
-            NSUInteger colonCount = [[selName componentsSeparatedByString:@":"] count] - 1;
-            if (colonCount > 0) {
-                NSMutableString *enc = [NSMutableString stringWithString:@"v@:"];
-                for (NSUInteger c = 0; c < colonCount; c++) {
-                    [enc appendString:@"@"];
-                }
-                generatedEncoding = enc;
-                typeEncoding = [generatedEncoding UTF8String];
-            }
+        // Required format: { type: "int (NSString *)", func: function(self, args){} }
+        JSValue *typeVal = entry[@"type"];
+        JSValue *funcVal = entry[@"func"];
+        if (!typeVal || [typeVal isUndefined] || !funcVal || [funcVal isUndefined]) {
+            NSLog(@"%@ ObjC.define method %@: expected { type: \"...\", func: function(){} } object", kLogPrefix, selName);
+            continue;
         }
 
-        // Use _objc_msgForward + forwardInvocation: for full parameter access.
-        // Store the JS function in an associated object keyed by selector name.
+        JSValue *jsFunc = funcVal;
+        NSString *typeSig = [typeVal toString];
+        NSError *parseErr = nil;
+        NSString *encoding = [WNBlockSignatureParser methodTypeEncodingFromSignature:typeSig error:&parseErr];
+        if (!encoding) {
+            NSLog(@"%@ ObjC.define method %@: failed to parse type \"%@\": %@",
+                  kLogPrefix, selName, typeSig, parseErr.localizedDescription);
+            continue;
+        }
+
+        const char *typeEncoding = [encoding UTF8String];
+
         JSManagedValue *managedFunc = [JSManagedValue managedValueWithValue:jsFunc];
         [context.virtualMachine addManagedReference:managedFunc withOwner:cls];
 
         NSString *assocKey = [NSString stringWithFormat:@"WNDefine_%@", selName];
         objc_setAssociatedObject(cls, NSSelectorFromString(assocKey), managedFunc, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
-        // Add the method with _objc_msgForward so forwardInvocation: handles it
         class_addMethod(cls, sel, _objc_msgForward, typeEncoding);
 
-        // Ensure the class has our custom forwardInvocation: that handles ObjC.define methods
         [self ensureDefineForwardingForClass:cls inContext:context];
 
-        NSLog(@"%@ Added method %@ to %@ (full args via NSInvocation)", kLogPrefix, selName, NSStringFromClass(cls));
+        NSLog(@"%@ Added method %@ to %@ (encoding: %s)", kLogPrefix, selName, NSStringFromClass(cls), typeEncoding);
     }
 }
 

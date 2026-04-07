@@ -371,8 +371,8 @@ const API_REFERENCE = `# WhiteNeedle Runtime API Reference
 - \`Interceptor.hookCFunction('symbolName', replacementAddress)\` — Hook C function
 
 ## Class Definition
-- \`ObjC.define({ name, super, protocols, methods })\` — Create new ObjC class at runtime
-- \`ObjC.delegate({ protocols, methods })\` — Create delegate object
+- \`ObjC.define({ name, super, protocols, properties, methods })\` — Create new ObjC class at runtime. Each method is \`{ type: "int (NSString *)", func: function(self, args){} }\` with explicit type signature
+- \`ObjC.delegate({ protocols, methods })\` — Create delegate object (same method format as define)
 
 ## Structs & Pointers
 - \`$struct('CGRect', [['x','d'],['y','d'],['width','d'],['height','d']])\` — Define a C struct

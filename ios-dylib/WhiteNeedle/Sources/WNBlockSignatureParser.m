@@ -393,4 +393,116 @@ static BOOL scanCaretSection(NSScanner *sc) {
     return final;
 }
 
++ (nullable NSString *)methodTypeEncodingFromSignature:(NSString *)signature
+                                                 error:(NSError *__autoreleasing *)error {
+    if (signature.length == 0) {
+        if (error) {
+            *error = [NSError errorWithDomain:kDomain
+                                         code:20
+                                     userInfo:@{ NSLocalizedDescriptionKey : @"Empty method signature" }];
+        }
+        return nil;
+    }
+
+    NSMutableString *norm = [NSMutableString string];
+    NSCharacterSet *ws = [NSCharacterSet whitespaceAndNewlineCharacterSet];
+    for (NSUInteger i = 0; i < signature.length; i++) {
+        unichar c = [signature characterAtIndex:i];
+        if ([ws characterIsMember:c]) {
+            if (norm.length == 0 || [norm characterAtIndex:norm.length - 1] == ' ') continue;
+            [norm appendString:@" "];
+        } else {
+            [norm appendFormat:@"%C", c];
+        }
+    }
+    NSString *trimmed = [norm stringByTrimmingCharactersInSet:ws];
+
+    NSScanner *sc = [NSScanner scannerWithString:trimmed];
+    sc.charactersToBeSkipped = nil;
+
+    NSString *retEnc = nil;
+    NSError *err = nil;
+    if (![self scanReturnEncoding:sc into:&retEnc error:&err]) {
+        if (error) *error = err;
+        return nil;
+    }
+
+    NSMutableString *out = [NSMutableString stringWithString:retEnc];
+    [out appendString:@"@:"];
+
+    skipWS(sc);
+    if (sc.isAtEnd) {
+        // Return-type only, no params → e.g. "void"
+    } else if (!scanOpenParen(sc)) {
+        if (error) {
+            *error = [NSError errorWithDomain:kDomain
+                                         code:21
+                                     userInfo:@{ NSLocalizedDescriptionKey : @"Expected '(' after return type in method signature" }];
+        }
+        return nil;
+    } else {
+        skipWS(sc);
+        BOOL closed = [sc scanString:@")" intoString:NULL];
+        if (!closed) {
+            NSUInteger voidPos = sc.scanLocation;
+            if (scanWord(sc, @"void")) {
+                skipWS(sc);
+                closed = [sc scanString:@")" intoString:NULL];
+                if (!closed) sc.scanLocation = voidPos;
+            }
+        }
+
+        if (!closed) {
+            while (YES) {
+                NSString *arg = nil;
+                if (![self scanParameterEncoding:sc into:&arg error:&err]) {
+                    if (error) *error = err;
+                    return nil;
+                }
+                [out appendString:arg];
+                skipWS(sc);
+                if ([sc scanString:@")" intoString:NULL]) break;
+                if ([sc scanString:@"," intoString:NULL]) continue;
+                if (error) {
+                    *error = [NSError errorWithDomain:kDomain
+                                                 code:22
+                                             userInfo:@{ NSLocalizedDescriptionKey : @"Expected ',' or ')' in method parameters" }];
+                }
+                return nil;
+            }
+        }
+
+        skipWS(sc);
+        if (!sc.isAtEnd) {
+            if (error) {
+                *error = [NSError errorWithDomain:kDomain
+                                             code:23
+                                         userInfo:@{
+                                             NSLocalizedDescriptionKey :
+                                                 [NSString stringWithFormat:@"Extra text after method signature: %@",
+                                                  [trimmed substringFromIndex:sc.scanLocation]]
+                                         }];
+            }
+            return nil;
+        }
+    }
+
+    NSString *final = [out copy];
+    @try {
+        [NSMethodSignature signatureWithObjCTypes:final.UTF8String];
+    } @catch (NSException *ex) {
+        if (error) {
+            *error = [NSError errorWithDomain:kDomain
+                                         code:24
+                                     userInfo:@{
+                                         NSLocalizedDescriptionKey :
+                                             [NSString stringWithFormat:@"Invalid method encoding '%@': %@", final, ex.reason ?: @""]
+                                     }];
+        }
+        return nil;
+    }
+
+    return final;
+}
+
 @end

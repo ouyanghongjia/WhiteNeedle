@@ -99,24 +99,39 @@ interface DefineMethodHandler {
     (self: ObjCProxy, args: any[]): any;
 }
 
+/**
+ * 方法定义：必须包含 type 和 func。
+ * type 格式与 block 签名类似但不含 (^)，例如：
+ *   "void (NSString *)"          — 返回 void，接收一个 NSString 参数
+ *   "int (NSString *, CGRect)"   — 返回 int，接收两个参数
+ *   "id ()"                      — 返回 id，无参数
+ *   "void"                       — 返回 void，无参数
+ */
+interface DefineTypedMethod {
+    /** 方法类型签名：returnType (paramType1, paramType2, ...) */
+    type: string;
+    /** JS 回调函数 */
+    func: DefineMethodHandler;
+}
+
 interface DefineSpec {
-    /** 类名（必须唯一） */
+    /** 类名。若同名类已存在，仅追加 methods（不会重建类） */
     name: string;
-    /** 父类名，默认 "NSObject" */
+    /** 父类名，默认 "NSObject"（仅新建类时生效） */
     super?: string;
-    /** 要遵循的协议名称列表 */
+    /** 要遵循的协议名称列表（仅新建类时生效） */
     protocols?: string[];
-    /** 属性定义，键为属性名，值为类型编码 */
+    /** 属性定义，键为属性名，值为可读类型名如 "NSString *"、"int"、"CGRect" 等（仅新建类时生效） */
     properties?: Record<string, string>;
-    /** 方法定义，键为选择器名称，值为 JS 回调函数 */
-    methods?: Record<string, DefineMethodHandler>;
+    /** 方法定义，键为选择器名称，值为 {type, func} 对象 */
+    methods?: Record<string, DefineTypedMethod>;
 }
 
 interface DelegateSpec {
     /** 要遵循的协议名称列表 */
     protocols: string[];
     /** 协议方法实现 */
-    methods: Record<string, DefineMethodHandler>;
+    methods: Record<string, DefineTypedMethod>;
 }
 
 declare namespace ObjC {
@@ -145,7 +160,7 @@ declare namespace ObjC {
      * @param spec 类定义规范
      * @returns 新创建类的类代理对象
      */
-    function define(spec: DefineSpec): ObjCProxy;
+    function define(spec: DefineSpec): ObjCProxy | null;
 
     /**
      * 快速创建遵循指定协议的代理对象实例
