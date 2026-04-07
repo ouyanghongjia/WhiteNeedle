@@ -3,13 +3,69 @@
 static NSString *const kLogPrefix = @"[WNUserDefaultsBridge]";
 static NSMutableDictionary<NSString *, NSUserDefaults *> *sSuiteCache = nil;
 
+static NSArray<NSString *> *sSystemKeyPrefixes = nil;
+static NSArray<NSString *> *sSystemKeyExact = nil;
+
 @implementation WNUserDefaultsBridge
+
++ (NSArray<NSString *> *)systemKeyPrefixes {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        sSystemKeyPrefixes = @[
+            @"Apple",           // AppleLanguages, AppleLocale, AppleKeyboards, ApplePasscodeKeyboards, etc.
+            @"NS",              // NSLanguages, NSInterfaceStyle, NSContentSizeCategory, etc.
+            @"AK",              // Apple Keychain/Account Kit internal
+            @"com.apple.",      // Apple domain preferences
+            @"WebKit",          // WebKit internal preferences
+            @"PK",              // PassKit / StockholmSettings
+            @"IN",              // Intents framework (INNextHearbeatDate, etc.)
+            @"MultiPath",       // Multipath TCP settings
+            @"_",               // Private/internal keys
+            @"LS",              // LaunchServices
+            @"CK",              // CloudKit internal
+            @"MF",              // MessageFilter
+            @"MT",              // Metal/system
+            @"SB",              // SpringBoard
+            @"UIKit",           // UIKit internal
+            @"MSV",             // MessagesVersion
+        ];
+        sSystemKeyExact = @[
+            @"AddingEmojiKeybordHandled",
+            @"ConstraintLayoutGuideDebugMode",
+        ];
+    });
+    return sSystemKeyPrefixes;
+}
+
++ (BOOL)isSystemKey:(NSString *)key {
+    if (!key || key.length == 0) return NO;
+    for (NSString *prefix in [self systemKeyPrefixes]) {
+        if ([key hasPrefix:prefix]) return YES;
+    }
+    for (NSString *exact in sSystemKeyExact) {
+        if ([key isEqualToString:exact]) return YES;
+    }
+    return NO;
+}
+
++ (NSDictionary *)filterSystemKeys:(NSDictionary *)dict {
+    NSMutableDictionary *filtered = [NSMutableDictionary dictionaryWithCapacity:dict.count];
+    [dict enumerateKeysAndObjectsUsingBlock:^(id key, id value, BOOL *stop) {
+        NSString *keyStr = [key description];
+        if (![self isSystemKey:keyStr]) {
+            filtered[keyStr] = value;
+        }
+    }];
+    return filtered;
+}
 
 + (void)registerInContext:(JSContext *)context {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         sSuiteCache = [NSMutableDictionary new];
     });
+
+    [self systemKeyPrefixes];
 
     JSValue *ns = [JSValue valueWithNewObjectInContext:context];
 
@@ -31,11 +87,13 @@ static NSMutableDictionary<NSString *, NSUserDefaults *> *sSuiteCache = nil;
             NSString *plistPath = [prefsDir stringByAppendingPathComponent:file];
             NSDictionary *plist = [NSDictionary dictionaryWithContentsOfFile:plistPath];
             NSUInteger keyCount = plist.count;
+            NSDictionary *filtered = [self filterSystemKeys:(plist ?: @{})];
             [result addObject:@{
                 @"suiteName": suite,
                 @"name": suite,
                 @"isDefault": @([suite isEqualToString:bundleId]),
                 @"keyCount": @(keyCount),
+                @"appKeyCount": @(filtered.count),
             }];
         }
         return [JSValue valueWithObject:result inContext:ctx];
@@ -46,6 +104,23 @@ static NSMutableDictionary<NSString *, NSUserDefaults *> *sSuiteCache = nil;
         NSUserDefaults *ud = [self resolveDefaults:suiteArg];
         NSDictionary *dict = [ud dictionaryRepresentation];
         return [JSValue valueWithObject:[self jsonSafe:dict] inContext:ctx];
+    };
+
+    ns[@"getAllApp"] = ^JSValue *(JSValue *suiteArg) {
+        JSContext *ctx = [JSContext currentContext];
+        NSUserDefaults *ud = [self resolveDefaults:suiteArg];
+        NSDictionary *dict = [ud dictionaryRepresentation];
+        NSDictionary *filtered = [self filterSystemKeys:dict];
+        return [JSValue valueWithObject:[self jsonSafe:filtered] inContext:ctx];
+    };
+
+    ns[@"systemKeyPrefixes"] = ^JSValue *() {
+        JSContext *ctx = [JSContext currentContext];
+        return [JSValue valueWithObject:sSystemKeyPrefixes inContext:ctx];
+    };
+
+    ns[@"isSystemKey"] = ^BOOL(NSString *key) {
+        return [self isSystemKey:key];
     };
 
     ns[@"get"] = ^JSValue *(NSString *key, JSValue *suiteArg) {

@@ -86,14 +86,21 @@ static void wn_runOnMain(void (^block)(void)) {
 
     ns[@"viewControllers"] = ^JSValue *() {
         JSContext *ctx = [JSContext currentContext];
-        __block NSArray *vcs = nil;
+        __block NSDictionary *tree = nil;
         wn_runOnMain(^{
             UIWindow *win = [self findKeyWindow];
             UIViewController *root = win.rootViewController;
-            if (root) vcs = [self vcTreeForController:root depth:0];
+            if (root) tree = [self vcTreeForController:root depth:0];
         });
-        if (!vcs) return [JSValue valueWithObject:@[] inContext:ctx];
-        return [JSValue valueWithObject:vcs inContext:ctx];
+        if (!tree) return [JSValue valueWithNullInContext:ctx];
+        return [JSValue valueWithObject:tree inContext:ctx];
+    };
+
+    ns[@"vcDetail"] = ^JSValue *(NSString *addr) {
+        JSContext *ctx = [JSContext currentContext];
+        NSDictionary *d = [self vcDetailForAddress:addr];
+        if (!d) return [JSValue valueWithNullInContext:ctx];
+        return [JSValue valueWithObject:d inContext:ctx];
     };
 
     ns[@"viewDetail"] = ^JSValue *(NSString *addr) {
@@ -136,14 +143,14 @@ static void wn_runOnMain(void (^block)(void)) {
     return tree ?: @{};
 }
 
-+ (NSArray *)viewControllerStack {
-    __block NSArray *vcs = nil;
++ (NSDictionary *)viewControllerTree {
+    __block NSDictionary *tree = nil;
     wn_runOnMain(^{
         UIWindow *win = [self findKeyWindow];
         UIViewController *root = win.rootViewController;
-        if (root) vcs = [self vcTreeForController:root depth:0];
+        if (root) tree = [self vcTreeForController:root depth:0];
     });
-    return vcs ?: @[];
+    return tree ?: @{};
 }
 
 + (NSDictionary *)viewDetailForAddress:(NSString *)addr {
@@ -292,12 +299,14 @@ static void wn_runOnMain(void (^block)(void)) {
     wn_runOnMain(^{
         UIWindow *win = [self findKeyWindow];
         if (!win) return;
-        UIGraphicsBeginImageContextWithOptions(win.bounds.size, NO, 0);
-        [win drawViewHierarchyInRect:win.bounds afterScreenUpdates:NO];
+        CGFloat scale = MIN([UIScreen mainScreen].scale, 2.0);
+        UIGraphicsBeginImageContextWithOptions(win.bounds.size, YES, scale);
+        [win drawViewHierarchyInRect:win.bounds afterScreenUpdates:YES];
         UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
         UIGraphicsEndImageContext();
-        NSData *png = UIImagePNGRepresentation(img);
-        base64 = [png base64EncodedStringWithOptions:0];
+        if (!img) return;
+        NSData *jpeg = UIImageJPEGRepresentation(img, 0.7);
+        base64 = [jpeg base64EncodedStringWithOptions:0];
     });
     return base64;
 }
@@ -408,33 +417,169 @@ static void wn_runOnMain(void (^block)(void)) {
     return node;
 }
 
-+ (NSArray *)vcTreeForController:(UIViewController *)vc depth:(NSInteger)depth {
++ (NSDictionary *)vcTreeForController:(UIViewController *)vc depth:(NSInteger)depth {
     NSMutableDictionary *info = [NSMutableDictionary new];
-    info[@"class"]   = NSStringFromClass([vc class]);
-    info[@"title"]   = vc.title ?: @"";
-    info[@"address"] = [NSString stringWithFormat:@"%p", vc];
-    info[@"depth"]   = @(depth);
+    info[@"class"]      = NSStringFromClass([vc class]);
+    info[@"superclass"] = NSStringFromClass([vc superclass]);
+    info[@"title"]      = vc.title ?: @"";
+    info[@"address"]    = [NSString stringWithFormat:@"%p", vc];
+    info[@"depth"]      = @(depth);
+    info[@"isViewLoaded"] = @(vc.isViewLoaded);
 
-    NSMutableArray *result = [NSMutableArray arrayWithObject:info];
+    if (vc.isViewLoaded) {
+        UIView *v = vc.view;
+        info[@"viewClass"]   = NSStringFromClass([v class]);
+        info[@"viewAddress"] = [NSString stringWithFormat:@"%p", v];
+        info[@"viewFrame"]   = NSStringFromCGRect(v.frame);
+    }
+
+    if ([vc isKindOfClass:[UINavigationController class]]) {
+        info[@"containerType"] = @"navigation";
+        UINavigationController *nav = (UINavigationController *)vc;
+        info[@"stackCount"] = @(nav.viewControllers.count);
+        if (nav.topViewController) {
+            info[@"topVC"] = NSStringFromClass([nav.topViewController class]);
+        }
+    } else if ([vc isKindOfClass:[UITabBarController class]]) {
+        info[@"containerType"] = @"tabBar";
+        UITabBarController *tab = (UITabBarController *)vc;
+        info[@"tabCount"] = @(tab.viewControllers.count);
+        info[@"selectedIndex"] = @(tab.selectedIndex);
+    } else if ([vc isKindOfClass:[UIPageViewController class]]) {
+        info[@"containerType"] = @"page";
+    } else if ([vc isKindOfClass:[UISplitViewController class]]) {
+        info[@"containerType"] = @"split";
+    } else {
+        info[@"containerType"] = @"content";
+    }
+
+    if (vc.navigationItem.title) {
+        info[@"navItemTitle"] = vc.navigationItem.title;
+    }
+    if (vc.tabBarItem.title) {
+        info[@"tabBarTitle"] = vc.tabBarItem.title;
+    }
+    info[@"childCount"]         = @(vc.childViewControllers.count);
+    info[@"isBeingPresented"]   = @(vc.isBeingPresented);
+    info[@"modalPresentationStyle"] = @(vc.modalPresentationStyle);
+
+    NSMutableArray *children = [NSMutableArray new];
 
     if ([vc isKindOfClass:[UINavigationController class]]) {
         for (UIViewController *child in ((UINavigationController *)vc).viewControllers) {
-            [result addObjectsFromArray:[self vcTreeForController:child depth:depth + 1]];
+            NSDictionary *node = [self vcTreeForController:child depth:depth + 1];
+            NSMutableDictionary *mut = [node mutableCopy];
+            mut[@"relation"] = @"navStack";
+            [children addObject:mut];
         }
     } else if ([vc isKindOfClass:[UITabBarController class]]) {
         for (UIViewController *child in ((UITabBarController *)vc).viewControllers ?: @[]) {
-            [result addObjectsFromArray:[self vcTreeForController:child depth:depth + 1]];
+            NSDictionary *node = [self vcTreeForController:child depth:depth + 1];
+            NSMutableDictionary *mut = [node mutableCopy];
+            mut[@"relation"] = @"tab";
+            [children addObject:mut];
         }
     }
 
-    if (vc.presentedViewController) {
-        [result addObjectsFromArray:[self vcTreeForController:vc.presentedViewController depth:depth + 1]];
+    if (vc.presentedViewController && vc.presentedViewController.presentingViewController == vc) {
+        NSDictionary *node = [self vcTreeForController:vc.presentedViewController depth:depth + 1];
+        NSMutableDictionary *mut = [node mutableCopy];
+        mut[@"relation"] = @"presented";
+        [children addObject:mut];
     }
 
     for (UIViewController *child in vc.childViewControllers) {
-        [result addObjectsFromArray:[self vcTreeForController:child depth:depth + 1]];
+        if ([vc isKindOfClass:[UINavigationController class]] ||
+            [vc isKindOfClass:[UITabBarController class]]) continue;
+        NSDictionary *node = [self vcTreeForController:child depth:depth + 1];
+        NSMutableDictionary *mut = [node mutableCopy];
+        mut[@"relation"] = @"child";
+        [children addObject:mut];
     }
 
+    if (children.count > 0) {
+        info[@"children"] = children;
+    }
+
+    return info;
+}
+
++ (NSDictionary *)vcDetailForAddress:(NSString *)addrStr {
+    if (!addrStr) return nil;
+    unsigned long long addr = 0;
+    NSScanner *scanner = [NSScanner scannerWithString:addrStr];
+    if ([addrStr hasPrefix:@"0x"] || [addrStr hasPrefix:@"0X"]) [scanner setScanLocation:2];
+    [scanner scanHexLongLong:&addr];
+    if (addr == 0) return nil;
+
+    __block NSMutableDictionary *result = nil;
+    wn_runOnMain(^{
+        id obj = (__bridge id)(void *)addr;
+        if (![obj isKindOfClass:[UIViewController class]]) return;
+        UIViewController *vc = (UIViewController *)obj;
+
+        result = [NSMutableDictionary new];
+        result[@"class"]      = NSStringFromClass([vc class]);
+        result[@"superclass"] = NSStringFromClass([vc superclass]);
+        result[@"address"]    = [NSString stringWithFormat:@"%p", vc];
+        result[@"title"]      = vc.title ?: @"";
+        result[@"isViewLoaded"] = @(vc.isViewLoaded);
+
+        NSMutableArray *hierarchy = [NSMutableArray new];
+        Class cls = [vc class];
+        while (cls && cls != [NSObject class]) {
+            [hierarchy addObject:NSStringFromClass(cls)];
+            cls = [cls superclass];
+        }
+        result[@"classHierarchy"] = hierarchy;
+
+        if (vc.isViewLoaded) {
+            UIView *v = vc.view;
+            result[@"viewClass"]   = NSStringFromClass([v class]);
+            result[@"viewAddress"] = [NSString stringWithFormat:@"%p", v];
+            result[@"viewFrame"]   = NSStringFromCGRect(v.frame);
+            result[@"viewBounds"]  = NSStringFromCGRect(v.bounds);
+            result[@"subviewCount"] = @(v.subviews.count);
+        }
+
+        if (vc.navigationController) {
+            result[@"navigationController"] = NSStringFromClass([vc.navigationController class]);
+            result[@"navPosition"] = @([vc.navigationController.viewControllers indexOfObject:vc]);
+            result[@"navStackSize"] = @(vc.navigationController.viewControllers.count);
+        }
+        if (vc.tabBarController) {
+            result[@"tabBarController"] = NSStringFromClass([vc.tabBarController class]);
+        }
+        if (vc.parentViewController) {
+            result[@"parentVC"] = NSStringFromClass([vc.parentViewController class]);
+            result[@"parentAddress"] = [NSString stringWithFormat:@"%p", vc.parentViewController];
+        }
+        if (vc.presentingViewController) {
+            result[@"presentingVC"] = NSStringFromClass([vc.presentingViewController class]);
+        }
+        if (vc.presentedViewController) {
+            result[@"presentedVC"] = NSStringFromClass([vc.presentedViewController class]);
+        }
+
+        result[@"childCount"]     = @(vc.childViewControllers.count);
+        result[@"definesPresentationContext"] = @(vc.definesPresentationContext);
+        result[@"modalPresentationStyle"]    = @(vc.modalPresentationStyle);
+        result[@"modalTransitionStyle"]      = @(vc.modalTransitionStyle);
+        result[@"edgesForExtendedLayout"]    = @(vc.edgesForExtendedLayout);
+
+        if (vc.navigationItem) {
+            result[@"navItemTitle"] = vc.navigationItem.title ?: @"";
+            result[@"navItemHidesBackButton"] = @(vc.navigationItem.hidesBackButton);
+        }
+        if (vc.tabBarItem) {
+            result[@"tabBarTitle"] = vc.tabBarItem.title ?: @"";
+            result[@"tabBarTag"]   = @(vc.tabBarItem.tag);
+        }
+
+        if ([vc respondsToSelector:@selector(preferredContentSize)]) {
+            result[@"preferredContentSize"] = NSStringFromCGSize(vc.preferredContentSize);
+        }
+    });
     return result;
 }
 

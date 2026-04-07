@@ -213,10 +213,15 @@ export class DeviceManager extends EventEmitter {
         return result?.tree || {};
     }
 
-    async getViewControllers(): Promise<any[]> {
+    async getViewControllers(): Promise<any> {
         if (!this.bridge?.isConnected) { throw new Error('Not connected to any device'); }
         const result = await this.bridge.call('getViewControllers', {}) as any;
-        return result?.controllers || [];
+        return result?.tree || {};
+    }
+
+    async getVCDetail(address: string): Promise<any> {
+        if (!this.bridge?.isConnected) { throw new Error('Not connected to any device'); }
+        return await this.bridge.call('getVCDetail', { address });
     }
 
     async getViewDetail(address: string): Promise<any> {

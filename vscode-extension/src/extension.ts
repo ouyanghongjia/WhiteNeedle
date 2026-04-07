@@ -17,6 +17,7 @@ import { HostMappingPanel } from './panels/hostMappingPanel';
 import { SnippetPanel } from './panels/snippetPanel';
 import { LeakDetectorPanel } from './panels/leakDetectorPanel';
 import { RetainGraphPanel } from './panels/retainGraphPanel';
+import { SQLitePanel } from './panels/sqlitePanel';
 import { ProxyServer } from './proxy/proxyServer';
 import {
     WhiteNeedleConfigurationProvider,
@@ -401,6 +402,10 @@ export function activate(context: vscode.ExtensionContext) {
 
         vscode.commands.registerCommand('whiteneedle.openSandbox', () => {
             SandboxPanel.createOrShow(context.extensionUri, deviceManager);
+        }),
+
+        vscode.commands.registerCommand('whiteneedle.openSQLite', () => {
+            SQLitePanel.createOrShow(context.extensionUri, deviceManager, outputChannel);
         }),
 
         vscode.commands.registerCommand('whiteneedle.openObjC', () => {

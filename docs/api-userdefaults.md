@@ -26,7 +26,7 @@ suites.forEach(function(s) {
 
 ### `UserDefaults.getAll(suiteName?)`
 
-获取指定套件的所有键值对。省略 `suiteName` 则使用 `standardUserDefaults`。
+获取指定套件的所有键值对（**包含** Apple/系统内部键）。省略 `suiteName` 则使用 `standardUserDefaults`。
 
 ```javascript
 var all = UserDefaults.getAll();
@@ -36,6 +36,39 @@ var appGroup = UserDefaults.getAll("group.com.example.shared");
 ```
 
 **返回值**：`Record<string, any>`
+
+### `UserDefaults.getAllApp(suiteName?)`
+
+获取指定套件中 **仅属于应用** 的键值对。自动过滤 `Apple*`、`NS*`、`WebKit*`、`com.apple.*` 等系统内部键前缀，让你只看到业务相关的数据。
+
+```javascript
+var appData = UserDefaults.getAllApp();
+console.log("App keys:", Object.keys(appData).length);
+```
+
+**返回值**：`Record<string, any>`
+
+### `UserDefaults.systemKeyPrefixes()`
+
+返回当前使用的系统键前缀过滤列表。
+
+```javascript
+var prefixes = UserDefaults.systemKeyPrefixes();
+// ["Apple", "NS", "AK", "com.apple.", "WebKit", ...]
+```
+
+**返回值**：`string[]`
+
+### `UserDefaults.isSystemKey(key)`
+
+判断一个键是否被视为系统键。
+
+```javascript
+UserDefaults.isSystemKey("AppleLanguages");  // true
+UserDefaults.isSystemKey("user_token");      // false
+```
+
+**返回值**：`boolean`
 
 ### `UserDefaults.get(key, suiteName?)`
 
@@ -83,3 +116,5 @@ UserDefaults.clear("com.example.temp");
 - `NSData` 类型的值会显示为 `"<NSData N bytes>"` 字符串
 - `NSDate` 类型的值会转为日期描述字符串
 - `suiteName` 参数省略时默认为应用的 `bundleIdentifier`
+- `getAllApp()` 过滤的系统键前缀包括：`Apple`、`NS`、`AK`、`com.apple.`、`WebKit`、`PK`、`IN`、`MultiPath`、`_`、`LS`、`CK`、`MF`、`MT`、`SB`、`UIKit`、`MSV`
+- 如需查看完整数据（含系统键），使用 `getAll()`；面板中可通过 "Hide system keys" 复选框切换

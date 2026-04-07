@@ -588,6 +588,8 @@ interface SuiteInfo {
     isDefault: boolean;
     /** plist 根字典键数量（无法解析时为 0） */
     keyCount: number;
+    /** 排除系统键后的应用键数量 */
+    appKeyCount: number;
 }
 
 declare namespace UserDefaults {
@@ -595,10 +597,16 @@ declare namespace UserDefaults {
     function suites(): SuiteInfo[];
 
     /**
-     * 获取指定套件的所有键值对
+     * 获取指定套件的所有键值对（包含系统键）
      * @param suiteName 套件名（省略则使用标准 UserDefaults）
      */
     function getAll(suiteName?: string): Record<string, any>;
+
+    /**
+     * 获取指定套件的应用键值对（已过滤 Apple/NS/WebKit 等系统键）
+     * @param suiteName 套件名（省略则使用标准 UserDefaults）
+     */
+    function getAllApp(suiteName?: string): Record<string, any>;
 
     /**
      * 获取单个键的值
@@ -629,6 +637,15 @@ declare namespace UserDefaults {
      * @param suiteName 套件名
      */
     function clear(suiteName?: string): void;
+
+    /** 返回被过滤的系统键前缀列表 */
+    function systemKeyPrefixes(): string[];
+
+    /**
+     * 判断某个键是否为系统键
+     * @param key 键名
+     */
+    function isSystemKey(key: string): boolean;
 }
 
 // ─── FileSystem（沙盒文件操作）───────────────────────────────────
@@ -718,6 +735,159 @@ declare namespace FileSystem {
      * @returns 是否成功
      */
     function mkdir(path: string): boolean;
+}
+
+// ─── SQLite（数据库浏览与监控）────────────────────────────────────
+
+interface SQLiteDatabaseInfo {
+    /** 相对于沙盒根目录的路径 */
+    path: string;
+    /** 文件名 */
+    name: string;
+    /** 文件大小（字节） */
+    size: number;
+    /** 修改时间（毫秒时间戳） */
+    mtime: number;
+    /** 表数量 */
+    tableCount: number;
+    /** 表名列表 */
+    tables: string[];
+}
+
+interface SQLiteTableInfo {
+    /** 表名 */
+    name: string;
+    /** 建表 SQL */
+    sql: string | null;
+    /** 行数 */
+    rowCount: number;
+}
+
+interface SQLiteColumnInfo {
+    cid: number;
+    name: string;
+    type: string;
+    notnull: number;
+    dflt_value: any;
+    pk: number;
+}
+
+interface SQLiteQueryResult {
+    rows?: Record<string, any>[];
+    rowCount?: number;
+    truncated?: boolean;
+    error?: string;
+}
+
+interface SQLiteExecuteResult {
+    changes?: number;
+    ok?: boolean;
+    error?: string;
+}
+
+interface SQLiteSnapshotResult {
+    ok?: boolean;
+    rowCount?: number;
+    tag?: string;
+    error?: string;
+}
+
+interface SQLiteDiffResult {
+    snapshotTimestamp?: number;
+    oldRowCount?: number;
+    newRowCount?: number;
+    addedCount?: number;
+    removedCount?: number;
+    added?: Record<string, any>[];
+    removed?: Record<string, any>[];
+    hasChanges?: boolean;
+    error?: string;
+}
+
+interface SQLiteWatchResult {
+    watchId?: number;
+    dbPath?: string;
+    tableName?: string;
+    intervalMs?: number;
+    initialRowCount?: number;
+    error?: string;
+}
+
+declare namespace SQLite {
+    /** 扫描沙盒中的所有 SQLite 数据库文件 */
+    function databases(): SQLiteDatabaseInfo[];
+
+    /**
+     * 列出数据库中的所有表
+     * @param dbPath 数据库路径（相对沙盒或绝对路径）
+     */
+    function tables(dbPath: string): SQLiteTableInfo[];
+
+    /**
+     * 获取表的列定义
+     * @param dbPath 数据库路径
+     * @param tableName 表名
+     */
+    function schema(dbPath: string, tableName: string): SQLiteColumnInfo[];
+
+    /**
+     * 执行 SELECT 查询
+     * @param dbPath 数据库路径
+     * @param sql SQL 查询语句
+     * @param limit 最大返回行数（默认 500）
+     */
+    function query(dbPath: string, sql: string, limit?: number): SQLiteQueryResult;
+
+    /**
+     * 执行写操作（INSERT/UPDATE/DELETE）
+     * @param dbPath 数据库路径
+     * @param sql SQL 语句
+     */
+    function execute(dbPath: string, sql: string): SQLiteExecuteResult;
+
+    /**
+     * 获取表的行数
+     * @param dbPath 数据库路径
+     * @param tableName 表名
+     */
+    function tableRowCount(dbPath: string, tableName: string): number;
+
+    /**
+     * 列出索引
+     * @param dbPath 数据库路径
+     * @param tableName 可选表名，省略则列出所有索引
+     */
+    function indexes(dbPath: string, tableName?: string): Record<string, any>[];
+
+    /**
+     * 对表数据创建快照，用于后续对比
+     * @param dbPath 数据库路径
+     * @param tableName 表名
+     * @param tag 快照标签
+     */
+    function snapshot(dbPath: string, tableName: string, tag: string): SQLiteSnapshotResult;
+
+    /**
+     * 对比当前数据与之前的快照
+     * @param dbPath 数据库路径
+     * @param tableName 表名
+     * @param tag 快照标签
+     */
+    function diff(dbPath: string, tableName: string, tag: string): SQLiteDiffResult;
+
+    /**
+     * 开始监控表的行数变化（基于轮询）
+     * @param dbPath 数据库路径
+     * @param tableName 表名
+     * @param intervalMs 轮询间隔（毫秒，默认 2000，最小 500）
+     */
+    function watch(dbPath: string, tableName: string, intervalMs?: number): SQLiteWatchResult;
+
+    /**
+     * 停止监控
+     * @param watchId watch() 返回的 watchId
+     */
+    function unwatch(watchId: number): { ok?: boolean; watchId?: number; error?: string };
 }
 
 // ─── Performance（性能监控）──────────────────────────────────────

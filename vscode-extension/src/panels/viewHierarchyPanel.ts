@@ -41,6 +41,9 @@ export class ViewHierarchyPanel {
                 case 'getDetail':
                     await this.loadDetail(msg.address);
                     break;
+                case 'getVCDetail':
+                    await this.loadVCDetail(msg.address);
+                    break;
                 case 'highlight':
                     await this.deviceManager.highlightView(msg.address);
                     break;
@@ -87,8 +90,17 @@ export class ViewHierarchyPanel {
 
     private async loadControllers(): Promise<void> {
         try {
-            const controllers = await this.deviceManager.getViewControllers();
-            this.panel.webview.postMessage({ command: 'setControllers', controllers });
+            const tree = await this.deviceManager.getViewControllers();
+            this.panel.webview.postMessage({ command: 'setControllers', tree });
+        } catch (err: any) {
+            this.panel.webview.postMessage({ command: 'error', message: err.message });
+        }
+    }
+
+    private async loadVCDetail(address: string): Promise<void> {
+        try {
+            const detail = await this.deviceManager.getVCDetail(address);
+            this.panel.webview.postMessage({ command: 'showVCDetail', detail });
         } catch (err: any) {
             this.panel.webview.postMessage({ command: 'error', message: err.message });
         }
@@ -188,6 +200,18 @@ body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size
 .vc-list { font-size: 12px; }
 .vc-item { padding: 3px 8px; border-bottom: 1px solid var(--border); }
 .vc-item .depth { opacity: 0.4; }
+.vc-badge { display: inline-block; font-size: 10px; padding: 1px 5px; border-radius: 3px; margin-left: 6px; }
+.vc-badge.nav { background: #264f78; color: #fff; }
+.vc-badge.tab { background: #6c3483; color: #fff; }
+.vc-badge.presented { background: #a93226; color: #fff; }
+.vc-badge.child { background: #1e8449; color: #fff; }
+.vc-badge.content { background: var(--badge-bg); color: var(--badge-fg); }
+.vc-badge.page { background: #b9770e; color: #fff; }
+.vc-badge.split { background: #2471a3; color: #fff; }
+.vc-view-link { font-size: 11px; opacity: 0.6; margin-left: 8px; cursor: pointer; text-decoration: underline; }
+.vc-view-link:hover { opacity: 1; }
+.vc-superclass { font-size: 11px; opacity: 0.45; margin-left: 4px; }
+.detail-section .class-chain { font-size: 11px; opacity: 0.7; margin: 4px 0 8px; word-break: break-all; }
 .search-results .sr-item { padding: 4px 8px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: 12px; }
 .search-results .sr-item:hover { background: var(--hover); }
 .screenshot-container { text-align: center; padding: 10px; }
@@ -260,10 +284,15 @@ ${OVERLAY_HTML}
     window.addEventListener('message', (e) => {
         const msg = e.data;
         if (msg.command === 'setTree') renderTree(msg.tree);
-        else if (msg.command === 'setControllers') renderControllers(msg.controllers);
+        else if (msg.command === 'setControllers') renderControllers(msg.tree);
         else if (msg.command === 'showDetail') renderDetail(msg.detail);
+        else if (msg.command === 'showVCDetail') renderVCDetail(msg.detail);
         else if (msg.command === 'searchResults') renderSearchResults(msg.views);
         else if (msg.command === 'screenshot') renderScreenshot(msg.base64);
+        else if (msg.command === 'error') {
+            const el = document.getElementById('screenshotContent');
+            if (currentTab === 'screenshot' && el) el.innerHTML = '<div class="empty">Error: ' + esc(msg.message) + '</div>';
+        }
     });
 
     function renderTree(tree) {
@@ -343,12 +372,178 @@ ${OVERLAY_HTML}
         return div;
     }
 
-    function renderControllers(controllers) {
+    const CONTAINER_LABELS = { navigation:'Nav', tabBar:'Tab', page:'Page', split:'Split', content:'' };
+    const RELATION_LABELS  = { navStack:'stack', tab:'tab', presented:'presented', child:'child' };
+
+    function renderControllers(tree) {
         const el = document.getElementById('vcContent');
-        if (!controllers || !controllers.length) { el.innerHTML = '<div class="empty">No view controllers.</div>'; return; }
-        el.innerHTML = '<div class="vc-list">' + controllers.map(vc =>
-            '<div class="vc-item"><span class="depth">' + '  '.repeat(vc.depth || 0) + '</span><span class="tree-cls">' + esc(vc.class) + '</span> <span class="tree-addr">' + esc(vc.address) + '</span>' + (vc.title ? ' "' + esc(vc.title) + '"' : '') + '</div>'
-        ).join('') + '</div>';
+        if (!tree || !tree.class) { el.innerHTML = '<div class="empty">No view controllers.</div>'; return; }
+        el.innerHTML = '';
+        el.appendChild(buildVCNode(tree, true));
+    }
+
+    function buildVCNode(vc, expanded) {
+        const div = document.createElement('div');
+        div.className = 'tree-node';
+
+        const row = document.createElement('div');
+        row.className = 'tree-row';
+        if (!vc.isViewLoaded) row.style.opacity = '0.5';
+
+        const hasChildren = vc.children && vc.children.length > 0;
+        const toggle = document.createElement('span');
+        toggle.className = 'tree-toggle';
+        toggle.textContent = hasChildren ? (expanded ? '▾' : '▸') : ' ';
+
+        const cls = document.createElement('span');
+        cls.className = 'tree-cls';
+        cls.textContent = vc.class;
+
+        const addr = document.createElement('span');
+        addr.className = 'tree-addr';
+        addr.textContent = vc.address;
+
+        row.appendChild(toggle);
+        row.appendChild(cls);
+        row.appendChild(addr);
+
+        if (vc.superclass && vc.superclass !== 'UIViewController' && vc.superclass !== 'UINavigationController' && vc.superclass !== 'UITabBarController') {
+            const sup = document.createElement('span');
+            sup.className = 'vc-superclass';
+            sup.textContent = ': ' + vc.superclass;
+            row.appendChild(sup);
+        }
+
+        if (vc.title) {
+            const info = document.createElement('span');
+            info.className = 'tree-info';
+            info.textContent = '"' + vc.title.substring(0, 25) + '"';
+            row.appendChild(info);
+        }
+
+        const ct = vc.containerType;
+        if (ct && ct !== 'content') {
+            const badge = document.createElement('span');
+            badge.className = 'vc-badge ' + ct.replace('tabBar','tab');
+            badge.textContent = CONTAINER_LABELS[ct] || ct;
+            if (ct === 'navigation' && vc.stackCount) badge.textContent += '(' + vc.stackCount + ')';
+            if (ct === 'tabBar' && vc.tabCount) badge.textContent += '(' + vc.tabCount + ')';
+            row.appendChild(badge);
+        }
+
+        if (vc.relation) {
+            const rel = document.createElement('span');
+            rel.className = 'vc-badge ' + (vc.relation === 'presented' ? 'presented' : vc.relation === 'navStack' ? 'nav' : vc.relation === 'tab' ? 'tab' : 'child');
+            rel.textContent = RELATION_LABELS[vc.relation] || vc.relation;
+            row.appendChild(rel);
+        }
+
+        if (vc.viewAddress) {
+            const viewLink = document.createElement('span');
+            viewLink.className = 'vc-view-link';
+            viewLink.textContent = '→ view';
+            viewLink.title = vc.viewClass + ' ' + vc.viewAddress;
+            viewLink.addEventListener('click', (e) => {
+                e.stopPropagation();
+                switchTab('tree');
+                vscode.postMessage({command:'getDetail', address: vc.viewAddress});
+                vscode.postMessage({command:'highlight', address: vc.viewAddress});
+            });
+            row.appendChild(viewLink);
+        }
+
+        div.appendChild(row);
+
+        let childContainer = null;
+        if (hasChildren) {
+            childContainer = document.createElement('div');
+            childContainer.className = 'tree-children';
+            childContainer.style.display = expanded ? '' : 'none';
+            for (const child of vc.children) {
+                childContainer.appendChild(buildVCNode(child, false));
+            }
+            div.appendChild(childContainer);
+        }
+
+        toggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (!childContainer) return;
+            const open = childContainer.style.display !== 'none';
+            childContainer.style.display = open ? 'none' : '';
+            toggle.textContent = open ? '▸' : '▾';
+        });
+
+        row.addEventListener('click', () => {
+            selectedAddr = vc.address;
+            document.querySelectorAll('.tree-row.selected').forEach(r => r.classList.remove('selected'));
+            row.classList.add('selected');
+            vscode.postMessage({command:'getVCDetail', address: vc.address});
+            if (vc.viewAddress) {
+                vscode.postMessage({command:'highlight', address: vc.viewAddress});
+            }
+        });
+
+        return div;
+    }
+
+    function renderVCDetail(d) {
+        const pane = document.getElementById('detailPane');
+        if (!d) { pane.classList.remove('open'); return; }
+        pane.classList.add('open');
+        let html = '<div class="detail-header"><div class="dh-title"><h3>' + esc(d.class) + '</h3><span>' + esc(d.address) + '</span></div><button class="detail-close" id="btnCloseVCDetail" title="Close">✕</button></div>';
+
+        if (d.classHierarchy && d.classHierarchy.length) {
+            html += '<div class="detail-section"><h3>Class Hierarchy</h3><div class="class-chain">' + d.classHierarchy.map(c => esc(c)).join(' → ') + '</div></div>';
+        }
+
+        html += '<div class="detail-section"><h3>VC Properties</h3><div class="prop-grid">';
+        const vcKeys = ['title','isViewLoaded','childCount','modalPresentationStyle','modalTransitionStyle','edgesForExtendedLayout','definesPresentationContext','preferredContentSize'];
+        for (const k of vcKeys) {
+            if (d[k] !== undefined) {
+                html += '<span class="k">' + esc(k) + '</span><span class="v">' + esc(String(d[k])) + '</span><span></span>';
+            }
+        }
+        html += '</div></div>';
+
+        if (d.isViewLoaded) {
+            html += '<div class="detail-section"><h3>View</h3><div class="prop-grid">';
+            const viewKeys = ['viewClass','viewAddress','viewFrame','viewBounds','subviewCount'];
+            for (const k of viewKeys) {
+                if (d[k] !== undefined) {
+                    html += '<span class="k">' + esc(k) + '</span><span class="v">' + esc(String(d[k])) + '</span><span></span>';
+                }
+            }
+            html += '</div></div>';
+        }
+
+        html += '<div class="detail-section"><h3>Hierarchy</h3><div class="prop-grid">';
+        const hierKeys = ['parentVC','parentAddress','navigationController','navPosition','navStackSize','tabBarController','presentingVC','presentedVC'];
+        let hasHier = false;
+        for (const k of hierKeys) {
+            if (d[k] !== undefined && d[k] !== '') {
+                html += '<span class="k">' + esc(k) + '</span><span class="v">' + esc(String(d[k])) + '</span><span></span>';
+                hasHier = true;
+            }
+        }
+        if (!hasHier) html += '<span class="k" style="opacity:0.4" colspan="3">No parent/container info</span>';
+        html += '</div></div>';
+
+        if (d.navItemTitle !== undefined) {
+            html += '<div class="detail-section"><h3>Navigation Item</h3><div class="prop-grid">';
+            html += '<span class="k">title</span><span class="v">' + esc(d.navItemTitle) + '</span><span></span>';
+            html += '<span class="k">hidesBackButton</span><span class="v">' + esc(String(d.navItemHidesBackButton)) + '</span><span></span>';
+            html += '</div></div>';
+        }
+        if (d.tabBarTitle !== undefined) {
+            html += '<div class="detail-section"><h3>Tab Bar Item</h3><div class="prop-grid">';
+            html += '<span class="k">title</span><span class="v">' + esc(d.tabBarTitle) + '</span><span></span>';
+            html += '<span class="k">tag</span><span class="v">' + esc(String(d.tabBarTag)) + '</span><span></span>';
+            html += '</div></div>';
+        }
+
+        pane.innerHTML = html;
+        var closeBtn = document.getElementById('btnCloseVCDetail');
+        if (closeBtn) { closeBtn.addEventListener('click', function() { closeDetail(); }); }
     }
 
     function closeDetail() {
@@ -404,7 +599,7 @@ ${OVERLAY_HTML}
     function renderScreenshot(b64) {
         const el = document.getElementById('screenshotContent');
         if (!b64) { el.innerHTML = '<div class="empty">Failed to capture screenshot.</div>'; return; }
-        el.innerHTML = '<img src="data:image/png;base64,' + b64 + '" alt="Screenshot">';
+        el.innerHTML = '<img src="data:image/jpeg;base64,' + b64 + '" alt="Screenshot">';
     }
 
     function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }

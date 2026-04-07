@@ -65,8 +65,16 @@ static NSString *const kLogPrefix = @"[WhiteNeedle:TCP]";
 }
 
 - (void)sendData:(NSData *)data {
+    if (self.writeBuffer.length > 0) {
+        [self.writeBuffer appendData:data];
+        return;
+    }
     if (self.output.hasSpaceAvailable) {
-        [self.output write:data.bytes maxLength:data.length];
+        NSInteger written = [self.output write:data.bytes maxLength:data.length];
+        if (written < (NSInteger)data.length) {
+            NSUInteger offset = (written > 0) ? (NSUInteger)written : 0;
+            [self.writeBuffer appendBytes:(data.bytes + offset) length:(data.length - offset)];
+        }
     } else {
         [self.writeBuffer appendData:data];
     }
@@ -388,7 +396,14 @@ static void WNSocketCallback(CFSocketRef socket, CFSocketCallBackType type,
     }
 
     if ([method isEqualToString:@"getViewControllers"]) {
-        return @{@"controllers": [WNUIDebugBridge viewControllerStack]};
+        return @{@"tree": [WNUIDebugBridge viewControllerTree]};
+    }
+
+    if ([method isEqualToString:@"getVCDetail"]) {
+        NSString *addr = params[@"address"];
+        if (!addr) return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Missing address"}];
+        NSDictionary *detail = [WNUIDebugBridge vcDetailForAddress:addr];
+        return detail ?: [NSNull null];
     }
 
     if ([method isEqualToString:@"getViewDetail"]) {

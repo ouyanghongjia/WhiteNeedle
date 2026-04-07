@@ -1,6 +1,7 @@
 #import "WNTypeConversion.h"
 #import "WNBoxing.h"
 #import "WNBlockBridge.h"
+#import "WNBlockSignatureParser.h"
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
@@ -266,6 +267,193 @@
     // For other ObjC objects, box them to preserve identity
     WNBoxing *box = [WNBoxing boxObject:obj];
     return [JSValue valueWithObject:box inContext:context];
+}
+
+#pragma mark - Human-readable type encoding
+
++ (NSDictionary<NSString *, NSString *> *)_encodingToName {
+    static NSDictionary *map;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSDictionary *fwd = [WNBlockSignatureParser keywordEncodings];
+        NSMutableDictionary *rev = [NSMutableDictionary dictionary];
+
+        // Canonical C type names — these take priority when multiple names
+        // share the same encoding (e.g. double/CGFloat both encode as "d").
+        NSSet *canonical = [NSSet setWithArray:@[
+            @"void", @"id", @"BOOL", @"Class", @"SEL",
+            @"char", @"unsigned char", @"short", @"unsigned short",
+            @"int", @"unsigned int", @"long", @"unsigned long",
+            @"long long", @"unsigned long long", @"float", @"double",
+        ]];
+
+        for (NSString *name in fwd) {
+            NSString *enc = fwd[name];
+            if (enc.length == 1) rev[enc] = name;
+        }
+        for (NSString *name in fwd) {
+            NSString *enc = fwd[name];
+            if (enc.length == 1 && [canonical containsObject:name]) {
+                rev[enc] = name;
+            }
+        }
+        map = [rev copy];
+    });
+    return map;
+}
+
++ (NSString *)humanReadableType:(const char *)enc {
+    if (!enc || !enc[0]) return @"?";
+
+    while (*enc == 'r' || *enc == 'n' || *enc == 'N' || *enc == 'o' ||
+           *enc == 'O' || *enc == 'R' || *enc == 'V') {
+        enc++;
+    }
+
+    // Simple single-char encodings: reuse WNBlockSignatureParser's mapping
+    if (enc[0] != '@' && enc[0] != '^' && enc[0] != '{' &&
+        enc[0] != '(' && enc[0] != '[') {
+        NSString *key = [NSString stringWithFormat:@"%c", enc[0]];
+        NSString *name = [self _encodingToName][key];
+        if (name) return name;
+        if (enc[0] == '*') return @"char *";
+        if (enc[0] == '?') return @"void *";
+        return [NSString stringWithFormat:@"<%c>", enc[0]];
+    }
+
+    // Compound types
+    switch (enc[0]) {
+        case '@': {
+            if (enc[1] == '?') return @"Block";
+            if (enc[1] == '"') {
+                const char *start = enc + 2;
+                const char *end = strchr(start, '"');
+                if (end && end > start) {
+                    NSString *cls = [[NSString alloc] initWithBytes:start length:(end - start) encoding:NSUTF8StringEncoding];
+                    return [cls stringByAppendingString:@" *"];
+                }
+            }
+            return @"id";
+        }
+        case '^': {
+            NSString *pointee = [self humanReadableType:enc + 1];
+            return [pointee stringByAppendingString:@" *"];
+        }
+        case '{': {
+            const char *eq = strchr(enc, '=');
+            if (eq && eq > enc + 1) {
+                return [[NSString alloc] initWithBytes:enc + 1 length:(eq - enc - 1) encoding:NSUTF8StringEncoding];
+            }
+            const char *close = strchr(enc, '}');
+            if (close && close > enc + 1) {
+                return [[NSString alloc] initWithBytes:enc + 1 length:(close - enc - 1) encoding:NSUTF8StringEncoding];
+            }
+            return @"struct";
+        }
+        case '(': {
+            const char *eq = strchr(enc, '=');
+            if (eq && eq > enc + 1) {
+                return [[NSString alloc] initWithBytes:enc + 1 length:(eq - enc - 1) encoding:NSUTF8StringEncoding];
+            }
+            return @"union";
+        }
+        case '[': return @"array";
+        default: return [NSString stringWithFormat:@"<%c>", enc[0]];
+    }
+}
+
++ (NSString *)humanReadableMethodSignature:(const char *)fullEncoding {
+    if (!fullEncoding || !fullEncoding[0]) return @"?";
+
+    NSMutableArray<NSString *> *types = [NSMutableArray array];
+    const char *p = fullEncoding;
+    while (*p) {
+        while (*p >= '0' && *p <= '9') p++;
+        if (!*p) break;
+        const char *start = p;
+        [self skipOneType:&p];
+        if (p > start) {
+            NSString *enc = [[NSString alloc] initWithBytes:start length:(p - start) encoding:NSUTF8StringEncoding];
+            [types addObject:[self humanReadableType:enc.UTF8String]];
+        }
+    }
+
+    if (types.count == 0) return @"?";
+
+    NSString *retType = types[0];
+    NSMutableArray *argTypes = [NSMutableArray array];
+    for (NSUInteger i = 3; i < types.count; i++) {
+        [argTypes addObject:types[i]];
+    }
+
+    if (argTypes.count == 0) {
+        return [NSString stringWithFormat:@"→ %@", retType];
+    }
+    return [NSString stringWithFormat:@"(%@) → %@", [argTypes componentsJoinedByString:@", "], retType];
+}
+
++ (void)skipOneType:(const char **)pp {
+    const char *p = *pp;
+    while (*p == 'r' || *p == 'n' || *p == 'N' || *p == 'o' || *p == 'O' ||
+           *p == 'R' || *p == 'V') {
+        p++;
+    }
+    switch (*p) {
+        case '@':
+            p++;
+            if (*p == '"') {
+                p++;
+                while (*p && *p != '"') p++;
+                if (*p == '"') p++;
+            } else if (*p == '?') {
+                p++;
+            }
+            break;
+        case '^':
+            p++;
+            [self skipOneType:&p];
+            break;
+        case '{': {
+            int depth = 1;
+            p++;
+            while (*p && depth > 0) {
+                if (*p == '{') depth++;
+                else if (*p == '}') depth--;
+                p++;
+            }
+            break;
+        }
+        case '(': {
+            int depth = 1;
+            p++;
+            while (*p && depth > 0) {
+                if (*p == '(') depth++;
+                else if (*p == ')') depth--;
+                p++;
+            }
+            break;
+        }
+        case '[': {
+            int depth = 1;
+            p++;
+            while (*p && depth > 0) {
+                if (*p == '[') depth++;
+                else if (*p == ']') depth--;
+                p++;
+            }
+            break;
+        }
+        case 'b': {
+            p++;
+            while (*p >= '0' && *p <= '9') p++;
+            break;
+        }
+        default:
+            if (*p) p++;
+            break;
+    }
+    while (*p >= '0' && *p <= '9') p++;
+    *pp = p;
 }
 
 #pragma mark - Struct conversion (CGRect, CGPoint, CGSize, CGAffineTransform)

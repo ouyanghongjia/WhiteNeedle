@@ -42,6 +42,18 @@ NS_ASSUME_NONNULL_BEGIN
 + (NSArray<NSString *> *)parseTypeEncodings:(NSMethodSignature *)signature;
 
 /**
+ * Convert an ObjC type encoding string to a human-readable type name.
+ * e.g. @"NSString" → "NSString *", i → "int", {CGRect=...} → "CGRect"
+ */
++ (NSString *)humanReadableType:(const char *)typeEncoding;
+
+/**
+ * Convert a full ObjC method type encoding string to a human-readable signature.
+ * e.g. "v@:@i" → "(id, int) → void"
+ */
++ (NSString *)humanReadableMethodSignature:(const char *)fullEncoding;
+
+/**
  * Convert a JSValue to a native ObjC object (id), handling boxing.
  */
 + (nullable id)jsValueToObjCObject:(JSValue *)value;

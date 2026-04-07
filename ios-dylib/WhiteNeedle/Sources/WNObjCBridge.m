@@ -1,6 +1,7 @@
 #import "WNObjCBridge.h"
 #import "WNBoxing.h"
 #import "WNTypeConversion.h"
+#import "WNBlockSignatureParser.h"
 #import "WNHeapScanner.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
@@ -540,6 +541,41 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
 
 #pragma mark - ObjC.define() — runtime class creation
 
+/// Convert a human-readable type string to an ObjC type encoding.
+/// Reuses WNBlockSignatureParser.keywordEncodings for primitives/structs.
+/// Handles ObjC class names ("NSString *" → @"NSString"), "Block" → @?, defaults to @.
++ (NSString *)encodingForPropertyType:(NSString *)typeStr {
+    if (!typeStr || typeStr.length == 0) return @"@";
+
+    NSString *trimmed = [typeStr stringByTrimmingCharactersInSet:
+                         [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (trimmed.length == 0) return @"@";
+
+    // "Block" shorthand
+    if ([trimmed isEqualToString:@"Block"]) return @"@?";
+
+    // Check keywordEncodings table (int, CGRect, double, etc.)
+    NSDictionary *table = [WNBlockSignatureParser keywordEncodings];
+    NSString *enc = table[trimmed];
+    if (enc) return enc;
+
+    // "NSString *", "UIView *" etc. → @"NSString", @"UIView"
+    if ([trimmed hasSuffix:@"*"]) {
+        NSString *cls = [[trimmed substringToIndex:trimmed.length - 1]
+                         stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if (cls.length > 0) {
+            return [NSString stringWithFormat:@"@\"%@\"", cls];
+        }
+    }
+
+    // Bare class name without * (e.g. "NSString") — treat as ObjC object
+    if (NSClassFromString(trimmed)) {
+        return [NSString stringWithFormat:@"@\"%@\"", trimmed];
+    }
+
+    return @"@";
+}
+
 + (JSValue *)defineClass:(JSValue *)spec inContext:(JSContext *)context {
     NSString *className = [spec[@"name"] toString];
     NSString *superName = @"NSObject";
@@ -579,19 +615,25 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
         }
     }
 
-    // Add properties
+    // Add properties — value can be a readable type string like "int", "CGRect", "NSString *"
     JSValue *properties = spec[@"properties"];
     if (properties && ![properties isUndefined]) {
         NSDictionary *props = [properties toDictionary];
         for (NSString *propName in props) {
-            objc_property_attribute_t attrs[2];
-            attrs[0] = (objc_property_attribute_t){.name = "T", .value = "@"};
-            attrs[1] = (objc_property_attribute_t){.name = "&", .value = ""};
-            class_addProperty(newCls, [propName UTF8String], attrs, 2);
+            NSString *typeStr = [props[propName] isKindOfClass:[NSString class]] ? props[propName] : nil;
+            NSString *enc = [self encodingForPropertyType:typeStr];
 
-            // Also add an ivar for the property
+            objc_property_attribute_t attrs[2];
+            attrs[0] = (objc_property_attribute_t){.name = "T", .value = enc.UTF8String};
+            BOOL isObj = [enc hasPrefix:@"@"];
+            attrs[1] = (objc_property_attribute_t){.name = isObj ? "&" : "", .value = ""};
+            class_addProperty(newCls, [propName UTF8String], attrs, isObj ? 2 : 1);
+
             NSString *ivarName = [NSString stringWithFormat:@"_%@", propName];
-            class_addIvar(newCls, [ivarName UTF8String], sizeof(id), log2(sizeof(id)), "@");
+            NSUInteger ivarSize = 0, ivarAlign = 0;
+            NSGetSizeAndAlignment(enc.UTF8String, &ivarSize, &ivarAlign);
+            class_addIvar(newCls, [ivarName UTF8String], ivarSize,
+                          ivarAlign ? (uint8_t)log2(ivarAlign) : 0, enc.UTF8String);
         }
     }
 
@@ -749,9 +791,11 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
     for (unsigned int i = 0; i < count; i++) {
         SEL sel = method_getName(methods[i]);
         const char *typeEncoding = method_getTypeEncoding(methods[i]);
-        NSString *entry = [NSString stringWithFormat:@"%@ (%s)",
-                           NSStringFromSelector(sel),
-                           typeEncoding ?: "?"];
+        NSString *readable = typeEncoding
+            ? [WNTypeConversion humanReadableMethodSignature:typeEncoding]
+            : @"?";
+        NSString *entry = [NSString stringWithFormat:@"%@ %@",
+                           NSStringFromSelector(sel), readable];
         [result addObject:entry];
     }
     free(methods);

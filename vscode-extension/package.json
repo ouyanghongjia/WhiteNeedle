@@ -25,6 +25,7 @@
     "onCommand:whiteneedle.openCookies",
     "onCommand:whiteneedle.openUserDefaults",
     "onCommand:whiteneedle.openSandbox",
+    "onCommand:whiteneedle.openSQLite",
     "onCommand:whiteneedle.openObjC",
     "onCommand:whiteneedle.openNetwork",
     "onCommand:whiteneedle.openViewHierarchy",
@@ -123,6 +124,12 @@
         "command": "whiteneedle.openSandbox",
         "title": "Sandbox Files",
         "icon": "$(folder-opened)",
+        "category": "WhiteNeedle"
+      },
+      {
+        "command": "whiteneedle.openSQLite",
+        "title": "SQLite Browser",
+        "icon": "$(database)",
         "category": "WhiteNeedle"
       },
       {
@@ -258,6 +265,10 @@
         {
           "command": "whiteneedle.openSandbox",
           "group": "wn_storage@3"
+        },
+        {
+          "command": "whiteneedle.openSQLite",
+          "group": "wn_storage@4"
         },
         {
           "command": "whiteneedle.openObjC",

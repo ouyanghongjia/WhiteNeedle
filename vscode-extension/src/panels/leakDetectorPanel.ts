@@ -352,15 +352,23 @@ function findInstances() {
     vscode.postMessage({ command: 'findInstances', className: cls, maxCount: max });
 }
 
+function resetCyclesUI() {
+    document.getElementById('cyclesSection').style.display = 'none';
+    document.getElementById('cyclesBody').innerHTML = '';
+    document.getElementById('cycleCount').textContent = '0';
+}
+
 function loadStrongRefs() {
     const addr = document.getElementById('refAddr').value.trim();
     if (!addr) return;
+    resetCyclesUI();
     vscode.postMessage({ command: 'getStrongRefs', address: addr });
 }
 
 function loadScanRefs() {
     const addr = document.getElementById('refAddr').value.trim();
     if (!addr) return;
+    resetCyclesUI();
     vscode.postMessage({ command: 'scanRefs', address: addr });
 }
 

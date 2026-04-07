@@ -10,6 +10,7 @@
 #import "WNFileSystemBridge.h"
 #import "WNPerformanceBridge.h"
 #import "WNUIDebugBridge.h"
+#import "WNSQLiteBridge.h"
 #import "WNLeakDetector.h"
 #if WN_ENABLE_REFGRAPH
 #import "WNRefGraphDetector.h"
@@ -99,6 +100,7 @@ static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
     [WNFileSystemBridge registerInContext:self.context];
     [WNPerformanceBridge registerInContext:self.context];
     [WNUIDebugBridge registerInContext:self.context];
+    [WNSQLiteBridge registerInContext:self.context];
     [WNLeakDetector registerInContext:self.context];
 #if WN_ENABLE_REFGRAPH
     [WNRefGraphDetector registerInContext:self.context];

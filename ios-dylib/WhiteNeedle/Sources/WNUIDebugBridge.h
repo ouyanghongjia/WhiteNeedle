@@ -12,7 +12,8 @@ NS_ASSUME_NONNULL_BEGIN
  *   UIDebug.screenshotView(address)    → base64 PNG of a specific UIView
  *   UIDebug.bounds(address)            → frame/bounds of a view by address
  *   UIDebug.keyWindow()                → info about the key window
- *   UIDebug.viewControllers()          → view controller hierarchy
+ *   UIDebug.viewControllers()          → VC tree (nested, with rich info)
+ *   UIDebug.vcDetail(address)          → full property detail for a VC
  *   UIDebug.viewDetail(address)        → full property detail for a view
  *   UIDebug.setViewProperty(address, key, value) → modify view property
  *   UIDebug.highlightView(address)     → add colored border on device
@@ -24,7 +25,8 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)registerInContext:(JSContext *)context;
 
 + (NSDictionary *)viewHierarchyTree;
-+ (NSArray *)viewControllerStack;
++ (NSDictionary *)viewControllerTree;
++ (NSDictionary *)vcDetailForAddress:(NSString *)addr;
 + (NSDictionary *)viewDetailForAddress:(NSString *)addr;
 + (BOOL)setViewProperty:(NSString *)addr key:(NSString *)key value:(id)value;
 + (BOOL)highlightView:(NSString *)addr;

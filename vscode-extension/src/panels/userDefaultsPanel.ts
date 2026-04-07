@@ -56,7 +56,7 @@ export class UserDefaultsPanel {
                             await this.loadUserDefaults();
                             break;
                         case 'loadSuiteData':
-                            await this.loadSuiteData(msg.suiteName, msg.isDefault);
+                            await this.loadSuiteData(msg.suiteName, msg.isDefault, msg.filterSystem ?? true);
                             break;
                         case 'requestEdit':
                             await this.handleEditRequest(msg.key, msg.currentValue, msg.suiteName);
@@ -116,10 +116,11 @@ export class UserDefaultsPanel {
         }
     }
 
-    private async loadSuiteData(suiteName: string, isDefault: boolean): Promise<void> {
+    private async loadSuiteData(suiteName: string, isDefault: boolean, filterSystem: boolean = true): Promise<void> {
         try {
             const arg = isDefault ? '' : `'${suiteName.replace(/'/g, "\\'")}'`;
-            const raw = await this.deviceManager.evaluate(`JSON.stringify(UserDefaults.getAll(${arg}))`) as any;
+            const apiName = filterSystem ? 'getAllApp' : 'getAll';
+            const raw = await this.deviceManager.evaluate(`JSON.stringify(UserDefaults.${apiName}(${arg}))`) as any;
             const parsed = typeof raw === 'string' ? raw : raw?.value ?? JSON.stringify(raw);
             const data = JSON.parse(parsed);
             this.postMessage({ command: 'suiteDataLoaded', suiteName, data });
@@ -224,6 +225,10 @@ ${OVERLAY_CSS}
 ${OVERLAY_HTML}
 <div class="toolbar">
     <button id="loadBtn">Load Suites</button>
+    <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;margin-left:8px;cursor:pointer;user-select:none;">
+        <input type="checkbox" id="filterSystem" checked />
+        Hide system keys
+    </label>
     <span id="status"></span>
 </div>
 <div id="content"><div class="empty">Click "Load Suites" to fetch from device</div></div>
@@ -237,6 +242,7 @@ ${OVERLAY_JS}
     var suiteCache = {};
     var openSuites = {};
     var loadBtn = document.getElementById('loadBtn');
+    var filterSystemCb = document.getElementById('filterSystem');
     var statusEl = document.getElementById('status');
     var contentEl = document.getElementById('content');
     var toastEl = document.getElementById('toast');
@@ -245,6 +251,19 @@ ${OVERLAY_JS}
         loadBtn.disabled = true;
         statusEl.textContent = 'Loading...';
         vscode.postMessage({ command: 'loadUserDefaults' });
+    });
+
+    filterSystemCb.addEventListener('change', function() {
+        suiteCache = {};
+        for (var key in openSuites) {
+            if (openSuites[key]) {
+                var s = suitesData.find(function(x) { return x.suiteName === key; });
+                if (s) {
+                    vscode.postMessage({ command: 'loadSuiteData', suiteName: s.suiteName, isDefault: s.isDefault, filterSystem: filterSystemCb.checked });
+                }
+            }
+        }
+        renderSuites();
     });
 
     function renderSuites() {
@@ -260,7 +279,10 @@ ${OVERLAY_JS}
             html += '<div class="suite-section" data-suite-idx="' + i + '">';
             html += '<div class="suite-header" data-idx="' + i + '">';
             html += '<span class="arrow ' + (isOpen ? 'open' : '') + '">&#9654;</span>';
-            html += '<strong>' + esc(label) + '</strong> <span class="badge">' + s.keyCount + ' keys</span>';
+            var countLabel = filterSystemCb.checked && s.appKeyCount != null
+                ? s.appKeyCount + ' app / ' + s.keyCount + ' total'
+                : s.keyCount + ' keys';
+            html += '<strong>' + esc(label) + '</strong> <span class="badge">' + countLabel + '</span>';
             html += '</div>';
             if (isOpen) {
                 var data = suiteCache[s.suiteName];
@@ -297,7 +319,7 @@ ${OVERLAY_JS}
         if (!s) return;
         openSuites[s.suiteName] = !openSuites[s.suiteName];
         if (openSuites[s.suiteName] && !suiteCache[s.suiteName]) {
-            vscode.postMessage({ command: 'loadSuiteData', suiteName: s.suiteName, isDefault: s.isDefault });
+            vscode.postMessage({ command: 'loadSuiteData', suiteName: s.suiteName, isDefault: s.isDefault, filterSystem: filterSystemCb.checked });
         }
         renderSuites();
     }

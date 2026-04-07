@@ -1,6 +1,7 @@
 #import "WNLeakDetector.h"
 #import "WNHeapScanner.h"
 #import "WNObjCBridge.h"
+#import "WNTypeConversion.h"
 #import <objc/runtime.h>
 #import <malloc/malloc.h>
 
@@ -53,7 +54,7 @@ static NSArray<NSDictionary *> *GetStrongIvarReferences(id obj) {
             const char *ivarName = ivar_getName(ivars[i]);
             [refs addObject:@{
                 @"name":      ivarName ? @(ivarName) : @"?",
-                @"type":      @(type),
+                @"type":      [WNTypeConversion humanReadableType:type],
                 @"address":   [NSString stringWithFormat:@"%p", ref],
                 @"className": NSStringFromClass([ref class]) ?: @"?",
             }];

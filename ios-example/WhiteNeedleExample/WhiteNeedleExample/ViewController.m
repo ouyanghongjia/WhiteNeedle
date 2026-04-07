@@ -1,5 +1,6 @@
 #import "ViewController.h"
 #import "WNLeakExamples.h"
+#import "WNSQLiteDemo.h"
 #import <WhiteNeedle/WNJSEngine.h>
 #import <WhiteNeedle/WNHookEngine.h>
 #import <WhiteNeedle/WNNativeBridge.h>
@@ -301,6 +302,7 @@ static NSString *const kNetworkCellID = @"NetworkCell";
     self.consoleView.translatesAutoresizingMaskIntoConstraints = NO;
     self.consoleView.hidden = YES;
 
+    // Row 1: original buttons
     UIStackView *btnStack = [[UIStackView alloc] init];
     btnStack.axis = UILayoutConstraintAxisHorizontal;
     btnStack.distribution = UIStackViewDistributionFillEqually;
@@ -316,9 +318,22 @@ static NSString *const kNetworkCellID = @"NetworkCell";
     [btnStack addArrangedSubview:leakBtn];
     [btnStack addArrangedSubview:self.clearButton];
 
+    // Row 2: SQLite demo buttons
+    UIStackView *sqlStack = [[UIStackView alloc] init];
+    sqlStack.axis = UILayoutConstraintAxisHorizontal;
+    sqlStack.distribution = UIStackViewDistributionFillEqually;
+    sqlStack.spacing = 12;
+    sqlStack.translatesAutoresizingMaskIntoConstraints = NO;
+
+    UIButton *sqlCreateBtn = [self makeButton:@"🗄 Create DB"  color:UIColor.systemIndigoColor action:@selector(createSQLiteDemo)];
+    UIButton *sqlActivityBtn = [self makeButton:@"⚡ Activity" color:UIColor.systemTealColor   action:@selector(simulateSQLiteActivity)];
+    [sqlStack addArrangedSubview:sqlCreateBtn];
+    [sqlStack addArrangedSubview:sqlActivityBtn];
+
     [self.view addSubview:self.segmentControl];
     [self.view addSubview:self.tableView];
     [self.view addSubview:self.consoleView];
+    [self.view addSubview:sqlStack];
     [self.view addSubview:btnStack];
 
     UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
@@ -330,12 +345,17 @@ static NSString *const kNetworkCellID = @"NetworkCell";
         [self.tableView.topAnchor constraintEqualToAnchor:self.segmentControl.bottomAnchor constant:8],
         [self.tableView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
         [self.tableView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
-        [self.tableView.bottomAnchor constraintEqualToAnchor:btnStack.topAnchor constant:-8],
+        [self.tableView.bottomAnchor constraintEqualToAnchor:sqlStack.topAnchor constant:-8],
 
         [self.consoleView.topAnchor constraintEqualToAnchor:self.segmentControl.bottomAnchor constant:8],
         [self.consoleView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:8],
         [self.consoleView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-8],
-        [self.consoleView.bottomAnchor constraintEqualToAnchor:btnStack.topAnchor constant:-8],
+        [self.consoleView.bottomAnchor constraintEqualToAnchor:sqlStack.topAnchor constant:-8],
+
+        [sqlStack.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:16],
+        [sqlStack.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-16],
+        [sqlStack.bottomAnchor constraintEqualToAnchor:btnStack.topAnchor constant:-6],
+        [sqlStack.heightAnchor constraintEqualToConstant:38],
 
         [btnStack.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:16],
         [btnStack.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-16],
@@ -388,6 +408,28 @@ static NSString *const kNetworkCellID = @"NetworkCell";
     [self log:@"LEAK" message:[NSString stringWithFormat:
         @"Done. Orphaned pool: %lu objects. Run test_leak_detector.js to detect.",
         (unsigned long)[WNLeakExamples orphanedCount]]];
+    self.segmentControl.selectedSegmentIndex = 2;
+    [self segmentChanged:self.segmentControl];
+}
+
+- (void)createSQLiteDemo {
+    [self log:@"SQLITE" message:@"═══ Creating SQLite demo database ═══"];
+    NSString *path = [WNSQLiteDemo createDemoDatabase];
+    [self log:@"SQLITE" message:[NSString stringWithFormat:@"Database created at: %@", path]];
+    [self log:@"SQLITE" message:@"Tables: users (8 rows), products (10 rows), orders (10 rows), events (15 rows)"];
+    [self log:@"SQLITE" message:@"💡 Use VS Code SQLite Browser or snippets to explore this database."];
+    [self log:@"SQLITE" message:@"💡 Tap \"⚡ Activity\" to simulate data changes for snapshot/diff/watch testing."];
+    self.segmentControl.selectedSegmentIndex = 2;
+    [self segmentChanged:self.segmentControl];
+}
+
+- (void)simulateSQLiteActivity {
+    NSString *result = [WNSQLiteDemo simulateUserActivity];
+    if ([result hasPrefix:@"ERROR"]) {
+        [self log:@"SQLITE" message:result];
+    } else {
+        [self log:@"SQLITE" message:[NSString stringWithFormat:@"📝 %@", result]];
+    }
     self.segmentControl.selectedSegmentIndex = 2;
     [self segmentChanged:self.segmentControl];
 }
