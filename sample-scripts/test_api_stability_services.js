@@ -685,14 +685,13 @@
             }
         }, 'UIDebug.viewHierarchy() no crash');
 
-        // viewControllers
+        // viewControllers (returns a tree: { class, address, children: [...] })
         T.safe(function() {
-            var vcs = UIDebug.viewControllers();
-            T.ok(Array.isArray(vcs), 'viewControllers() returns array');
-            T.gt(vcs.length, 0, 'viewControllers has entries: ' + vcs.length);
-            if (vcs.length > 0) {
-                T.type(vcs[0].class, 'string', 'vc[0].class is string');
-                T.type(vcs[0].address, 'string', 'vc[0].address is string');
+            var tree = UIDebug.viewControllers();
+            T.ok(tree !== null && tree !== undefined && typeof tree === 'object', 'viewControllers() returns object');
+            T.type(tree['class'], 'string', 'root vc has class: ' + tree['class']);
+            if (tree.children) {
+                T.ok(Array.isArray(tree.children), 'root vc has children array');
             }
         }, 'UIDebug.viewControllers() no crash');
 

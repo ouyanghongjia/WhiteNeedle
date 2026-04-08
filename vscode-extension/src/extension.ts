@@ -505,14 +505,24 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
+    let autoConnecting = false;
     discovery.on('deviceFound', async (device: WNDevice) => {
-        if (deviceManager.isConnected) { return; }
+        if (deviceManager.isConnected || deviceManager.state === 'reconnecting' || deviceManager.state === 'connecting') { return; }
+        if (autoConnecting) { return; }
         const cfg = vscode.workspace.getConfiguration('whiteneedle');
         const autoConnect = cfg.get<boolean>('autoConnect', true);
         if (!autoConnect) { return; }
 
         const lastHost = cfg.get<string>('deviceHost');
-        if (lastHost && device.host === lastHost) {
+        const lastBundleId = cfg.get<string>('lastBundleId');
+        const lastDeviceName = cfg.get<string>('lastDeviceName');
+
+        const matchesByIdentity = lastBundleId && lastDeviceName &&
+            device.bundleId === lastBundleId && device.deviceName === lastDeviceName;
+        const matchesByHost = lastHost && device.host === lastHost;
+
+        if (matchesByIdentity || matchesByHost) {
+            autoConnecting = true;
             outputChannel.appendLine(
                 `[WhiteNeedle] Auto-reconnecting to previously connected device: ${device.deviceName} (${device.host}:${device.enginePort})`
             );
@@ -525,6 +535,8 @@ export function activate(context: vscode.ExtensionContext) {
                 );
             } catch (err: any) {
                 outputChannel.appendLine(`[WhiteNeedle] Auto-connect failed: ${err.message}`);
+            } finally {
+                autoConnecting = false;
             }
         }
     });

@@ -6,7 +6,8 @@ NS_ASSUME_NONNULL_BEGIN
 /**
  * WNFileSystemBridge registers the FileSystem namespace into a JSContext.
  *
- * All paths are relative to the app sandbox root (NSHomeDirectory()).
+ * Paths are resolved under the app sandbox (NSHomeDirectory()): relative segments,
+ * absolute paths already under the home directory, or "/Documents/..." style (leading slash).
  *
  * API:
  *   FileSystem.list(path?)          → directory listing with attributes

@@ -2,10 +2,72 @@
 #import "WNObjCBridge.h"
 #import "WNTypeConversion.h"
 #import "WNBoxing.h"
+#import "libffi/include/ffi.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
 
 static NSString *const kLogPrefix = @"[WhiteNeedle:Hook]";
+
+#pragma mark - FFI struct type definitions
+
+static ffi_type *wn_hk_elems_CGPoint[]  = { &ffi_type_double, &ffi_type_double, NULL };
+static ffi_type  wn_hk_type_CGPoint     = { 0, 0, FFI_TYPE_STRUCT, wn_hk_elems_CGPoint };
+
+static ffi_type *wn_hk_elems_CGSize[]   = { &ffi_type_double, &ffi_type_double, NULL };
+static ffi_type  wn_hk_type_CGSize      = { 0, 0, FFI_TYPE_STRUCT, wn_hk_elems_CGSize };
+
+static ffi_type *wn_hk_elems_CGRect[]   = { &wn_hk_type_CGPoint, &wn_hk_type_CGSize, NULL };
+static ffi_type  wn_hk_type_CGRect      = { 0, 0, FFI_TYPE_STRUCT, wn_hk_elems_CGRect };
+
+static ffi_type *wn_hk_elems_UIEdge[]   = { &ffi_type_double, &ffi_type_double, &ffi_type_double, &ffi_type_double, NULL };
+static ffi_type  wn_hk_type_UIEdge      = { 0, 0, FFI_TYPE_STRUCT, wn_hk_elems_UIEdge };
+
+static ffi_type *wn_hk_elems_NSRange[]  = { &ffi_type_uint64, &ffi_type_uint64, NULL };
+static ffi_type  wn_hk_type_NSRange     = { 0, 0, FFI_TYPE_STRUCT, wn_hk_elems_NSRange };
+
+static ffi_type *wn_hk_elems_CGAffine[] = { &ffi_type_double, &ffi_type_double, &ffi_type_double,
+                                             &ffi_type_double, &ffi_type_double, &ffi_type_double, NULL };
+static ffi_type  wn_hk_type_CGAffine    = { 0, 0, FFI_TYPE_STRUCT, wn_hk_elems_CGAffine };
+
+static ffi_type *wn_hk_ffi_type(const char *enc) {
+    while (*enc == 'r' || *enc == 'n' || *enc == 'N' || *enc == 'o' ||
+           *enc == 'O' || *enc == 'R' || *enc == 'V') enc++;
+    switch (*enc) {
+        case 'v': return &ffi_type_void;
+        case 'c': return &ffi_type_sint8;
+        case 'C': return &ffi_type_uint8;
+        case 's': return &ffi_type_sint16;
+        case 'S': return &ffi_type_uint16;
+        case 'i': return &ffi_type_sint32;
+        case 'I': return &ffi_type_uint32;
+        case 'l': return &ffi_type_sint32;
+        case 'L': return &ffi_type_uint32;
+        case 'q': return &ffi_type_sint64;
+        case 'Q': return &ffi_type_uint64;
+        case 'f': return &ffi_type_float;
+        case 'd': return &ffi_type_double;
+        case 'D': return &ffi_type_longdouble;
+        case 'B': return &ffi_type_uint8;
+        case '*': return &ffi_type_pointer;
+        case '@': return &ffi_type_pointer;
+        case '^': return &ffi_type_pointer;
+        case '#': return &ffi_type_pointer;
+        case ':': return &ffi_type_pointer;
+        case '?': return &ffi_type_pointer;
+        case '{': {
+            if (strncmp(enc, "{CGRect", 7) == 0)             return &wn_hk_type_CGRect;
+            if (strncmp(enc, "{CGPoint", 8) == 0)            return &wn_hk_type_CGPoint;
+            if (strncmp(enc, "{CGSize", 7) == 0)             return &wn_hk_type_CGSize;
+            if (strncmp(enc, "{UIEdgeInsets", 13) == 0)      return &wn_hk_type_UIEdge;
+            if (strncmp(enc, "{_NSRange", 9) == 0 ||
+                strncmp(enc, "{NSRange", 8) == 0)            return &wn_hk_type_NSRange;
+            if (strncmp(enc, "{CGAffineTransform", 18) == 0) return &wn_hk_type_CGAffine;
+            NSLog(@"%@ Unsupported struct ffi type: %s", kLogPrefix, enc);
+            return NULL;
+        }
+        default: return &ffi_type_pointer;
+    }
+}
 
 #pragma mark - Hook entry (per method)
 
@@ -18,41 +80,80 @@ static NSString *const kLogPrefix = @"[WhiteNeedle:Hook]";
 @property (nonatomic, assign) IMP originalIMP;
 @property (nonatomic, copy)   NSString *typeEncoding;
 @property (nonatomic, strong) NSMethodSignature *methodSignature;
-@property (nonatomic, strong) JSManagedValue *onEnter;
-@property (nonatomic, strong) JSManagedValue *onLeave;
-@property (nonatomic, strong) JSManagedValue *replacement;
+@property (nonatomic, strong) JSValue *onEnter;
+@property (nonatomic, strong) JSValue *onLeave;
+@property (nonatomic, strong) JSValue *replacement;
 @property (nonatomic, assign) BOOL isClassMethod;
 @property (nonatomic, assign) BOOL paused;
 @property (nonatomic, assign) NSUInteger hitCount;
 @property (nonatomic, assign) NSTimeInterval lastHitTime;
+@property (nonatomic, assign) ffi_cif     *hookCif;
+@property (nonatomic, assign) ffi_closure *hookClosure;
+@property (nonatomic, assign) ffi_type   **hookArgTypes;
+@property (nonatomic, assign) IMP          hookIMP;
 @end
 
 @implementation WNHookEntry
-@end
-
-#pragma mark - Per-class hook state
-
-@interface WNClassHookState : NSObject
-@property (nonatomic, assign) Class targetClass;
-@property (nonatomic, assign) IMP origForwardInvocation;
-@property (nonatomic, assign) IMP origMethodSignatureForSelector;
-@property (nonatomic, strong) NSMutableDictionary<NSString *, WNHookEntry *> *selectorMap;
-@end
-
-@implementation WNClassHookState
-- (instancetype)init {
-    self = [super init];
-    if (self) _selectorMap = [NSMutableDictionary dictionary];
-    return self;
+- (void)dealloc {
+    if (_hookClosure)  { ffi_closure_free(_hookClosure); _hookClosure = NULL; }
+    if (_hookArgTypes) { free(_hookArgTypes); _hookArgTypes = NULL; }
+    if (_hookCif)      { free(_hookCif); _hookCif = NULL; }
 }
 @end
 
 #pragma mark - WNHookEngine
 
 static NSMutableDictionary<NSString *, WNHookEntry *> *g_hooks = nil;
-static NSMutableDictionary<NSString *, WNClassHookState *> *g_classStates = nil;
 static JSContext *g_hookContext = nil;
 static NSMutableSet<NSString *> *g_reentrancyGuard = nil;
+static _Thread_local int g_forwardingDepth = 0;
+
+@class WNHookEngine;
+@interface WNHookEngine (ForwardDecl)
++ (void)handleHookedInvocation:(NSInvocation *)invocation
+                          entry:(WNHookEntry *)entry
+                         target:(id)target;
+@end
+
+#pragma mark - FFI closure callback (replaces _objc_msgForward entirely)
+
+static void WNHookClosureCallback(ffi_cif *cif, void *ret, void **args, void *userdata) {
+    WNHookEntry *entry = (__bridge WNHookEntry *)userdata;
+    __unsafe_unretained id self_ = *(__unsafe_unretained id *)args[0];
+
+    if (g_forwardingDepth > 0) {
+        ffi_call(cif, (void (*)(void))entry.originalIMP, ret, args);
+        return;
+    }
+
+    g_forwardingDepth++;
+    @try {
+        NSMethodSignature *sig = entry.methodSignature;
+        NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:sig];
+        [invocation setTarget:self_];
+        [invocation setSelector:entry.originalSelector];
+
+        for (NSUInteger i = 2; i < sig.numberOfArguments; i++) {
+            [invocation setArgument:args[i] atIndex:i];
+        }
+        [invocation retainArguments];
+
+        [WNHookEngine handleHookedInvocation:invocation entry:entry target:self_];
+
+        const char *retEnc = sig.methodReturnType;
+        if (retEnc && retEnc[0] != 'v') {
+            NSUInteger retLen = sig.methodReturnLength;
+            if (retLen > 0) {
+                [invocation getReturnValue:ret];
+            }
+        }
+    } @catch (NSException *exception) {
+        NSLog(@"%@ Exception in hook callback for %@: %@", kLogPrefix, entry.selectorKey, exception);
+        ffi_call(cif, (void (*)(void))entry.originalIMP, ret, args);
+    } @finally {
+        g_forwardingDepth--;
+    }
+}
 
 @implementation WNHookEngine
 
@@ -60,7 +161,6 @@ static NSMutableSet<NSString *> *g_reentrancyGuard = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         g_hooks = [NSMutableDictionary dictionary];
-        g_classStates = [NSMutableDictionary dictionary];
         g_reentrancyGuard = [NSMutableSet set];
     });
 }
@@ -103,7 +203,7 @@ static NSMutableSet<NSString *> *g_reentrancyGuard = nil;
     };
 
     context[@"Interceptor"] = interceptor;
-    NSLog(@"%@ Hook engine v2 registered (NSInvocation-based)", kLogPrefix);
+    NSLog(@"%@ Hook engine v3 registered (ffi-closure based)", kLogPrefix);
 }
 
 + (NSArray<NSString *> *)activeHooks {
@@ -166,6 +266,61 @@ static NSMutableSet<NSString *> *g_reentrancyGuard = nil;
     return YES;
 }
 
+#pragma mark - Create ffi closure IMP for a hook entry
+
++ (BOOL)buildClosureForEntry:(WNHookEntry *)entry {
+    NSMethodSignature *sig = entry.methodSignature;
+    NSUInteger nargs = sig.numberOfArguments;
+
+    ffi_type *retType = wn_hk_ffi_type(sig.methodReturnType);
+    if (!retType) {
+        NSLog(@"%@ Cannot resolve return ffi type for %@", kLogPrefix, entry.selectorKey);
+        return NO;
+    }
+
+    ffi_type **argTypes = calloc(nargs, sizeof(ffi_type *));
+    for (NSUInteger i = 0; i < nargs; i++) {
+        argTypes[i] = wn_hk_ffi_type([sig getArgumentTypeAtIndex:i]);
+        if (!argTypes[i]) {
+            NSLog(@"%@ Cannot resolve arg %lu ffi type for %@", kLogPrefix, (unsigned long)i, entry.selectorKey);
+            free(argTypes);
+            return NO;
+        }
+    }
+
+    ffi_cif *cif = calloc(1, sizeof(ffi_cif));
+    if (ffi_prep_cif(cif, FFI_DEFAULT_ABI, (unsigned int)nargs, retType, argTypes) != FFI_OK) {
+        NSLog(@"%@ ffi_prep_cif failed for %@", kLogPrefix, entry.selectorKey);
+        free(cif);
+        free(argTypes);
+        return NO;
+    }
+
+    void *closureIMP = NULL;
+    ffi_closure *closure = ffi_closure_alloc(sizeof(ffi_closure), &closureIMP);
+    if (!closure) {
+        NSLog(@"%@ ffi_closure_alloc failed for %@", kLogPrefix, entry.selectorKey);
+        free(cif);
+        free(argTypes);
+        return NO;
+    }
+
+    if (ffi_prep_closure_loc(closure, cif, WNHookClosureCallback,
+                             (__bridge void *)entry, closureIMP) != FFI_OK) {
+        NSLog(@"%@ ffi_prep_closure_loc failed for %@", kLogPrefix, entry.selectorKey);
+        ffi_closure_free(closure);
+        free(cif);
+        free(argTypes);
+        return NO;
+    }
+
+    entry.hookCif      = cif;
+    entry.hookClosure  = closure;
+    entry.hookArgTypes = argTypes;
+    entry.hookIMP      = (IMP)closureIMP;
+    return YES;
+}
+
 #pragma mark - Interceptor.attach()
 
 + (void)attachHook:(NSString *)selectorKey
@@ -222,21 +377,21 @@ static NSMutableSet<NSString *> *g_reentrancyGuard = nil;
     JSValue *onLeave = callbacks[@"onLeave"];
 
     if (onEnter && ![onEnter isUndefined]) {
-        entry.onEnter = [JSManagedValue managedValueWithValue:onEnter];
-        [context.virtualMachine addManagedReference:entry.onEnter withOwner:entry];
+        entry.onEnter = onEnter;
     }
     if (onLeave && ![onLeave isUndefined]) {
-        entry.onLeave = [JSManagedValue managedValueWithValue:onLeave];
-        [context.virtualMachine addManagedReference:entry.onLeave withOwner:entry];
+        entry.onLeave = onLeave;
+    }
+
+    if (![self buildClosureForEntry:entry]) {
+        NSLog(@"%@ Failed to create ffi closure, hook aborted: %@", kLogPrefix, selectorKey);
+        return;
     }
 
     g_hooks[selectorKey] = entry;
-    [self ensureClassHooked:targetCls];
-    [self registerEntry:entry forClass:targetCls];
+    method_setImplementation(method, entry.hookIMP);
 
-    method_setImplementation(method, _objc_msgForward);
-
-    NSLog(@"%@ Hooked: %@ (full args via NSInvocation)", kLogPrefix, selectorKey);
+    NSLog(@"%@ Hooked: %@ (ffi-closure, re-entrance safe)", kLogPrefix, selectorKey);
 }
 
 #pragma mark - Interceptor.replace()
@@ -290,119 +445,20 @@ static NSMutableSet<NSString *> *g_reentrancyGuard = nil;
     entry.methodSignature = sig;
     entry.isClassMethod = isClassMethod;
     entry.className = className;
-    entry.replacement = [JSManagedValue managedValueWithValue:replacementFn];
-    [context.virtualMachine addManagedReference:entry.replacement withOwner:entry];
+    entry.replacement = replacementFn;
+
+    if (![self buildClosureForEntry:entry]) {
+        NSLog(@"%@ Failed to create ffi closure, replace aborted: %@", kLogPrefix, selectorKey);
+        return;
+    }
 
     g_hooks[selectorKey] = entry;
-    [self ensureClassHooked:targetCls];
-    [self registerEntry:entry forClass:targetCls];
+    method_setImplementation(method, entry.hookIMP);
 
-    method_setImplementation(method, _objc_msgForward);
-
-    NSLog(@"%@ Replaced: %@ (full args via NSInvocation)", kLogPrefix, selectorKey);
+    NSLog(@"%@ Replaced: %@ (ffi-closure, re-entrance safe)", kLogPrefix, selectorKey);
 }
 
-#pragma mark - Class-level forwardInvocation: / methodSignatureForSelector: swizzle
-
-+ (void)ensureClassHooked:(Class)cls {
-    NSString *classKey = NSStringFromClass(cls);
-    if (g_classStates[classKey]) return;
-
-    WNClassHookState *state = [[WNClassHookState alloc] init];
-    state.targetClass = cls;
-
-    // Swizzle methodSignatureForSelector:
-    // NOTE: class_replaceMethod returns NULL when the method is inherited (not
-    // overridden by cls).  We must capture the current IMP *before* replacing
-    // so we can still call through to the original (possibly inherited) version.
-    SEL sigSel = @selector(methodSignatureForSelector:);
-    Method sigMethod = class_getInstanceMethod(cls, sigSel);
-    IMP origSigIMP = sigMethod ? method_getImplementation(sigMethod) : NULL;
-
-    class_replaceMethod(
-        cls, sigSel,
-        imp_implementationWithBlock(^NSMethodSignature *(id _self, SEL selector) {
-            WNHookEntry *entry = [WNHookEngine findEntryForClass:object_getClass(_self) selector:selector];
-            if (entry) {
-                return entry.methodSignature;
-            }
-            WNClassHookState *st = g_classStates[NSStringFromClass(cls)];
-            if (st && st.origMethodSignatureForSelector) {
-                return ((NSMethodSignature *(*)(id, SEL, SEL))st.origMethodSignatureForSelector)(_self, sigSel, selector);
-            }
-            return nil;
-        }),
-        method_getTypeEncoding(sigMethod ?: class_getInstanceMethod([NSObject class], sigSel))
-    );
-    state.origMethodSignatureForSelector = origSigIMP;
-
-    // Swizzle forwardInvocation:
-    SEL fwdSel = @selector(forwardInvocation:);
-    Method fwdMethod = class_getInstanceMethod(cls, fwdSel);
-    IMP origFwdIMP = fwdMethod ? method_getImplementation(fwdMethod) : NULL;
-
-    class_replaceMethod(
-        cls, fwdSel,
-        imp_implementationWithBlock(^(id _self, NSInvocation *invocation) {
-            SEL selector = invocation.selector;
-            WNHookEntry *entry = [WNHookEngine findEntryForClass:object_getClass(_self) selector:selector];
-
-            if (entry) {
-                [WNHookEngine handleHookedInvocation:invocation entry:entry target:_self];
-                return;
-            }
-            WNClassHookState *st = g_classStates[NSStringFromClass(cls)];
-            if (st && st.origForwardInvocation) {
-                ((void (*)(id, SEL, NSInvocation *))st.origForwardInvocation)(_self, fwdSel, invocation);
-            } else {
-                [_self doesNotRecognizeSelector:selector];
-            }
-        }),
-        method_getTypeEncoding(fwdMethod ?: class_getInstanceMethod([NSObject class], fwdSel))
-    );
-    state.origForwardInvocation = origFwdIMP;
-
-    g_classStates[classKey] = state;
-    NSLog(@"%@ Class hooked for forwarding: %@", kLogPrefix, classKey);
-}
-
-+ (void)registerEntry:(WNHookEntry *)entry forClass:(Class)cls {
-    NSString *classKey = NSStringFromClass(cls);
-    WNClassHookState *state = g_classStates[classKey];
-    if (state) {
-        NSString *selKey = NSStringFromSelector(entry.originalSelector);
-        state.selectorMap[selKey] = entry;
-    }
-}
-
-+ (void)unregisterEntry:(WNHookEntry *)entry forClass:(Class)cls {
-    NSString *classKey = NSStringFromClass(cls);
-    WNClassHookState *state = g_classStates[classKey];
-    if (state) {
-        NSString *selKey = NSStringFromSelector(entry.originalSelector);
-        [state.selectorMap removeObjectForKey:selKey];
-    }
-}
-
-#pragma mark - Lookup
-
-+ (nullable WNHookEntry *)findEntryForClass:(Class)cls selector:(SEL)selector {
-    NSString *selName = NSStringFromSelector(selector);
-
-    Class current = cls;
-    while (current) {
-        NSString *classKey = NSStringFromClass(current);
-        WNClassHookState *state = g_classStates[classKey];
-        if (state) {
-            WNHookEntry *entry = state.selectorMap[selName];
-            if (entry) return entry;
-        }
-        current = class_getSuperclass(current);
-    }
-    return nil;
-}
-
-#pragma mark - Handle hooked invocation (core logic)
+#pragma mark - Handle hooked invocation (core logic — unchanged from v2)
 
 + (void)handleHookedInvocation:(NSInvocation *)invocation
                           entry:(WNHookEntry *)entry
@@ -419,44 +475,63 @@ static NSMutableSet<NSString *> *g_reentrancyGuard = nil;
         return;
     }
 
-    BOOL isReentrant = [g_reentrancyGuard containsObject:guardKey];
+    BOOL isReentrant;
+    @synchronized (g_reentrancyGuard) {
+        isReentrant = [g_reentrancyGuard containsObject:guardKey];
+    }
 
     if (isReentrant) {
-        // Reentrant call — skip JS callbacks, just call the original
         [invocation setSelector:entry.aliasSelector];
         [invocation invoke];
         [invocation setSelector:entry.originalSelector];
         return;
     }
 
-    [g_reentrancyGuard addObject:guardKey];
+    @synchronized (g_reentrancyGuard) {
+        [g_reentrancyGuard addObject:guardKey];
+    }
 
+    BOOL aliasInvoked = NO;
+
+    @try {
     NSMethodSignature *sig = entry.methodSignature;
     JSContext *ctx = g_hookContext;
     if (!ctx) {
-        [g_reentrancyGuard removeObject:guardKey];
         [invocation setSelector:entry.aliasSelector];
         [invocation invoke];
+        aliasInvoked = YES;
         [invocation setSelector:entry.originalSelector];
         return;
     }
 
-    // Extract all arguments (skip index 0=self, 1=_cmd)
     NSMutableArray<JSValue *> *jsArgs = [NSMutableArray array];
     for (NSUInteger i = 2; i < sig.numberOfArguments; i++) {
         const char *argType = [sig getArgumentTypeAtIndex:i];
+        const char *clean = argType;
+        while (*clean == 'r' || *clean == 'n' || *clean == 'N' ||
+               *clean == 'o' || *clean == 'O' || *clean == 'R' || *clean == 'V') {
+            clean++;
+        }
+
         NSUInteger argSize = 0;
         NSGetSizeAndAlignment(argType, &argSize, NULL);
-
         void *buf = calloc(1, argSize);
         [invocation getArgument:buf atIndex:i];
-        JSValue *jsArg = [WNTypeConversion convertToJSValue:buf typeEncoding:argType inContext:ctx];
+
+        JSValue *jsArg;
+        if (clean[0] == '@' && clean[1] != '?') {
+            __unsafe_unretained id obj = (__bridge id)(*(void **)buf);
+            jsArg = obj ? [WNObjCBridge createInstanceProxy:obj inContext:ctx]
+                        : [JSValue valueWithNullInContext:ctx];
+        } else {
+            jsArg = [WNTypeConversion convertToJSValue:buf typeEncoding:argType inContext:ctx];
+        }
         [jsArgs addObject:jsArg ?: [JSValue valueWithNullInContext:ctx]];
         free(buf);
     }
 
     if (entry.replacement) {
-        JSValue *replaceFn = entry.replacement.value;
+        JSValue *replaceFn = entry.replacement;
         if (replaceFn && ![replaceFn isUndefined]) {
             JSValue *selfProxy = [WNObjCBridge createInstanceProxy:target inContext:ctx];
             JSValue *argsArray = [JSValue valueWithObject:jsArgs inContext:ctx];
@@ -498,6 +573,7 @@ static NSMutableSet<NSString *> *g_reentrancyGuard = nil;
                 return ret;
             } inContext:ctx];
 
+            aliasInvoked = YES;
             JSValue *result = [replaceFn callWithArguments:@[selfProxy, argsArray, originalFn]];
 
             const char *retType = sig.methodReturnType;
@@ -509,14 +585,10 @@ static NSMutableSet<NSString *> *g_reentrancyGuard = nil;
                 }
             }
         }
-        [g_reentrancyGuard removeObject:guardKey];
         return;
     }
 
-    // Attach mode: onEnter → original → onLeave
-
-    // onEnter(self, sel, args)
-    JSValue *onEnterFn = entry.onEnter ? entry.onEnter.value : nil;
+    JSValue *onEnterFn = entry.onEnter;
     if (onEnterFn && ![onEnterFn isUndefined]) {
         JSValue *selfProxy = [WNObjCBridge createInstanceProxy:target inContext:ctx];
         JSValue *selStr = [JSValue valueWithObject:NSStringFromSelector(entry.originalSelector) inContext:ctx];
@@ -524,13 +596,12 @@ static NSMutableSet<NSString *> *g_reentrancyGuard = nil;
         [onEnterFn callWithArguments:@[selfProxy, selStr, argsArray]];
     }
 
-    // Call original via alias selector
     [invocation setSelector:entry.aliasSelector];
     [invocation invoke];
+    aliasInvoked = YES;
     [invocation setSelector:entry.originalSelector];
 
-    // onLeave(retval) → can return modified value
-    JSValue *onLeaveFn = entry.onLeave ? entry.onLeave.value : nil;
+    JSValue *onLeaveFn = entry.onLeave;
     if (onLeaveFn && ![onLeaveFn isUndefined]) {
         const char *retType = sig.methodReturnType;
         JSValue *retval = [JSValue valueWithUndefinedInContext:ctx];
@@ -545,13 +616,28 @@ static NSMutableSet<NSString *> *g_reentrancyGuard = nil;
 
         JSValue *newRetval = [onLeaveFn callWithArguments:@[retval]];
 
-        // If onLeave returns non-undefined, use as new return value
         if (newRetval && ![newRetval isUndefined] && retType[0] != 'v') {
             [WNTypeConversion setInvocationReturnValue:invocation fromJSValue:newRetval inContext:ctx];
         }
     }
 
-    [g_reentrancyGuard removeObject:guardKey];
+    } @catch (NSException *exception) {
+        NSLog(@"%@ Exception in handleHookedInvocation for %@: %@ reason: %@",
+              kLogPrefix, entry.selectorKey, exception.name, exception.reason);
+        if (!aliasInvoked) {
+            @try {
+                [invocation setSelector:entry.aliasSelector];
+                [invocation invoke];
+                [invocation setSelector:entry.originalSelector];
+            } @catch (NSException *innerException) {
+                NSLog(@"%@ Failed to call original after exception: %@", kLogPrefix, innerException);
+            }
+        }
+    } @finally {
+        @synchronized (g_reentrancyGuard) {
+            [g_reentrancyGuard removeObject:guardKey];
+        }
+    }
 }
 
 #pragma mark - Detach
@@ -568,7 +654,6 @@ static NSMutableSet<NSString *> *g_reentrancyGuard = nil;
         method_setImplementation(method, entry.originalIMP);
     }
 
-    [self unregisterEntry:entry forClass:entry.targetClass];
     [g_hooks removeObjectForKey:selectorKey];
     NSLog(@"%@ Detached: %@", kLogPrefix, selectorKey);
 }

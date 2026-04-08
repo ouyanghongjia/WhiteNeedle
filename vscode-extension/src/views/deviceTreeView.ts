@@ -12,6 +12,7 @@ export class DeviceTreeProvider implements vscode.TreeDataProvider<DeviceTreeIte
     ) {
         discovery.on('deviceFound', () => this.refresh());
         discovery.on('deviceLost', () => this.refresh());
+        discovery.on('deviceUpdated', () => this.refresh());
         // Fallback TCP / Connect-by-IP do not go through Bonjour — still show connected device in tree.
         deviceManager.on('stateChanged', () => this.refresh());
     }
@@ -27,9 +28,14 @@ export class DeviceTreeProvider implements vscode.TreeDataProvider<DeviceTreeIte
         if (!connected || !this.deviceManager.isConnected) {
             return fromDiscovery;
         }
-        const key = (d: WNDevice) => `${d.host}:${d.enginePort}`;
-        const k = key(connected);
-        if (fromDiscovery.some((d) => key(d) === k)) {
+        const isSame = (a: WNDevice, b: WNDevice): boolean => {
+            if (a.bundleId && a.bundleId !== 'unknown' && a.deviceName &&
+                b.bundleId && b.bundleId !== 'unknown' && b.deviceName) {
+                return a.bundleId === b.bundleId && a.deviceName === b.deviceName;
+            }
+            return a.host === b.host && a.enginePort === b.enginePort;
+        };
+        if (fromDiscovery.some((d) => isSame(d, connected))) {
             return fromDiscovery;
         }
         return [connected, ...fromDiscovery];

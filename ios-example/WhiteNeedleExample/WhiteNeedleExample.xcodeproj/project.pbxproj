@@ -159,10 +159,14 @@
 			buildActionMask = 2147483647;
 			files = (
 			);
+			inputPaths = (
+			);
 			name = "[CP-User] Copy Sample Scripts";
+			outputPaths = (
+			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "rsync -av --delete \"${SRCROOT}/../../sample-scripts/\" \"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/sample-scripts/\"";
+			shellScript = "rsync -av --delete \"${SRCROOT}/../../sample-scripts/\" \"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/sample-scripts/\"\n";
 		};
 		E67E64882B05C1EFAC8B2D6F /* [CP] Check Pods Manifest.lock */ = {
 			isa = PBXShellScriptBuildPhase;

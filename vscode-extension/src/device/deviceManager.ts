@@ -33,10 +33,12 @@ export class DeviceManager extends EventEmitter {
 
     isConnectedTo(device: WNDevice): boolean {
         if (!this.connectedDevice) { return false; }
-        return (
-            this.connectedDevice.host === device.host &&
-            this.connectedDevice.port === device.port
-        );
+        const c = this.connectedDevice;
+        if (c.bundleId && c.bundleId !== 'unknown' && c.deviceName &&
+            device.bundleId && device.bundleId !== 'unknown' && device.deviceName) {
+            return c.bundleId === device.bundleId && c.deviceName === device.deviceName;
+        }
+        return c.host === device.host && c.port === device.port;
     }
 
     async connect(device: WNDevice): Promise<void> {
@@ -69,6 +71,18 @@ export class DeviceManager extends EventEmitter {
 
         const cfg = vscode.workspace.getConfiguration('whiteneedle');
         await cfg.update('deviceHost', device.host, vscode.ConfigurationTarget.Global);
+<<<<<<< HEAD
+=======
+        if (device.bundleId && device.bundleId !== 'unknown') {
+            await cfg.update('lastBundleId', device.bundleId, vscode.ConfigurationTarget.Global);
+        }
+        if (device.deviceName) {
+            await cfg.update('lastDeviceName', device.deviceName, vscode.ConfigurationTarget.Global);
+        }
+        if (device.inspectorPort > 0) {
+            await cfg.update('inspectorPort', device.inspectorPort, vscode.ConfigurationTarget.Global);
+        }
+>>>>>>> e24cd1f (增加了团队代码片段的配置（git仓库）)
         this.outputChannel.appendLine(
             `[DeviceManager] Connected (engine=${device.enginePort})`
         );

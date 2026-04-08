@@ -6,7 +6,7 @@ static NSString *const kLogPrefix = @"[WNSQLiteBridge]";
 @implementation WNSQLiteBridge
 
 static NSMutableDictionary<NSString *, NSDictionary *> *sSnapshots = nil;
-static NSMutableDictionary<NSString *, dispatch_source_t> *sWatchers = nil;
+static NSMutableDictionary<NSString *, NSDictionary *> *sWatchers = nil;
 static int sWatchCounter = 0;
 
 #pragma mark - Helpers
@@ -36,7 +36,7 @@ static int sWatchCounter = 0;
 + (sqlite3 *)openDBReadWrite:(NSString *)absPath {
     if (!absPath) return NULL;
     sqlite3 *db = NULL;
-    int rc = sqlite3_open_v2([absPath UTF8String], &db, SQLITE_OPEN_READWRITE, NULL);
+    int rc = sqlite3_open_v2([absPath UTF8String], &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL);
     if (rc != SQLITE_OK) {
         NSLog(@"%@ Failed to open (rw) %@: %s", kLogPrefix, absPath, sqlite3_errmsg(db));
         if (db) sqlite3_close(db);
@@ -459,7 +459,7 @@ static int sWatchCounter = 0;
 
         @synchronized(sWatchers) {
             sWatchers[watchKey] = @{
-                @"timer": [NSValue valueWithPointer:(__bridge void *)timer],
+                @"timer": timer,
                 @"dbPath": capturedDbPath,
                 @"tableName": capturedTable,
             };
@@ -491,9 +491,10 @@ static int sWatchCounter = 0;
                 return [JSValue valueWithObject:@{@"error": @"Watch not found"} inContext:ctx];
             }
 
-            NSValue *timerVal = info[@"timer"];
-            dispatch_source_t timer = (__bridge dispatch_source_t)[timerVal pointerValue];
-            dispatch_source_cancel(timer);
+            dispatch_source_t timer = (dispatch_source_t)info[@"timer"];
+            if (timer) {
+                dispatch_source_cancel(timer);
+            }
             [sWatchers removeObjectForKey:watchKey];
         }
 

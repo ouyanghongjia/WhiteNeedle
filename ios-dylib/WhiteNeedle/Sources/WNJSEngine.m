@@ -329,7 +329,18 @@ static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
         JSContext *ctx = [JSContext currentContext];
 
         if ([NSThread isMainThread]) {
-            return [fn callWithArguments:@[]];
+            void (^savedHandler)(JSContext *, JSValue *) = ctx.exceptionHandler;
+            __block JSValue *thrownException = nil;
+            ctx.exceptionHandler = ^(JSContext *c, JSValue *exc) {
+                thrownException = exc;
+            };
+            JSValue *result = [fn callWithArguments:@[]];
+            ctx.exceptionHandler = savedHandler;
+            if (thrownException) {
+                ctx.exception = thrownException;
+                return [JSValue valueWithUndefinedInContext:ctx];
+            }
+            return result;
         }
 
         __block JSValue *result = nil;

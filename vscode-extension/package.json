@@ -408,6 +408,16 @@
           "default": "127.0.0.1",
           "description": "Device IP for Inspector/DAP (updated automatically when you connect in the Devices view)"
         },
+        "whiteneedle.lastBundleId": {
+          "type": "string",
+          "default": "",
+          "description": "Bundle ID of last connected device (auto-updated, used for device identity matching)"
+        },
+        "whiteneedle.lastDeviceName": {
+          "type": "string",
+          "default": "",
+          "description": "Name of last connected device (auto-updated, used for device identity matching)"
+        },
         "whiteneedle.autoConnect": {
           "type": "boolean",
           "default": true,

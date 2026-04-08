@@ -94,6 +94,26 @@ export class DeviceDiscovery extends EventEmitter {
         this.browse();
     }
 
+    /**
+     * Build a stable identity key for a physical device.
+     * Uses bundleId + deviceName so the same iPad on WiFi and USB merges into one entry.
+     * Falls back to host:port when TXT metadata is missing.
+     */
+    private deviceIdentityKey(device: WNDevice): string {
+        if (device.bundleId && device.bundleId !== 'unknown' && device.deviceName) {
+            return `${device.bundleId}@${device.deviceName}`;
+        }
+        return `${device.host}:${device.port}`;
+    }
+
+    /**
+     * Choose the better IP when the same device is reachable from multiple interfaces.
+     * Prefer routable LAN addresses over link-local (169.254.x.x / fe80::).
+     */
+    private isLinkLocal(host: string): boolean {
+        return host.startsWith('169.254.') || host.startsWith('fe80');
+    }
+
     private browse(): void {
         if (!this.bonjour) { return; }
 
@@ -101,23 +121,32 @@ export class DeviceDiscovery extends EventEmitter {
             const device = this.parseService(service);
             if (!device) { return; }
 
-            const key = `${device.host}:${device.port}`;
-            const isNew = !this.devices.has(key);
-            this.devices.set(key, device);
-            if (isNew) {
+            const key = this.deviceIdentityKey(device);
+            const existing = this.devices.get(key);
+            if (existing) {
+                // Same logical device seen again — prefer routable IP over link-local
+                if (this.isLinkLocal(existing.host) && !this.isLinkLocal(device.host)) {
+                    this.devices.set(key, device);
+                    this.emit('deviceUpdated', device);
+                } else if (!this.isLinkLocal(existing.host) && this.isLinkLocal(device.host)) {
+                    // Keep existing routable IP, but store alternate addresses for reference
+                } else {
+                    this.devices.set(key, device);
+                }
+            } else {
+                this.devices.set(key, device);
                 this.emit('deviceFound', device);
             }
         });
 
         this.browser.on('down', (service: Service) => {
-            const addresses = service.addresses || [];
-            for (const addr of addresses) {
-                const key = `${addr}:${service.port}`;
-                if (this.devices.has(key)) {
-                    const device = this.devices.get(key)!;
-                    this.devices.delete(key);
-                    this.emit('deviceLost', device);
-                }
+            const parsed = this.parseService(service);
+            if (!parsed) { return; }
+            const key = this.deviceIdentityKey(parsed);
+            if (this.devices.has(key)) {
+                const device = this.devices.get(key)!;
+                this.devices.delete(key);
+                this.emit('deviceLost', device);
             }
         });
     }

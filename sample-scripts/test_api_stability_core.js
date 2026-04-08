@@ -169,17 +169,17 @@
     }, 'require("events") no crash');
 
     T.safe(function() {
-        var utils = require('utils');
-        if (utils) {
-            T.type(utils.format, 'function', 'utils.format is function');
-            T.type(utils.inspect, 'function', 'utils.inspect is function');
-            var formatted = utils.format('hello %s #%d', 'world', 42);
-            T.type(formatted, 'string', 'utils.format returns string');
+        var util = require('util');
+        if (util) {
+            T.type(util.format, 'function', 'util.format is function');
+            T.type(util.inspect, 'function', 'util.inspect is function');
+            var formatted = util.format('hello %s #%d', 'world', 42);
+            T.type(formatted, 'string', 'util.format returns string');
         } else {
-            T.skip('utils.format', 'utils module not available');
-            T.skip('utils.inspect', 'utils module not available');
+            T.skip('util.format', 'util module not available');
+            T.skip('util.inspect', 'util module not available');
         }
-    }, 'require("utils") no crash');
+    }, 'require("util") no crash');
 
     // Same module returns same reference (cache)
     T.safe(function() {

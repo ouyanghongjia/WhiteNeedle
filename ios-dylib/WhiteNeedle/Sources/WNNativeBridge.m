@@ -158,8 +158,7 @@ static NSMutableDictionary<NSString *, WNStructDef *> *g_structDefs;
     __block WNStructDef *capturedDef = def;
     instance[@"update"] = ^JSValue *(JSValue *newValues) {
         JSContext *c = [JSContext currentContext];
-        JSValue *self2 = [c globalObject][@"this"];
-        (void)self2;
+        JSValue *thisObj = [JSContext currentThis];
         for (NSUInteger i = 0; i < capturedDef.fields.count; i++) {
             NSDictionary *f = capturedDef.fields[i];
             NSString *fn = f[@"name"];
@@ -167,6 +166,10 @@ static NSMutableDictionary<NSString *, WNStructDef *> *g_structDefs;
             if (v && ![v isUndefined]) {
                 NSUInteger off = [capturedDef offsetForFieldIndex:i];
                 [WNNativeBridge writeValue:v type:f[@"type"] toBuffer:(uint8_t *)capturedBuffer + off];
+                JSValue *updated = [WNNativeBridge readValueOfType:f[@"type"]
+                                                       fromBuffer:(uint8_t *)capturedBuffer + off
+                                                         inContext:c];
+                thisObj[fn] = updated;
             }
         }
         return [JSValue valueWithUndefinedInContext:c];

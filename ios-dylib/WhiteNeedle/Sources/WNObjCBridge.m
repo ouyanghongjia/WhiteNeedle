@@ -289,14 +289,6 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
     [invocation setSelector:selector];
     [invocation retainArguments];
 
-    NSLog(@"[WN-DIAG] invokeSelector:%@ target:%@ isClass:%d argCount:%lu sigArgCount:%lu",
-          selectorString, NSStringFromClass([target class]), isClass,
-          (unsigned long)jsArgs.count, (unsigned long)sig.numberOfArguments);
-    for (NSUInteger i = 0; i < jsArgs.count; i++) {
-        NSLog(@"[WN-DIAG]   arg[%lu] class=%@ value=%@", (unsigned long)i,
-              NSStringFromClass([jsArgs[i] class]), jsArgs[i]);
-    }
-
     for (NSUInteger i = 0; i < jsArgs.count && (i + 2) < sig.numberOfArguments; i++) {
         const char *argType = [sig getArgumentTypeAtIndex:i + 2];
         NSUInteger argSize = 0;
@@ -339,12 +331,12 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
         free(argBuf);
     }
 
-    NSLog(@"[WN-DIAG] about to [invocation invoke] for %@", selectorString);
     @try {
         [invocation invoke];
-        NSLog(@"[WN-DIAG] [invocation invoke] completed for %@", selectorString);
     } @catch (NSException *exception) {
         NSLog(@"%@ Invocation exception for %@: %@ — %@", kLogPrefix, selectorString, exception.name, exception.reason);
+        NSString *msg = [NSString stringWithFormat:@"%@: %@", exception.name, exception.reason ?: @""];
+        context.exception = [JSValue valueWithNewErrorFromMessage:msg inContext:context];
         return [JSValue valueWithUndefinedInContext:context];
     }
 
@@ -389,7 +381,10 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
     // Also accepts a hex address string (debug `address` fields, `%p` logs, etc.) for quick proxying.
     objcNS[@"instance"] = ^JSValue *(JSValue *boxedObj) {
         JSContext *ctx = [JSContext currentContext];
-        if (boxedObj && ![boxedObj isUndefined] && ![boxedObj isNull] && [boxedObj isString]) {
+        if (!boxedObj || [boxedObj isUndefined] || [boxedObj isNull]) {
+            return [JSValue valueWithNullInContext:ctx];
+        }
+        if ([boxedObj isString]) {
             NSString *hexOrText = [boxedObj toString];
             id fromAddr = WNObjCParsedObjectFromHexAddressString(hexOrText);
             if (fromAddr) {
@@ -398,6 +393,9 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
         }
 
         id obj = [boxedObj toObject];
+        if (!obj || [obj isKindOfClass:[NSNull class]]) {
+            return [JSValue valueWithNullInContext:ctx];
+        }
         if ([obj isKindOfClass:[WNBoxing class]]) {
             obj = [(WNBoxing *)obj unbox];
         }
@@ -420,10 +418,7 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
     };
 
     // ObjC.classes — lazy proxy that resolves class names
-    objcNS[@"classes"] = ^JSValue *{
-        JSContext *ctx = [JSContext currentContext];
-        return [WNObjCBridge buildClassesProxy:ctx];
-    };
+    objcNS[@"classes"] = [WNObjCBridge buildClassesProxy:context];
 
     // ObjC.enumerateLoadedClasses(callbacks)
     objcNS[@"enumerateLoadedClasses"] = ^(JSValue *callbacks) {

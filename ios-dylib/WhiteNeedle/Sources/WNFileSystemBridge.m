@@ -2,6 +2,18 @@
 
 static NSString *const kLogPrefix = @"[WNFileSystemBridge]";
 
+/// Resolves JS paths: relative to sandbox, absolute under NSHome, or "/Documents/..." style.
+static NSString *WNFSAbsolutePath(NSString *path, NSString *sandboxRoot) {
+    if (!path.length) return [sandboxRoot stringByStandardizingPath];
+    NSString *root = [sandboxRoot stringByStandardizingPath];
+    NSString *std = [path stringByStandardizingPath];
+    if ([std hasPrefix:root]) return std;
+    if ([path hasPrefix:@"/"]) {
+        return [sandboxRoot stringByAppendingPathComponent:[path substringFromIndex:1]];
+    }
+    return [sandboxRoot stringByAppendingPathComponent:path];
+}
+
 @implementation WNFileSystemBridge
 
 + (void)registerInContext:(JSContext *)context {
@@ -16,7 +28,7 @@ static NSString *const kLogPrefix = @"[WNFileSystemBridge]";
         if (relPath && ![relPath isUndefined] && ![relPath isNull]) {
             rel = [relPath toString];
         }
-        NSString *absPath = [sandboxRoot stringByAppendingPathComponent:rel];
+        NSString *absPath = WNFSAbsolutePath(rel, sandboxRoot);
 
         NSFileManager *fm = [NSFileManager defaultManager];
         BOOL isDir = NO;
@@ -57,7 +69,7 @@ static NSString *const kLogPrefix = @"[WNFileSystemBridge]";
     ns[@"read"] = ^JSValue *(NSString *relPath) {
         JSContext *ctx = [JSContext currentContext];
         if (!relPath) return [JSValue valueWithNullInContext:ctx];
-        NSString *absPath = [sandboxRoot stringByAppendingPathComponent:relPath];
+        NSString *absPath = WNFSAbsolutePath(relPath, sandboxRoot);
         NSError *error = nil;
         NSString *content = [NSString stringWithContentsOfFile:absPath encoding:NSUTF8StringEncoding error:&error];
         if (error) {
@@ -70,7 +82,7 @@ static NSString *const kLogPrefix = @"[WNFileSystemBridge]";
     ns[@"readBytes"] = ^JSValue *(NSString *relPath) {
         JSContext *ctx = [JSContext currentContext];
         if (!relPath) return [JSValue valueWithNullInContext:ctx];
-        NSString *absPath = [sandboxRoot stringByAppendingPathComponent:relPath];
+        NSString *absPath = WNFSAbsolutePath(relPath, sandboxRoot);
         NSData *data = [NSData dataWithContentsOfFile:absPath];
         if (!data) return [JSValue valueWithNullInContext:ctx];
         return [JSValue valueWithObject:[data base64EncodedStringWithOptions:0] inContext:ctx];
@@ -78,7 +90,7 @@ static NSString *const kLogPrefix = @"[WNFileSystemBridge]";
 
     ns[@"write"] = ^BOOL(NSString *relPath, NSString *content) {
         if (!relPath || !content) return NO;
-        NSString *absPath = [sandboxRoot stringByAppendingPathComponent:relPath];
+        NSString *absPath = WNFSAbsolutePath(relPath, sandboxRoot);
         NSString *dir = [absPath stringByDeletingLastPathComponent];
         [[NSFileManager defaultManager] createDirectoryAtPath:dir
                                   withIntermediateDirectories:YES attributes:nil error:nil];
@@ -95,7 +107,7 @@ static NSString *const kLogPrefix = @"[WNFileSystemBridge]";
             NSLog(@"%@ writeBytes error: invalid base64 data", kLogPrefix);
             return NO;
         }
-        NSString *absPath = [sandboxRoot stringByAppendingPathComponent:relPath];
+        NSString *absPath = WNFSAbsolutePath(relPath, sandboxRoot);
         NSString *dir = [absPath stringByDeletingLastPathComponent];
         [[NSFileManager defaultManager] createDirectoryAtPath:dir
                                   withIntermediateDirectories:YES attributes:nil error:nil];
@@ -107,7 +119,7 @@ static NSString *const kLogPrefix = @"[WNFileSystemBridge]";
     ns[@"exists"] = ^JSValue *(NSString *relPath) {
         JSContext *ctx = [JSContext currentContext];
         if (!relPath) return [JSValue valueWithBool:NO inContext:ctx];
-        NSString *absPath = [sandboxRoot stringByAppendingPathComponent:relPath];
+        NSString *absPath = WNFSAbsolutePath(relPath, sandboxRoot);
         BOOL isDir = NO;
         BOOL exists = [[NSFileManager defaultManager] fileExistsAtPath:absPath isDirectory:&isDir];
         return [JSValue valueWithObject:@{
@@ -119,7 +131,7 @@ static NSString *const kLogPrefix = @"[WNFileSystemBridge]";
     ns[@"stat"] = ^JSValue *(NSString *relPath) {
         JSContext *ctx = [JSContext currentContext];
         if (!relPath) return [JSValue valueWithNullInContext:ctx];
-        NSString *absPath = [sandboxRoot stringByAppendingPathComponent:relPath];
+        NSString *absPath = WNFSAbsolutePath(relPath, sandboxRoot);
         NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:absPath error:nil];
         if (!attrs) return [JSValue valueWithNullInContext:ctx];
 
@@ -135,7 +147,7 @@ static NSString *const kLogPrefix = @"[WNFileSystemBridge]";
 
     ns[@"remove"] = ^BOOL(NSString *relPath) {
         if (!relPath) return NO;
-        NSString *absPath = [sandboxRoot stringByAppendingPathComponent:relPath];
+        NSString *absPath = WNFSAbsolutePath(relPath, sandboxRoot);
         NSError *error = nil;
         BOOL ok = [[NSFileManager defaultManager] removeItemAtPath:absPath error:&error];
         if (error) NSLog(@"%@ remove error: %@", kLogPrefix, error.localizedDescription);
@@ -144,7 +156,7 @@ static NSString *const kLogPrefix = @"[WNFileSystemBridge]";
 
     ns[@"mkdir"] = ^BOOL(NSString *relPath) {
         if (!relPath) return NO;
-        NSString *absPath = [sandboxRoot stringByAppendingPathComponent:relPath];
+        NSString *absPath = WNFSAbsolutePath(relPath, sandboxRoot);
         NSError *error = nil;
         BOOL ok = [[NSFileManager defaultManager] createDirectoryAtPath:absPath
                                            withIntermediateDirectories:YES attributes:nil error:&error];
