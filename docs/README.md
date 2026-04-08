@@ -29,6 +29,14 @@ WhiteNeedle 是一个基于 JavaScriptCore 的 iOS 动态化引擎，提供 ObjC
 | [文件系统](api-filesystem.md) | `FileSystem.list()`、`FileSystem.read()`、`FileSystem.write()` — 沙盒文件操作 |
 | [性能监控](api-performance.md) | `Performance.memory()`、`Performance.cpu()`、`Performance.fps()` — 实时性能指标 |
 | [UI 调试](api-uidebug.md) | `UIDebug.viewHierarchy()`、`UIDebug.screenshot()`、`UIDebug.viewControllers()` — 视图检查 |
+| [SQLite](api-sqlite.md) | 沙盒内 SQLite 打开、执行、查询 |
+| [MCP 工具与 JSON-RPC](api-mcp-tools.md) | Cursor MCP 工具名与设备端 RPC 方法对照 |
+
+## Cursor Skill（独立分发）
+
+`skills/whiteneedle-js-api` 为**自包含** skill：API 正文在 **`skills/whiteneedle-js-api/references/`** 内，不引用本目录。单独分发该 skill 时只需打包该文件夹。
+
+仓库维护者更新 `docs/api-*.md` 后，请同步覆盖 `skills/whiteneedle-js-api/references/`（见 skill 内 `references/README.md` 底部命令）。
 
 ## 快速开始
 

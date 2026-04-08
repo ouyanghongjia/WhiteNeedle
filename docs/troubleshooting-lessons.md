@@ -258,3 +258,28 @@ if (thrownException) {
 3. **`@try/@catch` 中的状态恢复**：始终用标志追踪关键操作是否已完成，`@catch`/`@finally` 中的逻辑必须感知异常发生的阶段。
 4. **ObjC Runtime Hook 的递归陷阱**：消息转发机制本身依赖目标类的某些方法，hook 这些方法时极易产生无限递归。
 5. **Type encoding 是 ObjC bridge 的核心**：正确解析和区分 `@`（对象）、`@?`（block）、`{` （struct）等类型编码，是构建可靠桥接层的基础。
+
+---
+
+## VS Code 扩展：团队 Script Snippets（工作区 JSON）
+
+WhiteNeedle 扩展支持在**仓库内**维护共享片段，避免每人手动导入导出 JSON。
+
+### 约定
+
+- 默认路径：工作区根目录下的 `.whiteneedle/team-snippets.json`（可通过设置 `whiteneedle.snippets.teamFile` 修改）。
+- 格式：与扩展导出一致，`version: 1` 与 `snippets` 数组（或直接为片段数组）。
+- 建议团队片段的 `id` 使用 `team-` 前缀；若与**内置**片段 `id` 冲突，同步时会跳过该条并提示警告。
+- **本地自定义**片段（在面板里「+ New」或 Import 的）若与团队片段 **id 相同**，以本地为准（团队同名条目会被隐藏）。
+
+### 协作流程
+
+1. 在仓库中编辑 `team-snippets.json`，走 Code Review / PR 合并。
+2. 成员执行 `git pull` 拉取最新文件。
+3. 在 VS Code 中打开 **WhiteNeedle → Script Snippets**，点击 **Sync team**（或命令面板执行 **WhiteNeedle: Sync Team Script Snippets**）。保存 JSON 时若已打开片段面板，也会自动重新加载。
+4. 多根工作区时，每个根目录下都会按相对路径尝试读取并合并（靠后的根若出现重复 `id` 会跳过并警告）。
+
+### 相关命令与配置
+
+- 命令：`whiteneedle.syncTeamSnippets`
+- 配置：`whiteneedle.snippets.teamFile`

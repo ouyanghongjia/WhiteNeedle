@@ -50,32 +50,43 @@ function defaultHandler(method: string, params: Record<string, unknown>, state: 
         }
 
         case 'getMethods': {
-            const className = params['className'] as string;
-            const isInstance = params['instance'] !== false;
-            if (!className) throw { code: -32602, message: 'className is required' };
-            const methods = isInstance
-                ? ['init', 'description', 'dealloc', 'isEqual:', 'hash']
-                : ['alloc', 'new', 'class', 'superclass'];
-            return { methods };
+            const className = params['className'];
+            if (className === undefined || className === null) {
+                throw { code: -32602, message: 'className is required' };
+            }
+            if (typeof className !== 'string' || className.length === 0) {
+                return { instanceMethods: [], classMethods: [] };
+            }
+            return {
+                instanceMethods: ['init', 'description', 'dealloc', 'isEqual:', 'hash'],
+                classMethods: ['alloc', 'new', 'class', 'superclass'],
+            };
         }
 
         case 'evaluate': {
             const code = params['code'] as string;
-            if (!code) throw { code: -32602, message: 'code is required' };
+            if (code === undefined || code === null || code === '') {
+                throw { code: -32602, message: 'code is required' };
+            }
             try {
                 if (code.includes('THROW_ERROR')) {
                     throw new Error('Evaluation failed: syntax error');
                 }
-                if (code.includes('ObjC.chooseSync')) {
-                    return JSON.stringify({ count: 3, samples: ['<UIView: 0x1>', '<UIView: 0x2>', '<UIView: 0x3>'] });
+                if (code.includes('ObjC.choose')) {
+                    return {
+                        value: JSON.stringify({
+                            count: 3,
+                            samples: ['<UIView: 0x1>', '<UIView: 0x2>', '<UIView: 0x3>'],
+                        }),
+                    };
                 }
                 if (code.includes('__wnVersion')) {
-                    return '2.0.0';
+                    return { value: '2.0.0' };
                 }
                 if (code.includes('Process.platform')) {
-                    return 'ios';
+                    return { value: 'ios' };
                 }
-                return { result: 'ok' };
+                return { value: 'ok' };
             } catch (e: any) {
                 throw { code: -32000, message: e.message };
             }
@@ -359,19 +370,15 @@ describe('Integration: WhiteNeedle JSON-RPC API', () => {
     // =======================================================================
 
     describe('getMethods', () => {
-        it('returns instance methods for a class', async () => {
+        it('returns instanceMethods and classMethods (device shape)', async () => {
             await client.connect('127.0.0.1', port);
-            const result = await client.call('getMethods', { className: 'NSObject', instance: true }) as any;
-            expect(result.methods).toBeInstanceOf(Array);
-            expect(result.methods).toContain('init');
-            expect(result.methods).toContain('description');
-        });
-
-        it('returns class methods when instance=false', async () => {
-            await client.connect('127.0.0.1', port);
-            const result = await client.call('getMethods', { className: 'NSObject', instance: false }) as any;
-            expect(result.methods).toContain('alloc');
-            expect(result.methods).toContain('new');
+            const result = await client.call('getMethods', { className: 'NSObject' }) as any;
+            expect(result.instanceMethods).toBeInstanceOf(Array);
+            expect(result.classMethods).toBeInstanceOf(Array);
+            expect(result.instanceMethods).toContain('init');
+            expect(result.instanceMethods).toContain('description');
+            expect(result.classMethods).toContain('alloc');
+            expect(result.classMethods).toContain('new');
         });
 
         it('rejects when className is missing', async () => {
@@ -379,9 +386,11 @@ describe('Integration: WhiteNeedle JSON-RPC API', () => {
             await expect(client.call('getMethods', {})).rejects.toThrow('className is required');
         });
 
-        it('rejects when className is empty', async () => {
+        it('returns empty arrays when className is empty string', async () => {
             await client.connect('127.0.0.1', port);
-            await expect(client.call('getMethods', { className: '' })).rejects.toThrow('className is required');
+            const result = await client.call('getMethods', { className: '' }) as any;
+            expect(result.instanceMethods).toEqual([]);
+            expect(result.classMethods).toEqual([]);
         });
     });
 
@@ -393,19 +402,19 @@ describe('Integration: WhiteNeedle JSON-RPC API', () => {
         it('evaluates simple code', async () => {
             await client.connect('127.0.0.1', port);
             const result = await client.call('evaluate', { code: '1 + 1' });
-            expect(result).toEqual({ result: 'ok' });
+            expect(result).toEqual({ value: 'ok' });
         });
 
         it('evaluates code that reads __wnVersion', async () => {
             await client.connect('127.0.0.1', port);
             const result = await client.call('evaluate', { code: '__wnVersion' });
-            expect(result).toBe('2.0.0');
+            expect(result).toEqual({ value: '2.0.0' });
         });
 
         it('evaluates code that reads Process.platform', async () => {
             await client.connect('127.0.0.1', port);
             const result = await client.call('evaluate', { code: 'Process.platform' });
-            expect(result).toBe('ios');
+            expect(result).toEqual({ value: 'ios' });
         });
 
         it('rejects when code is missing', async () => {
@@ -419,15 +428,19 @@ describe('Integration: WhiteNeedle JSON-RPC API', () => {
                 .rejects.toThrow('Evaluation failed');
         });
 
-        it('evaluates heap search (ObjC.chooseSync)', async () => {
+        it('evaluates heap search (ObjC.choose)', async () => {
             await client.connect('127.0.0.1', port);
             const code = `
 (function() {
-    var instances = ObjC.chooseSync("UIView");
-    return JSON.stringify({ count: instances.length, samples: instances.slice(0,10).map(String) });
+    var out = [];
+    ObjC.choose("UIView", {
+        onMatch: function(i) { out.push(String(i)); return out.length >= 10 ? 'stop' : undefined; },
+        onComplete: function() {}
+    });
+    return JSON.stringify({ count: out.length, samples: out });
 })()`;
-            const result = await client.call('evaluate', { code });
-            const parsed = JSON.parse(result as string);
+            const result = await client.call('evaluate', { code }) as { value: string };
+            const parsed = JSON.parse(result.value);
             expect(parsed.count).toBe(3);
             expect(parsed.samples).toHaveLength(3);
         });
@@ -657,12 +670,12 @@ describe('Integration: WhiteNeedle JSON-RPC API', () => {
             ]);
 
             expect((results[0] as any).classes.length).toBeGreaterThan(0);
-            expect((results[1] as any).methods.length).toBeGreaterThan(0);
+            expect((results[1] as any).instanceMethods.length).toBeGreaterThan(0);
             expect((results[2] as any).scripts).toEqual([]);
             expect((results[3] as any).hooks).toEqual([]);
             expect((results[4] as any).modules.length).toBeGreaterThan(0);
             expect((results[5] as any).pong).toBe(true);
-            expect(results[6]).toBe('2.0.0');
+            expect((results[6] as any).value).toBe('2.0.0');
         });
 
         it('interleaves requests and notifications', async () => {
@@ -691,7 +704,7 @@ describe('Integration: WhiteNeedle JSON-RPC API', () => {
             await client.connect('127.0.0.1', port);
             const largeCode = 'var x = ' + JSON.stringify('A'.repeat(100_000)) + ';';
             const result = await client.call('evaluate', { code: largeCode });
-            expect(result).toEqual({ result: 'ok' });
+            expect(result).toEqual({ value: 'ok' });
         });
 
         it('sends large script in loadScript', async () => {
@@ -908,7 +921,7 @@ describe('Integration: WhiteNeedle JSON-RPC API', () => {
 
             // 3. Get methods of a class
             const methods = await client.call('getMethods', { className: 'UIView' }) as any;
-            expect(methods.methods.length).toBeGreaterThan(0);
+            expect(methods.instanceMethods.length).toBeGreaterThan(0);
 
             // 4. Load a tracing script
             const traceCode = `
@@ -922,8 +935,8 @@ Interceptor.attach('-[UIView setFrame:]', {
             expect(scripts.scripts).toContain('trace-setFrame');
 
             // 6. Evaluate some code
-            const evalResult = await client.call('evaluate', { code: '__wnVersion' });
-            expect(evalResult).toBe('2.0.0');
+            const evalResult = await client.call('evaluate', { code: '__wnVersion' }) as { value: string };
+            expect(evalResult.value).toBe('2.0.0');
 
             // 7. List modules
             const modules = await client.call('listModules', {}) as any;

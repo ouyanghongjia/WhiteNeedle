@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "snippets": [
+    {
+      "id": "team-hello-placeholder",
+      "name": "Team: Hello log",
+      "category": "utility",
+      "description": "Example team-maintained snippet. Add shared scripts here and commit; teammates git pull then use Sync team in Script Snippets.",
+      "tags": ["team", "example"],
+      "code": "console.log('[Team snippet] Hello from shared library');"
+    }
+  ]
+}

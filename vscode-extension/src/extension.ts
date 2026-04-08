@@ -15,9 +15,11 @@ import { NetworkPanel } from './panels/networkPanel';
 import { ViewHierarchyPanel } from './panels/viewHierarchyPanel';
 import { HostMappingPanel } from './panels/hostMappingPanel';
 import { SnippetPanel } from './panels/snippetPanel';
+import { loadTeamSnippetsFromWorkspace } from './snippets/teamSnippets';
 import { LeakDetectorPanel } from './panels/leakDetectorPanel';
 import { RetainGraphPanel } from './panels/retainGraphPanel';
 import { SQLitePanel } from './panels/sqlitePanel';
+import { ApiDocsPanel } from './panels/apiDocsPanel';
 import { ProxyServer } from './proxy/proxyServer';
 import {
     WhiteNeedleConfigurationProvider,
@@ -432,6 +434,14 @@ export function activate(context: vscode.ExtensionContext) {
             SnippetPanel.createOrShow(context.extensionUri, deviceManager, scriptRunner, context.globalState);
         }),
 
+        vscode.commands.registerCommand('whiteneedle.openApiDocs', () => {
+            ApiDocsPanel.createOrShow(context.extensionUri);
+        }),
+
+        vscode.commands.registerCommand('whiteneedle.syncTeamSnippets', async () => {
+            await SnippetPanel.syncTeamSnippetsCommand(outputChannel);
+        }),
+
         vscode.commands.registerCommand('whiteneedle.openLeakDetector', () => {
             LeakDetectorPanel.createOrShow(context.extensionUri, deviceManager, scriptRunner);
         }),
@@ -484,6 +494,17 @@ export function activate(context: vscode.ExtensionContext) {
                 } catch (err: any) {
                     vscode.window.showErrorMessage(`Proxy start failed: ${err.message}`);
                 }
+            }
+        }),
+    );
+
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeWorkspaceFolders(() => {
+            void loadTeamSnippetsFromWorkspace().then(() => SnippetPanel.refreshIfOpen());
+        }),
+        vscode.workspace.onDidChangeConfiguration((e) => {
+            if (e.affectsConfiguration('whiteneedle.snippets.teamFile')) {
+                void loadTeamSnippetsFromWorkspace().then(() => SnippetPanel.refreshIfOpen());
             }
         }),
     );

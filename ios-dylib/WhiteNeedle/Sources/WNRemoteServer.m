@@ -345,7 +345,9 @@ static void WNSocketCallback(CFSocketRef socket, CFSocketCallBackType type,
         NSString *className = params[@"className"];
         if (!className) return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Missing className"}];
         Class cls = NSClassFromString(className);
-        if (!cls) return @{@"methods": @[]};
+        if (!cls) {
+            return @{@"instanceMethods": @[], @"classMethods": @[]};
+        }
         NSArray *methods = [WNObjCBridge methodsForClass:cls isInstance:YES];
         NSArray *classMethods = [WNObjCBridge methodsForClass:cls isInstance:NO];
         return @{@"instanceMethods": methods, @"classMethods": classMethods};

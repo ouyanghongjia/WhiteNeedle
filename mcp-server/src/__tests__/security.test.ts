@@ -89,25 +89,30 @@ describe('MCP tool code injection safety', () => {
             const safeClassName = JSON.stringify(className);
             return `
 (function() {
-    var instances = ObjC.chooseSync(${safeClassName});
-    return JSON.stringify({
-        count: instances.length,
-        samples: instances.slice(0, 10).map(function(i) { return String(i); })
+    var out = [];
+    var limit = 10;
+    ObjC.choose(${safeClassName}, {
+        onMatch: function(inst) {
+            out.push(String(inst));
+            return out.length >= limit ? 'stop' : undefined;
+        },
+        onComplete: function() {}
     });
+    return JSON.stringify({ count: out.length, samples: out.slice(0, limit) });
 })()
 `;
         }
 
         it('safely passes normal class names', () => {
             const code = generateHeapCode('NSObject');
-            expect(code).toContain('ObjC.chooseSync("NSObject")');
+            expect(code).toContain('ObjC.choose("NSObject"');
         });
 
         it('prevents injection via single-quote breakout', () => {
             const malicious = "NSObject'); process.exit(1); //";
             const code = generateHeapCode(malicious);
-            expect(code).toContain(`ObjC.chooseSync(${JSON.stringify(malicious)})`);
-            expect(code).not.toMatch(/chooseSync\('NSObject'\)/);
+            expect(code).toContain(`ObjC.choose(${JSON.stringify(malicious)}`);
+            expect(code).not.toMatch(/ObjC\.choose\('NSObject'/);
         });
     });
 });

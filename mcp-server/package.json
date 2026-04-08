@@ -1,6 +1,6 @@
 {
   "name": "whiteneedle-mcp-server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP server exposing WhiteNeedle iOS runtime capabilities to AI IDEs",
   "main": "dist/index.js",
   "bin": {

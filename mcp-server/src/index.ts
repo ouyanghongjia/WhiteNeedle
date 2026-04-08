@@ -23,16 +23,29 @@ function formatResult(data: unknown): string {
     return JSON.stringify(data, null, 2);
 }
 
+/** Device `evaluate` JSON-RPC returns `{ value: string }` (JSC `toString` of result). */
+function formatEvaluateResult(raw: unknown): string {
+    if (raw && typeof raw === 'object' && raw !== null && 'value' in raw) {
+        return String((raw as { value?: unknown }).value);
+    }
+    return formatResult(raw);
+}
+
+async function rpc(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
+    await ensureConnected();
+    return client.call(method, params);
+}
+
 // ---------------------------------------------------------------------------
 // MCP Server
 // ---------------------------------------------------------------------------
 
 const server = new McpServer({
     name: 'whiteneedle',
-    version: '0.1.0',
+    version: '0.2.0',
 });
 
-// ---- connect ----
+// ---- connect / disconnect ----
 server.tool(
     'connect',
     'Connect to a WhiteNeedle-enabled iOS device over TCP',
@@ -51,7 +64,6 @@ server.tool(
     },
 );
 
-// ---- disconnect ----
 server.tool(
     'disconnect',
     'Disconnect from the WhiteNeedle device',
@@ -70,8 +82,7 @@ server.tool(
         filter: z.string().optional().describe('Prefix or substring filter for class names'),
     },
     async ({ filter }) => {
-        await ensureConnected();
-        const result = await client.call('getClassNames', { filter: filter ?? '' }) as { classes: string[] };
+        const result = (await rpc('getClassNames', { filter: filter ?? '' })) as { classes?: string[] };
         const classes = result.classes ?? [];
         return {
             content: [{
@@ -82,23 +93,44 @@ server.tool(
     },
 );
 
-// ---- get_methods ----
+// ---- get_methods (matches device: instanceMethods + classMethods) ----
 server.tool(
     'get_methods',
-    'Get all methods of a given Objective-C class',
+    'List Objective-C methods for a class. Device returns instanceMethods and classMethods arrays.',
     {
-        className: z.string().describe('The ObjC class name, e.g. NSURLSession'),
-        instanceMethods: z.boolean().default(true).describe('List instance methods (true) or class methods (false)'),
+        className: z.string().min(1).describe('ObjC class name, e.g. NSURLSession'),
+        which: z
+            .enum(['instance', 'class', 'both'])
+            .default('both')
+            .describe('instance = -[...], class = +[...], both = both sections'),
     },
-    async ({ className, instanceMethods }) => {
-        await ensureConnected();
-        const result = await client.call('getMethods', { className, instance: instanceMethods }) as { methods: string[] };
-        const methods = result.methods ?? [];
-        const prefix = instanceMethods ? '-' : '+';
+    async ({ className, which }) => {
+        const result = (await rpc('getMethods', { className })) as {
+            instanceMethods?: string[];
+            classMethods?: string[];
+        };
+        const inst = result.instanceMethods ?? [];
+        const cls = result.classMethods ?? [];
+        if (which === 'instance') {
+            return {
+                content: [{
+                    type: 'text',
+                    text: `-[${className}] — ${inst.length} instance methods:\n${inst.join('\n')}`,
+                }],
+            };
+        }
+        if (which === 'class') {
+            return {
+                content: [{
+                    type: 'text',
+                    text: `+[${className}] — ${cls.length} class methods:\n${cls.join('\n')}`,
+                }],
+            };
+        }
         return {
             content: [{
                 type: 'text',
-                text: `${prefix}[${className}] — ${methods.length} methods:\n${methods.join('\n')}`,
+                text: `-[${className}] — ${inst.length} instance methods:\n${inst.join('\n')}\n\n+[${className}] — ${cls.length} class methods:\n${cls.join('\n')}`,
             }],
         };
     },
@@ -107,15 +139,14 @@ server.tool(
 // ---- evaluate ----
 server.tool(
     'evaluate',
-    'Evaluate arbitrary JavaScript code on the device. Has full access to WhiteNeedle APIs (ObjC.use, Interceptor, etc.)',
+    'Evaluate arbitrary JavaScript on the device (ObjC.use, Interceptor, FileSystem, etc.)',
     {
-        code: z.string().describe('JavaScript code to evaluate on the device'),
+        code: z.string().min(1).describe('JavaScript source'),
     },
     async ({ code }) => {
-        await ensureConnected();
         try {
-            const result = await client.call('evaluate', { code });
-            return { content: [{ type: 'text', text: formatResult(result) }] };
+            const result = await rpc('evaluate', { code });
+            return { content: [{ type: 'text', text: formatEvaluateResult(result) }] };
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             return { content: [{ type: 'text', text: `Evaluation error: ${msg}` }], isError: true };
@@ -123,18 +154,17 @@ server.tool(
     },
 );
 
-// ---- load_script ----
+// ---- Scripts ----
 server.tool(
     'load_script',
-    'Load a named JavaScript script onto the device. The script persists until unloaded.',
+    'Load a named script; persists until unload_script.',
     {
         name: z.string().describe('Unique script name'),
-        code: z.string().describe('JavaScript source code'),
+        code: z.string().describe('JavaScript source'),
     },
     async ({ name, code }) => {
-        await ensureConnected();
         try {
-            const result = await client.call('loadScript', { name, code });
+            const result = await rpc('loadScript', { name, code });
             return { content: [{ type: 'text', text: formatResult(result) }] };
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -143,17 +173,13 @@ server.tool(
     },
 );
 
-// ---- unload_script ----
 server.tool(
     'unload_script',
-    'Unload a previously loaded script from the device',
-    {
-        name: z.string().describe('Script name to unload'),
-    },
+    'Unload a script by name',
+    { name: z.string().describe('Script name') },
     async ({ name }) => {
-        await ensureConnected();
         try {
-            const result = await client.call('unloadScript', { name });
+            const result = await rpc('unloadScript', { name });
             return { content: [{ type: 'text', text: formatResult(result) }] };
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -162,73 +188,89 @@ server.tool(
     },
 );
 
-// ---- list_scripts ----
 server.tool(
     'list_scripts',
-    'List all currently loaded scripts on the device',
+    'List loaded script names',
     {},
     async () => {
-        await ensureConnected();
-        const result = await client.call('listScripts', {}) as { scripts: string[] };
+        const result = (await rpc('listScripts', {})) as { scripts?: string[] };
         const scripts = result.scripts ?? [];
         return {
             content: [{
                 type: 'text',
-                text: scripts.length > 0
-                    ? `Loaded scripts:\n${scripts.join('\n')}`
-                    : 'No scripts loaded',
+                text: scripts.length > 0 ? `Loaded scripts:\n${scripts.join('\n')}` : 'No scripts loaded',
             }],
         };
     },
 );
 
-// ---- list_hooks ----
+// ---- Hooks ----
 server.tool(
     'list_hooks',
-    'List all active ObjC method hooks and C function hooks on the device',
+    'List active ObjC and C hook descriptors (summary)',
     {},
     async () => {
-        await ensureConnected();
-        const result = await client.call('listHooks', {}) as { hooks: string[] };
+        const result = (await rpc('listHooks', {})) as { hooks?: string[] };
         const hooks = result.hooks ?? [];
         return {
             content: [{
                 type: 'text',
-                text: hooks.length > 0
-                    ? `Active hooks (${hooks.length}):\n${hooks.join('\n')}`
-                    : 'No active hooks',
+                text: hooks.length > 0 ? `Active hooks (${hooks.length}):\n${hooks.join('\n')}` : 'No active hooks',
             }],
         };
     },
 );
 
-// ---- list_modules ----
 server.tool(
-    'list_modules',
-    'List all loaded dynamic libraries/modules in the target process',
+    'list_hooks_detailed',
+    'List hooks with extra metadata from the hook engine',
     {},
     async () => {
-        await ensureConnected();
-        const result = await client.call('listModules', {}) as { modules: unknown[] };
+        const result = await rpc('listHooksDetailed', {});
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
+server.tool(
+    'pause_hook',
+    'Pause an active hook by selector string (e.g. -[Foo bar:])',
+    { selector: z.string().describe('Hook selector / key') },
+    async ({ selector }) => {
+        const result = await rpc('pauseHook', { selector });
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
+server.tool(
+    'resume_hook',
+    'Resume a paused hook',
+    { selector: z.string().describe('Hook selector / key') },
+    async ({ selector }) => {
+        const result = await rpc('resumeHook', { selector });
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
+// ---- Modules ----
+server.tool(
+    'list_modules',
+    'List loaded dylibs / modules',
+    {},
+    async () => {
+        const result = (await rpc('listModules', {})) as { modules?: unknown[] };
         const modules = result.modules ?? [];
-        return {
-            content: [{
-                type: 'text',
-                text: `Loaded modules (${modules.length}):\n${formatResult(modules)}`,
-            }],
-        };
+        return { content: [{ type: 'text', text: `Loaded modules (${modules.length}):\n${formatResult(modules)}` }] };
     },
 );
 
 // ---- trace_method ----
 server.tool(
     'trace_method',
-    'Hook an ObjC method and trace its calls. Returns a script name you can use to unload later.',
+    'Attach Interceptor to trace calls; loads a script named trace_<sanitized>',
     {
-        target: z.string().describe('Method selector, e.g. -[NSURLSession dataTaskWithRequest:]'),
+        target: z.string().describe('Method token, e.g. -[NSURLSession dataTaskWithRequest:]'),
     },
     async ({ target }) => {
-        await ensureConnected();
         const scriptName = `trace_${target.replace(/[^a-zA-Z0-9]/g, '_')}`;
         const safeTarget = JSON.stringify(target);
         const code = `
@@ -245,11 +287,11 @@ server.tool(
 })();
 `;
         try {
-            await client.call('loadScript', { name: scriptName, code });
+            await rpc('loadScript', { name: scriptName, code });
             return {
                 content: [{
                     type: 'text',
-                    text: `Tracing ${target}. Script name: ${scriptName}\nUse unload_script to stop.`,
+                    text: `Tracing ${target}. Script: ${scriptName}. Use unload_script to stop.`,
                 }],
             };
         } catch (err: unknown) {
@@ -259,18 +301,16 @@ server.tool(
     },
 );
 
-// ---- rpc_call ----
 server.tool(
     'rpc_call',
-    'Call an exported RPC function defined in a loaded script via rpc.exports',
+    'Call rpc.exports.<method> on the device',
     {
-        method: z.string().describe('RPC export name'),
-        args: z.array(z.unknown()).default([]).describe('Arguments to pass'),
+        method: z.string().describe('Export name'),
+        args: z.array(z.unknown()).default([]).describe('Arguments'),
     },
     async ({ method, args }) => {
-        await ensureConnected();
         try {
-            const result = await client.call('rpcCall', { method, args });
+            const result = await rpc('rpcCall', { method, args });
             return { content: [{ type: 'text', text: formatResult(result) }] };
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -279,15 +319,13 @@ server.tool(
     },
 );
 
-// ---- inspect_object ----
 server.tool(
     'inspect_object',
-    'Inspect an ObjC object by evaluating code that queries its properties and methods',
+    'Evaluate an expression and return JSON description / error',
     {
-        expression: z.string().describe('An ObjC expression to inspect, e.g. "ObjC.use(\'UIApplication\').invoke(\'sharedApplication\')"'),
+        expression: z.string().describe('JS expression, e.g. ObjC.use(\'UIApplication\').invoke(\'sharedApplication\')'),
     },
     async ({ expression }) => {
-        await ensureConnected();
         const code = `
 (function() {
     try {
@@ -301,8 +339,8 @@ server.tool(
 })()
 `;
         try {
-            const result = await client.call('evaluate', { code });
-            return { content: [{ type: 'text', text: formatResult(result) }] };
+            const result = await rpc('evaluate', { code });
+            return { content: [{ type: 'text', text: formatEvaluateResult(result) }] };
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             return { content: [{ type: 'text', text: `Inspect failed: ${msg}` }], isError: true };
@@ -310,28 +348,33 @@ server.tool(
     },
 );
 
-// ---- heap_search ----
 server.tool(
     'heap_search',
-    'Search the heap for live instances of a given ObjC class',
+    'Find live instances via ObjC.choose (sync); returns count and up to 10 string samples',
     {
-        className: z.string().describe('ObjC class name to search for'),
+        className: z.string().describe('ObjC class name'),
+        maxSamples: z.number().int().min(1).max(100).default(10).describe('Max instances to collect'),
     },
-    async ({ className }) => {
-        await ensureConnected();
-        const safeClassName = JSON.stringify(className);
+    async ({ className, maxSamples }) => {
+        const safeClass = JSON.stringify(className);
+        const n = Math.floor(maxSamples);
         const code = `
 (function() {
-    var instances = ObjC.chooseSync(${safeClassName});
-    return JSON.stringify({
-        count: instances.length,
-        samples: instances.slice(0, 10).map(function(i) { return String(i); })
+    var out = [];
+    var limit = ${n};
+    ObjC.choose(${safeClass}, {
+        onMatch: function(inst) {
+            out.push(String(inst));
+            return out.length >= limit ? 'stop' : undefined;
+        },
+        onComplete: function() {}
     });
+    return JSON.stringify({ count: out.length, samples: out.slice(0, limit) });
 })()
 `;
         try {
-            const result = await client.call('evaluate', { code });
-            return { content: [{ type: 'text', text: formatResult(result) }] };
+            const result = await rpc('evaluate', { code });
+            return { content: [{ type: 'text', text: formatEvaluateResult(result) }] };
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             return { content: [{ type: 'text', text: `Heap search failed: ${msg}` }], isError: true };
@@ -339,8 +382,251 @@ server.tool(
     },
 );
 
+// ---- Network monitor ----
+server.tool(
+    'list_network_requests',
+    'List captured HTTP requests (summary)',
+    {},
+    async () => {
+        const result = await rpc('listNetworkRequests', {});
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
+server.tool(
+    'get_network_request',
+    'Get one captured request by id',
+    { id: z.string().describe('Request id from list_network_requests') },
+    async ({ id }) => {
+        const result = await rpc('getNetworkRequest', { id });
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
+server.tool(
+    'clear_network_requests',
+    'Clear network capture buffer',
+    {},
+    async () => {
+        const result = await rpc('clearNetworkRequests', {});
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
+server.tool(
+    'set_network_capture',
+    'Enable or disable network capture',
+    { enabled: z.boolean().describe('true to capture') },
+    async ({ enabled }) => {
+        const result = await rpc('setNetworkCapture', { enabled });
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
+// ---- UI debug ----
+server.tool(
+    'get_view_hierarchy',
+    'Snapshot UI view tree (addresses, classes, hierarchy)',
+    {},
+    async () => {
+        const result = await rpc('getViewHierarchy', {});
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
+server.tool(
+    'get_view_controllers',
+    'Snapshot view controller tree',
+    {},
+    async () => {
+        const result = await rpc('getViewControllers', {});
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
+server.tool(
+    'get_vc_detail',
+    'Details for one UIViewController by address string from get_view_controllers',
+    { address: z.string().describe('Hex address string') },
+    async ({ address }) => {
+        const result = await rpc('getVCDetail', { address });
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
+server.tool(
+    'get_view_detail',
+    'Details for one UIView by address from get_view_hierarchy',
+    { address: z.string().describe('Hex address string') },
+    async ({ address }) => {
+        const result = await rpc('getViewDetail', { address });
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
+server.tool(
+    'set_view_property',
+    'Set a KVC-compatible property on a view by address',
+    {
+        address: z.string(),
+        key: z.string().describe('Key path / property name'),
+        value: z.unknown().describe('JSON-serializable value'),
+    },
+    async ({ address, key, value }) => {
+        const result = await rpc('setViewProperty', { address, key, value });
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
+server.tool(
+    'highlight_view',
+    'Highlight a view by address',
+    { address: z.string() },
+    async ({ address }) => {
+        const result = await rpc('highlightView', { address });
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
+server.tool(
+    'clear_highlight',
+    'Remove UI highlight overlay',
+    {},
+    async () => {
+        const result = await rpc('clearHighlight', {});
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
+server.tool(
+    'search_views',
+    'Find views whose class name contains the given name',
+    { className: z.string().describe('UIView subclass name, e.g. UILabel') },
+    async ({ className }) => {
+        const result = await rpc('searchViews', { className });
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
+server.tool(
+    'get_screenshot',
+    'Take window screenshot as base64 PNG (large payload)',
+    {},
+    async () => {
+        const result = await rpc('getScreenshot', {});
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
+// ---- Mock interceptor ----
+const mockRuleShape = {
+    id: z.string().optional().describe('Existing rule UUID when updating'),
+    urlPattern: z.string().optional(),
+    method: z.string().optional().describe('HTTP method or *'),
+    mode: z.enum(['pureMock', 'rewriteResponse']).optional(),
+    statusCode: z.number().optional(),
+    responseHeaders: z.record(z.string(), z.string()).optional(),
+    responseBody: z.string().optional(),
+    enabled: z.boolean().optional(),
+    delay: z.number().optional(),
+};
+
+server.tool(
+    'list_mock_rules',
+    'List HTTP mock rules',
+    {},
+    async () => {
+        const result = await rpc('listMockRules', {});
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
+server.tool(
+    'add_mock_rule',
+    'Add a mock rule (urlPattern required on device)',
+    {
+        urlPattern: z.string().describe('Substring, wildcard *, or regex:pattern'),
+        method: z.string().optional(),
+        mode: z.enum(['pureMock', 'rewriteResponse']).optional(),
+        statusCode: z.number().optional(),
+        responseHeaders: z.record(z.string(), z.string()).optional(),
+        responseBody: z.string().optional(),
+        enabled: z.boolean().optional(),
+        delay: z.number().optional(),
+        id: z.string().optional(),
+    },
+    async (params) => {
+        const result = await rpc('addMockRule', params as Record<string, unknown>);
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
+server.tool(
+    'update_mock_rule',
+    'Update rule by ruleId',
+    {
+        ruleId: z.string(),
+        ...mockRuleShape,
+    },
+    async ({ ruleId, ...rest }) => {
+        const params: Record<string, unknown> = { ruleId, ...rest };
+        const result = await rpc('updateMockRule', params);
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
+server.tool(
+    'remove_mock_rule',
+    'Remove one mock rule',
+    { ruleId: z.string() },
+    async ({ ruleId }) => {
+        const result = await rpc('removeMockRule', { ruleId });
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
+server.tool(
+    'remove_all_mock_rules',
+    'Clear all mock rules',
+    {},
+    async () => {
+        const result = await rpc('removeAllMockRules', {});
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
+server.tool(
+    'enable_mock_interceptor',
+    'Install NSURLProtocol mock interceptor',
+    {},
+    async () => {
+        const result = await rpc('enableMockInterceptor', {});
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
+server.tool(
+    'disable_mock_interceptor',
+    'Uninstall mock interceptor',
+    {},
+    async () => {
+        const result = await rpc('disableMockInterceptor', {});
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
+server.tool(
+    'get_mock_interceptor_status',
+    'Whether mock is installed and rule count',
+    {},
+    async () => {
+        const result = await rpc('getMockInterceptorStatus', {});
+        return { content: [{ type: 'text', text: formatResult(result) }] };
+    },
+);
+
 // ---------------------------------------------------------------------------
-// Resources — provide API reference for script authoring
+// Resources
 // ---------------------------------------------------------------------------
 
 server.resource(
@@ -355,45 +641,29 @@ server.resource(
     }),
 );
 
-const API_REFERENCE = `# WhiteNeedle Runtime API Reference
+const API_REFERENCE = `# WhiteNeedle Runtime API (summary)
 
-## ObjC Bridge
-- \`ObjC.use('ClassName')\` — Get class proxy, call class methods via \`.invoke('method', [args])\`
-- \`ObjC.use('ClassName').invoke('alloc').invoke('init')\` — Instantiate an ObjC object
-- \`ObjC.instance(obj)\` — Wrap a native object as an instance proxy
-- \`ObjC.classes\` — Object with all loaded class names as keys
-- \`ObjC.choose('ClassName', { onMatch, onComplete })\` — Find live instances on the heap
+For full API docs use the **whiteneedle-js-api** Cursor skill: bundled copies live under \`references/api-*.md\` (self-contained; not repo \`docs/\`).
 
-## Interceptor (Method Hooking)
-- \`Interceptor.attach('-[Class method:]', { onEnter(self){}, onLeave(){} })\` — Hook ObjC method
-- \`Interceptor.replace('-[Class method:]', function(self){ ... })\` — Replace method implementation
-- \`Interceptor.rebindSymbol('open', newAddress)\` — Rebind C function via fishhook
-- \`Interceptor.hookCFunction('symbolName', replacementAddress)\` — Hook C function
+## ObjC
+- \`ObjC.use('Class')\` — class proxy; \`.invoke('sel:', [args])\`
+- \`ObjC.instance(ptrOrObj)\` — instance proxy (incl. hex address string)
+- \`ObjC.choose('Class', { onMatch, onComplete })\` — heap scan (sync callbacks)
 
-## Class Definition
-- \`ObjC.define({ name, super, protocols, properties, methods })\` — Create new ObjC class at runtime. Each method is \`{ type: "int (NSString *)", func: function(self, args){} }\` with explicit type signature
-- \`ObjC.delegate({ protocols, methods })\` — Create delegate object (same method format as define)
+## Interceptor
+- \`Interceptor.attach('-[C m:]', { onEnter, onLeave })\`
+- \`Interceptor.replace\`, \`Interceptor.rebindSymbol\`, C hooks via native bridge
 
-## Structs & Pointers
-- \`$struct('CGRect', [['x','d'],['y','d'],['width','d'],['height','d']])\` — Define a C struct
-- \`$pointer(address)\` — Read/write memory: \`.readU8()\`, \`.writeU32(value)\`, \`.readUtf8String(len)\`
+## Host MCP tools (device JSON-RPC)
+Runtime exploration: connect, list_classes, get_methods, evaluate, load_script, unload_script, list_scripts, list_hooks, list_hooks_detailed, pause_hook, resume_hook, list_modules, trace_method, rpc_call, inspect_object, heap_search.
 
-## Modules
-- \`Module.findExportByName('libSystem.B.dylib', 'open')\` — Find exported symbol address
-- \`Module.enumerateModules()\` — List all loaded dylibs
+Network: list_network_requests, get_network_request, clear_network_requests, set_network_capture.
 
-## Debug
-- \`Debug.breakpoint()\` — Trigger debugger breakpoint
-- \`Debug.log(msg)\`, \`Debug.trace()\` — Debug logging
-- \`Debug.time(label)\` / \`Debug.timeEnd(label)\` — Performance timing
-- \`Debug.heapSize()\` — Get process memory usage
+UI: get_view_hierarchy, get_view_controllers, get_vc_detail, get_view_detail, set_view_property, highlight_view, clear_highlight, search_views, get_screenshot.
 
-## Module System
-- \`require('moduleName')\` — CommonJS-style module loading
-- \`module.exports = { ... }\` — Export from a module
+Mock HTTP: list_mock_rules, add_mock_rule, update_mock_rule, remove_mock_rule, remove_all_mock_rules, enable_mock_interceptor, disable_mock_interceptor, get_mock_interceptor_status.
 
-## RPC Exports
-- \`rpc.exports = { myFunc() { return 42; } }\` — Expose functions callable from host
+Skill bundle: \`references/api-mcp-tools.md\`; monorepo mirror: \`docs/api-mcp-tools.md\`.
 `;
 
 // ---------------------------------------------------------------------------

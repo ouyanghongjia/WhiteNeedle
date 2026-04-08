@@ -142,7 +142,7 @@ WhiteNeedle 试图将多个独立工具的能力整合到 VS Code 中：
 
 **4.2.4 ObjC.choose 堆扫描未完整实现**
 
-`WNObjCBridge.m` 中的 `choose` 方法标记为 stub（基于 `objc_getClassList` 的简单实现）。真正的堆扫描需要遍历 VM regions 并做 isa 匹配，当前实现不能可靠地找到堆上的活跃实例。MCP Server 的 `heap_search` 工具调用了 `ObjC.chooseSync`，其可靠性取决于这个未完整实现的底层。
+`WNObjCBridge.m` 中的 `choose` 方法标记为 stub（基于 `objc_getClassList` 的简单实现）。真正的堆扫描需要遍历 VM regions 并做 isa 匹配，当前实现不能可靠地找到堆上的活跃实例。MCP Server 的 `heap_search` 工具通过 `evaluate` 注入 **`ObjC.choose(className, { onMatch, onComplete })`** 同步填满数组；其可靠性仍取决于该未完整实现的底层（运行时无 `ObjC.chooseSync`）。
 
 **4.2.5 命令注册不完整**
 
@@ -150,21 +150,11 @@ WhiteNeedle 试图将多个独立工具的能力整合到 VS Code 中：
 
 **4.2.6 inspect_object 存在代码注入风险**
 
-MCP Server 的 `inspect_object` 工具直接将用户输入的 `expression` 字符串拼接到 JS 代码中执行：
-
-```typescript
-const code = `(function() { var obj = ${expression}; ... })()`;
-```
-
-虽然这运行在目标 App 的 JSC 上下文中，但如果 MCP 被不受信任的 agent 调用，可以执行任意代码。
+MCP Server 的 `inspect_object` 工具把用户输入的 `expression` 经 `JSON.stringify` 后嵌入设备端 `eval(...)`（见 `mcp-server/src/index.ts`）。这仍等价于在目标 JSC 中执行任意表达式；若 MCP 被不受信任的 agent 调用，风险与直接 `evaluate` 类似。
 
 **4.2.7 trace_method 同样存在注入问题**
 
-```typescript
-const code = `Interceptor.attach('${target}', { ... })`;
-```
-
-`target` 参数未经转义直接嵌入 JS 字符串。
+当前实现将 `target` 用 `JSON.stringify` 写入脚本字面量（见 `trace_method`），比裸字符串拼接更安全，但 `target` 仍进入设备端脚本；不可信输入下需同样谨慎。
 
 ### 4.3 文档层面
 

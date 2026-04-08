@@ -17,6 +17,14 @@ import {
 import { DeviceManager } from '../device/deviceManager';
 import { ScriptRunner } from '../scripting/scriptRunner';
 import { bindConnectionState, OVERLAY_CSS, OVERLAY_HTML, OVERLAY_JS } from './connectionOverlay';
+import {
+    loadTeamSnippetsFromWorkspace,
+    getAllSnippetsMerged,
+    getTeamSnippetIdsForUi,
+    getTeamSyncStatusLabel,
+    createTeamSnippetWatchers,
+    reportTeamSyncUi,
+} from '../snippets/teamSnippets';
 
 const CUSTOM_SNIPPETS_KEY = 'whiteneedle.customSnippets';
 
@@ -40,6 +48,7 @@ export class SnippetPanel {
         const column = vscode.ViewColumn.One;
         if (SnippetPanel.currentPanel) {
             SnippetPanel.currentPanel.panel.reveal(column);
+            void SnippetPanel.currentPanel.syncTeamFromDisk(false);
             return SnippetPanel.currentPanel;
         }
         const panel = vscode.window.createWebviewPanel(
@@ -73,11 +82,36 @@ export class SnippetPanel {
             null,
             this.disposables,
         );
+
+        void this.syncTeamFromDisk(false);
+        this.disposables.push(
+            createTeamSnippetWatchers(() => {
+                void this.syncTeamFromDisk(false);
+            }),
+        );
+    }
+
+    /** Reload team JSON from workspace; optionally show toasts (toolbar / command). */
+    private async syncTeamFromDisk(showUi: boolean): Promise<void> {
+        const result = await loadTeamSnippetsFromWorkspace();
+        if (showUi) {
+            reportTeamSyncUi(result);
+        }
+        this.refreshWebview();
+    }
+
+    public static refreshIfOpen(): void {
+        SnippetPanel.currentPanel?.refreshWebview();
+    }
+
+    public static async syncTeamSnippetsCommand(output?: vscode.OutputChannel): Promise<void> {
+        const result = await loadTeamSnippetsFromWorkspace();
+        reportTeamSyncUi(result, output);
+        SnippetPanel.refreshIfOpen();
     }
 
     private getAllSnippets(): ScriptSnippet[] {
-        const custom = this.getCustomSnippets();
-        return [...BUILTIN_SNIPPETS, ...custom];
+        return getAllSnippetsMerged(this.getCustomSnippets());
     }
 
     private getCustomSnippets(): ScriptSnippet[] {
@@ -194,6 +228,10 @@ export class SnippetPanel {
             }
             case 'importSnippets': {
                 await this.handleImport();
+                break;
+            }
+            case 'syncTeamSnippets': {
+                await this.syncTeamFromDisk(true);
                 break;
             }
             case 'exportSnippets': {
@@ -376,13 +414,15 @@ export class SnippetPanel {
         vscode.window.showInformationMessage(`Snippet "${newSnippet.name}" added.`);
     }
 
-    private refreshWebview(): void {
+    public refreshWebview(): void {
         const all = this.getAllSnippets();
         this.panel.webview.postMessage({
             command: 'refreshAll',
             snippets: all,
             favorites: [...this.getFavorites()],
             history: this.getHistory(),
+            teamSyncStatus: getTeamSyncStatusLabel(),
+            teamIds: [...getTeamSnippetIdsForUi()],
         });
     }
 
@@ -395,6 +435,8 @@ export class SnippetPanel {
     private getHtml(): string {
         const snippetsJson = JSON.stringify(this.getAllSnippets());
         const builtinIds = JSON.stringify(BUILTIN_SNIPPETS.map(s => s.id));
+        const teamIds = JSON.stringify([...getTeamSnippetIdsForUi()]);
+        const teamSyncStatus = JSON.stringify(getTeamSyncStatusLabel());
         const categoriesJson = JSON.stringify(CATEGORY_LABELS);
         const favoritesJson = JSON.stringify([...this.getFavorites()]);
         const historyJson = JSON.stringify(this.getHistory());
@@ -593,7 +635,9 @@ ${OVERLAY_HTML}
         <button class="io-btn" id="btnQuickAdd" title="Create a new custom snippet">+ New</button>
         <button class="io-btn" id="btnImport" title="Import snippets from JSON file">Import</button>
         <button class="io-btn" id="btnExport" title="Export snippets to JSON file">Export</button>
+        <button class="io-btn" id="btnSyncTeam" title="Reload team snippets from workspace JSON (git-managed)">Sync team</button>
         <span class="count-label" id="countLabel"></span>
+        <span class="count-label" id="teamSyncStatus" style="margin-left:8px;opacity:0.75"></span>
     </div>
     <div class="filter-bar" id="filterBar"></div>
     <div class="snippet-list" id="snippetList"></div>
@@ -662,6 +706,7 @@ ${OVERLAY_JS}
     const vscode = acquireVsCodeApi();
     let ALL_SNIPPETS = ${snippetsJson};
     const BUILTIN_IDS = new Set(${builtinIds});
+    let TEAM_IDS = new Set(${teamIds});
     const CATEGORIES = ${categoriesJson};
     let favoriteIds = new Set(${favoritesJson});
     let historyEntries = ${historyJson};
@@ -670,11 +715,17 @@ ${OVERLAY_JS}
     let expandedId = null;
     let currentTab = 'snippets';
 
+    function setTeamSyncStatus(text) {
+        var el = document.getElementById('teamSyncStatus');
+        if (el) el.textContent = text || '';
+    }
+
     function init() {
         renderFilters();
         renderSnippets(ALL_SNIPPETS);
         renderFavorites();
         renderHistory();
+        setTeamSyncStatus(${teamSyncStatus});
 
         document.getElementById('searchInput').addEventListener('input', onSearch);
         document.getElementById('btnQuickAdd').addEventListener('click', () => {
@@ -756,6 +807,9 @@ ${OVERLAY_JS}
         document.getElementById('btnExport').addEventListener('click', () => {
             vscode.postMessage({ command: 'exportSnippets', scope: 'all' });
         });
+        document.getElementById('btnSyncTeam').addEventListener('click', () => {
+            vscode.postMessage({ command: 'syncTeamSnippets' });
+        });
         document.getElementById('btnClearHistory').addEventListener('click', () => {
             vscode.postMessage({ command: 'clearHistory' });
         });
@@ -832,9 +886,13 @@ ${OVERLAY_JS}
             '</div>'
         ).join('');
 
-        const isCustom = !BUILTIN_IDS.has(s.id);
-        const customTag = isCustom ? '<span class="custom-badge">custom</span>' : '';
-        const deleteBtn = isCustom ? '  <button class="delete-btn" data-action="delete" data-id="' + eid + '">Delete</button>' : '';
+        const isBuiltin = BUILTIN_IDS.has(s.id);
+        const isTeam = TEAM_IDS.has(s.id);
+        const isCustomLocal = !isBuiltin && !isTeam;
+        let badge = '';
+        if (isTeam) badge = '<span class="custom-badge" style="opacity:0.9">team</span>';
+        else if (isCustomLocal) badge = '<span class="custom-badge">custom</span>';
+        const deleteBtn = isCustomLocal ? '  <button class="delete-btn" data-action="delete" data-id="' + eid + '">Delete</button>' : '';
         const favClass = favoriteIds.has(s.id) ? ' favorited' : '';
         const favIcon = favoriteIds.has(s.id) ? '★' : '☆';
 
@@ -842,7 +900,7 @@ ${OVERLAY_JS}
             '<div class="snippet-header" data-toggle="' + eid + '">' +
             '  <button class="fav-btn' + favClass + '" data-action="fav" data-id="' + eid + '" title="Toggle favorite">' + favIcon + '</button>' +
             '  <div class="snippet-title-block">' +
-            '    <div class="snippet-name">' + escapeHtml(s.name) + customTag + '</div>' +
+            '    <div class="snippet-name">' + escapeHtml(s.name) + badge + '</div>' +
             '    <div class="snippet-desc">' + escapeHtml(s.description) + '</div>' +
             '  </div>' +
             '  <span class="snippet-badge">' + escapeHtml(CATEGORIES[s.category] || s.category) + '</span>' +
@@ -977,6 +1035,8 @@ ${OVERLAY_JS}
             ALL_SNIPPETS = msg.snippets;
             if (msg.favorites) favoriteIds = new Set(msg.favorites);
             if (msg.history) historyEntries = msg.history;
+            if (msg.teamIds) TEAM_IDS = new Set(msg.teamIds);
+            if (typeof msg.teamSyncStatus === 'string') setTeamSyncStatus(msg.teamSyncStatus);
             applyFilters();
             renderFavorites();
             renderHistory();
