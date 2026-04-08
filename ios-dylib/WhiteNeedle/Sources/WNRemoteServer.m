@@ -242,12 +242,33 @@ static void WNSocketCallback(CFSocketRef socket, CFSocketCallBackType type,
     }
 }
 
+/// Respond on the current thread — used for ping so VS Code heartbeat is not blocked behind loadScript on the main queue.
+- (void)sendJsonRpcResult:(id)result requestId:(NSNumber *)requestId client:(WNClientConnection *)client {
+    if (!requestId) return;
+    NSDictionary *response = @{
+        @"jsonrpc": @"2.0",
+        @"id": requestId,
+        @"result": result ?: [NSNull null]
+    };
+    NSData *data = [NSJSONSerialization dataWithJSONObject:response options:0 error:nil];
+    if (!data) return;
+    NSMutableData *line = [data mutableCopy];
+    [line appendData:[@"\n" dataUsingEncoding:NSUTF8StringEncoding]];
+    [client sendData:line];
+}
+
 - (void)handleRequest:(NSDictionary *)request client:(WNClientConnection *)client {
     NSString *method = request[@"method"];
     NSDictionary *params = request[@"params"] ?: @{};
     NSNumber *requestId = request[@"id"];
 
     if (!method) return;
+
+    // Heartbeat must not queue behind loadScript/evaluate (main queue can be busy for seconds).
+    if ([method isEqualToString:@"ping"] && requestId) {
+        [self sendJsonRpcResult:@{@"pong": @YES} requestId:requestId client:client];
+        return;
+    }
 
     dispatch_async(dispatch_get_main_queue(), ^{
         id result = [self dispatchMethod:method params:params];
@@ -281,6 +302,10 @@ static void WNSocketCallback(CFSocketRef socket, CFSocketCallBackType type,
 }
 
 - (id)dispatchMethod:(NSString *)method params:(NSDictionary *)params {
+    if ([method isEqualToString:@"ping"]) {
+        return @{@"pong": @YES};
+    }
+
     if ([method isEqualToString:@"loadScript"]) {
         NSString *code = params[@"code"];
         NSString *name = params[@"name"];

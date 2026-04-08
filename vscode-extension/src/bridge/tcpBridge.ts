@@ -23,7 +23,8 @@ interface JsonRpcNotification {
 }
 
 const HEARTBEAT_INTERVAL_MS = 15000;
-const HEARTBEAT_TIMEOUT_MS = 10000;
+/** Must exceed worst-case main-queue stall on device (e.g. loadScript) if ping were ever queued there. */
+const HEARTBEAT_TIMEOUT_MS = 25000;
 
 export class TcpBridge extends EventEmitter {
     private socket: net.Socket | null = null;
@@ -96,6 +97,10 @@ export class TcpBridge extends EventEmitter {
         this.stopHeartbeat();
         this.heartbeatTimer = setInterval(() => {
             if (!this.isConnected || this.heartbeatPending) {
+                return;
+            }
+            // Avoid ping while another RPC is in flight — iOS used to queue ping behind loadScript and miss the deadline.
+            if (this.pending.size > 0) {
                 return;
             }
             this.heartbeatPending = true;

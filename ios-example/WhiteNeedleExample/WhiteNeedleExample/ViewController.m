@@ -1,6 +1,7 @@
 #import "ViewController.h"
 #import "WNLeakExamples.h"
 #import "WNSQLiteDemo.h"
+#import "WNWebViewTestViewController.h"
 #import <WhiteNeedle/WNJSEngine.h>
 #import <WhiteNeedle/WNHookEngine.h>
 #import <WhiteNeedle/WNNativeBridge.h>
@@ -330,9 +331,20 @@ static NSString *const kNetworkCellID = @"NetworkCell";
     [sqlStack addArrangedSubview:sqlCreateBtn];
     [sqlStack addArrangedSubview:sqlActivityBtn];
 
+    UIStackView *webStack = [[UIStackView alloc] init];
+    webStack.axis = UILayoutConstraintAxisHorizontal;
+    webStack.distribution = UIStackViewDistributionFill;
+    webStack.spacing = 12;
+    webStack.translatesAutoresizingMaskIntoConstraints = NO;
+    UIButton *wkBtn = [self makeButton:@"🌐 WKWebView 调试页"
+                                 color:UIColor.systemPurpleColor
+                                action:@selector(openWebViewTest)];
+    [webStack addArrangedSubview:wkBtn];
+
     [self.view addSubview:self.segmentControl];
     [self.view addSubview:self.tableView];
     [self.view addSubview:self.consoleView];
+    [self.view addSubview:webStack];
     [self.view addSubview:sqlStack];
     [self.view addSubview:btnStack];
 
@@ -345,12 +357,17 @@ static NSString *const kNetworkCellID = @"NetworkCell";
         [self.tableView.topAnchor constraintEqualToAnchor:self.segmentControl.bottomAnchor constant:8],
         [self.tableView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
         [self.tableView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
-        [self.tableView.bottomAnchor constraintEqualToAnchor:sqlStack.topAnchor constant:-8],
+        [self.tableView.bottomAnchor constraintEqualToAnchor:webStack.topAnchor constant:-8],
 
         [self.consoleView.topAnchor constraintEqualToAnchor:self.segmentControl.bottomAnchor constant:8],
         [self.consoleView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:8],
         [self.consoleView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-8],
-        [self.consoleView.bottomAnchor constraintEqualToAnchor:sqlStack.topAnchor constant:-8],
+        [self.consoleView.bottomAnchor constraintEqualToAnchor:webStack.topAnchor constant:-8],
+
+        [webStack.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:16],
+        [webStack.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-16],
+        [webStack.bottomAnchor constraintEqualToAnchor:sqlStack.topAnchor constant:-6],
+        [webStack.heightAnchor constraintEqualToConstant:38],
 
         [sqlStack.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:16],
         [sqlStack.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-16],
@@ -377,6 +394,13 @@ static NSString *const kNetworkCellID = @"NetworkCell";
 }
 
 #pragma mark - Actions
+
+- (void)openWebViewTest {
+    WNWebViewTestViewController *vc = [[WNWebViewTestViewController alloc] init];
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:vc];
+    nav.modalPresentationStyle = UIModalPresentationFullScreen;
+    [self presentViewController:nav animated:YES completion:nil];
+}
 
 - (void)segmentChanged:(UISegmentedControl *)seg {
     NSInteger idx = seg.selectedSegmentIndex;

@@ -19,10 +19,17 @@ export interface InspectorTarget {
  * pages, JSContext instances) via HTTP /json + WebSocket — the same
  * protocol Chrome DevTools and VS Code understand.
  *
- * Port layout (default):
+ * Port layout (default, multi-device -c):
  *   9221 — device listing
- *   9222 — first connected device's targets
+ *   9222 — first detected device's targets (order can vary; unstable USB causes connect/disconnect spam)
+ *
+ * When a UDID is passed to start(), uses -u UDID:port-range so only that device is proxied on the given port.
  */
+export interface WebKitProxyStartOptions {
+    /** If set, ios_webkit_debug_proxy -u UDID:min-max (single device, stable port). */
+    deviceUdid?: string;
+}
+
 export class WebKitProxy {
     private process: ChildProcess | null = null;
     private _devicePort = 9222;
@@ -35,7 +42,7 @@ export class WebKitProxy {
         return this.process !== null;
     }
 
-    async start(devicePort = 9222): Promise<void> {
+    async start(devicePort = 9222, options?: WebKitProxyStartOptions): Promise<void> {
         if (this.process) return;
         this._devicePort = devicePort;
 
@@ -44,11 +51,15 @@ export class WebKitProxy {
             return;
         }
 
+        const maxPort = devicePort + 100;
+        const udid = options?.deviceUdid?.trim();
+        const proxyArgs =
+            udid && udid.length > 0
+                ? (['-F', '-u', `${udid}:${devicePort}-${maxPort}`] as const)
+                : (['-F', '-c', `null:9221,:${devicePort}-${maxPort}`] as const);
+
         return new Promise((resolve, reject) => {
-            const proc = spawn('ios_webkit_debug_proxy', [
-                '-F',
-                '-c', `null:9221,:${devicePort}-${devicePort + 100}`,
-            ]);
+            const proc = spawn('ios_webkit_debug_proxy', [...proxyArgs]);
 
             this.process = proc;
             let settled = false;

@@ -54,6 +54,19 @@ export class WhiteNeedleConfigurationProvider
             config.inspectorPort = Number.isFinite(n) ? n : 9222;
         }
 
+        const launchUdid =
+            config.webkitDeviceUdid !== undefined &&
+            config.webkitDeviceUdid !== null &&
+            String(config.webkitDeviceUdid).trim() !== ''
+                ? String(config.webkitDeviceUdid).trim()
+                : '';
+        if (!launchUdid) {
+            const settingUdid = ws.get<string>('webkitDeviceUdid')?.trim() ?? '';
+            if (settingUdid) {
+                config.webkitDeviceUdid = settingUdid;
+            }
+        }
+
         return config;
     }
 

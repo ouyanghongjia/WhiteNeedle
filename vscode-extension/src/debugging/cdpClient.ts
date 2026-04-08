@@ -3,14 +3,22 @@ import * as http from 'http';
 import WebSocket from 'ws';
 
 /**
- * Inspector protocol client.
+ * Inspector protocol client for WebKit Inspector Protocol (WIP).
  *
- * Connects to a WebKit Inspector Protocol (WIP) endpoint — either directly
- * via a WebSocket URL, or by discovering one from ios_webkit_debug_proxy's
- * HTTP /json listing. WIP is very similar to CDP — both use JSON-RPC over
- * WebSocket with the same core domains (Debugger, Runtime, Console).
+ * Connects via WebSocket — either directly or discovered from
+ * ios_webkit_debug_proxy's HTTP /json listing.
  *
- * This client handles the minor WIP ↔ CDP translation needed for DAP.
+ * ## iOS 17+ Target-based protocol
+ *
+ * On iOS 17+, ios_webkit_debug_proxy exposes a **target-multiplexed**
+ * connection.  At the top level only the `Target` domain is available.
+ * All other domain commands must be wrapped:
+ *
+ *   → Target.sendMessageToTarget({ targetId, message: JSON.stringify(…) })
+ *   ← Target.dispatchMessageFromTarget({ targetId, message: JSON.stringify(…) })
+ *
+ * Call `enableTargetWrapping(targetId)` after discovery to make
+ * `send()` transparently wrap / unwrap messages.
  */
 
 interface InspectorMessage {
@@ -24,6 +32,8 @@ interface InspectorMessage {
 /** Default Inspector port (ios_webkit_debug_proxy default for first device) */
 export const DEFAULT_INSPECTOR_PORT = 9222;
 
+export type LogCallback = (msg: string) => void;
+
 export class CDPClient extends EventEmitter {
     private ws: WebSocket | null = null;
     private nextId = 1;
@@ -31,6 +41,29 @@ export class CDPClient extends EventEmitter {
         resolve: (result: any) => void;
         reject: (err: Error) => void;
     }>();
+
+    /** If set, protocol messages are forwarded here (Debug Console). */
+    public onProtocolLog: LogCallback | null = null;
+
+    /** When non-null, send() wraps commands in Target.sendMessageToTarget. */
+    private targetWrappingId: string | null = null;
+
+    private innerPending = new Map<number, {
+        resolve: (result: any) => void;
+        reject: (err: Error) => void;
+    }>();
+    private innerNextId = 1;
+
+    private log(msg: string): void {
+        if (this.onProtocolLog) this.onProtocolLog(msg);
+    }
+
+    enableTargetWrapping(targetId: string): void {
+        this.targetWrappingId = targetId;
+        this.log(`[CDPClient] Target wrapping enabled (targetId=${targetId})`);
+    }
+
+    // ------------------------------------------------------------------ connect
 
     async connect(host: string, port: number = DEFAULT_INSPECTOR_PORT, rewriteWsHost?: string): Promise<void> {
         let wsUrl = await this.discoverWebSocketUrl(host, port);
@@ -44,80 +77,29 @@ export class CDPClient extends EventEmitter {
             } catch { /* keep original */ }
         }
 
-        return new Promise((resolve, reject) => {
-            const ws = new WebSocket(wsUrl);
-            this.ws = ws;
-
-            ws.on('open', () => {
-                resolve();
-            });
-
-            ws.on('message', (data: WebSocket.Data) => {
-                this.handleMessage(data.toString());
-            });
-
-            ws.on('close', () => {
-                this.rejectAll(new Error('WebSocket closed'));
-                this.emit('close');
-            });
-
-            ws.on('error', (err) => {
-                reject(CDPClient.wrapConnectionError(err, host, port, wsUrl));
-                this.emit('error', err);
-            });
-        });
+        return this.openSocket(wsUrl);
     }
 
-    /**
-     * Connect directly to a known WebSocket URL (e.g. from ios_webkit_debug_proxy).
-     */
     async connectDirect(wsUrl: string): Promise<void> {
+        return this.openSocket(wsUrl);
+    }
+
+    private openSocket(wsUrl: string): Promise<void> {
         return new Promise((resolve, reject) => {
             const ws = new WebSocket(wsUrl);
             this.ws = ws;
 
-            ws.on('open', () => {
-                resolve();
-            });
-
-            ws.on('message', (data: WebSocket.Data) => {
-                this.handleMessage(data.toString());
-            });
-
+            ws.on('open', () => resolve());
+            ws.on('message', (data: WebSocket.Data) => this.handleMessage(data.toString()));
             ws.on('close', () => {
                 this.rejectAll(new Error('WebSocket closed'));
                 this.emit('close');
             });
-
             ws.on('error', (err) => {
-                reject(new Error(
-                    `无法连接 Inspector WebSocket: ${err.message}\nURL: ${wsUrl}`
-                ));
+                reject(new Error(`无法连接 Inspector WebSocket: ${err.message}\nURL: ${wsUrl}`));
                 this.emit('error', err);
             });
         });
-    }
-
-    private static wrapConnectionError(
-        err: Error,
-        host: string,
-        port: number,
-        wsUrl: string
-    ): Error {
-        const msg = err.message || String(err);
-        const hint =
-            'ios_webkit_debug_proxy 默认在端口 9222 提供调试目标。请确认：\n' +
-            '  1. iOS 设备已运行包含 WhiteNeedle 的 App\n' +
-            '  2. iPhone 已通过 USB 连接到 Mac\n' +
-            '  3. 已安装: brew install ios-webkit-debug-proxy\n' +
-            '  4. Settings > Safari > Advanced > Web Inspector 已开启\n' +
-            '详情见 docs/inspector-vscode.md';
-        if (/hang up|ECONNRESET|ECONNREFUSED|ENOTFOUND/i.test(msg)) {
-            return new Error(
-                `无法连接 Inspector WebSocket（${msg}）\n已尝试: ${wsUrl}\n${hint}`
-            );
-        }
-        return err;
     }
 
     disconnect(): void {
@@ -128,15 +110,11 @@ export class CDPClient extends EventEmitter {
         this.rejectAll(new Error('Disconnected'));
     }
 
+    // ------------------------------------------------------------------ send
+
     /**
-     * Send a CDP/WIP method call and await the response.
-     *
-     * WIP and CDP share the same JSON-RPC format with `id`, `method`, `params`.
-     * The core debugging domains (Debugger, Runtime, Console) are compatible.
-     */
-    /**
-     * @param timeoutMs  Timeout in milliseconds. 0 = no timeout (wait forever).
-     *                   Defaults to 15 000 ms.
+     * Send a method call.  If target wrapping is enabled the message is
+     * transparently wrapped in Target.sendMessageToTarget.
      */
     async send(
         method: string,
@@ -146,10 +124,26 @@ export class CDPClient extends EventEmitter {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
             throw new Error('Not connected to Inspector');
         }
+        if (this.targetWrappingId) {
+            return this.sendViaTarget(method, params, timeoutMs);
+        }
+        return this.sendRaw(method, params, timeoutMs);
+    }
 
-        const translated = CDPClient.translateOutgoing(method, params);
+    /**
+     * Send a raw (unwrapped) method call — used for top-level Target domain
+     * commands or when target wrapping is not enabled.
+     */
+    sendRaw(
+        method: string,
+        params: Record<string, unknown> = {},
+        timeoutMs: number = 15000,
+    ): Promise<any> {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            return Promise.reject(new Error('Not connected to Inspector'));
+        }
         const id = this.nextId++;
-        const message: InspectorMessage = { id, method: translated.method, params: translated.params };
+        const message: InspectorMessage = { id, method, params };
 
         return new Promise((resolve, reject) => {
             let timer: ReturnType<typeof setTimeout> | undefined;
@@ -159,59 +153,130 @@ export class CDPClient extends EventEmitter {
                     reject(new Error(`Inspector timeout: ${method}`));
                 }, timeoutMs);
             }
-
             this.pending.set(id, {
-                resolve: (result) => { if (timer) clearTimeout(timer); resolve(result); },
-                reject: (err) => { if (timer) clearTimeout(timer); reject(err); },
+                resolve: (r) => { if (timer) clearTimeout(timer); resolve(r); },
+                reject:  (e) => { if (timer) clearTimeout(timer); reject(e); },
             });
-
             const json = JSON.stringify(message);
-            console.log(`[CDPClient] → send (${json.length} bytes): ${json.substring(0, 200)}`);
+            this.log(`[CDPClient] → ${json.substring(0, 300)}`);
             this.ws!.send(json);
         });
     }
 
-    /** Fire-and-forget: send a message without waiting for a response. */
+    private sendViaTarget(
+        method: string,
+        params: Record<string, unknown>,
+        timeoutMs: number,
+    ): Promise<any> {
+        const innerId = this.innerNextId++;
+        const innerMsg = JSON.stringify({ id: innerId, method, params });
+
+        return new Promise((resolve, reject) => {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            if (timeoutMs > 0) {
+                timer = setTimeout(() => {
+                    this.innerPending.delete(innerId);
+                    reject(new Error(`Inspector timeout (target-wrapped): ${method}`));
+                }, timeoutMs);
+            }
+            this.innerPending.set(innerId, {
+                resolve: (r) => { if (timer) clearTimeout(timer); resolve(r); },
+                reject:  (e) => { if (timer) clearTimeout(timer); reject(e); },
+            });
+
+            this.log(`[CDPClient] → Target.sendMessageToTarget(${method})`);
+            this.sendRaw('Target.sendMessageToTarget', {
+                targetId: this.targetWrappingId!,
+                message: innerMsg,
+            }, 0).catch((err) => {
+                this.innerPending.delete(innerId);
+                if (timer) clearTimeout(timer);
+                reject(err);
+            });
+        });
+    }
+
     sendFireAndForget(method: string, params: Record<string, unknown> = {}): void {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
-        const translated = CDPClient.translateOutgoing(method, params);
+        if (this.targetWrappingId) {
+            const innerId = this.innerNextId++;
+            const innerMsg = JSON.stringify({ id: innerId, method, params });
+            this.log(`[CDPClient] → fire-and-forget Target.sendMessageToTarget(${method})`);
+            this.sendRaw('Target.sendMessageToTarget', {
+                targetId: this.targetWrappingId,
+                message: innerMsg,
+            }, 0).catch(() => {});
+            return;
+        }
+
         const id = this.nextId++;
-        const message: InspectorMessage = { id, method: translated.method, params: translated.params };
+        const message: InspectorMessage = { id, method, params };
         const json = JSON.stringify(message);
-        console.log(`[CDPClient] → fire-and-forget (${json.length} bytes): ${json.substring(0, 200)}`);
+        this.log(`[CDPClient] → fire-and-forget: ${json.substring(0, 200)}`);
         this.ws!.send(json);
     }
 
-    /**
-     * Translate outgoing CDP methods to WIP equivalents where they differ.
-     *
-     * Most methods are identical. Key differences:
-     *   CDP: Debugger.setBreakpointByUrl({url, lineNumber, columnNumber})
-     *   WIP: Debugger.setBreakpointByUrl({url, lineNumber, columnNumber})  ← actually the same
-     *
-     *   CDP: Runtime.callFunctionOn({functionDeclaration, objectId, ...})
-     *   WIP: Runtime.callFunctionOn({functionDeclaration, objectId, ...})  ← same
-     *
-     * The protocols are nearly identical for the Debugger/Runtime/Console domains.
-     */
-    private static translateOutgoing(
-        method: string,
-        params: Record<string, unknown>
-    ): { method: string; params: Record<string, unknown> } {
-        /* CDP→WIP: no translation needed for core domains */
-        return { method, params };
+    // ------------------------------------------------------------------ receive
+
+    private handleMessage(raw: string): void {
+        this.log(`[CDPClient] ← ${raw.substring(0, 300)}`);
+
+        let msg: InspectorMessage;
+        try {
+            msg = JSON.parse(raw);
+        } catch (e) {
+            this.log(`[CDPClient] ← JSON parse error: ${e}`);
+            return;
+        }
+
+        // Unwrap Target.dispatchMessageFromTarget
+        if (msg.method === 'Target.dispatchMessageFromTarget' && msg.params) {
+            const innerRaw = msg.params.message as string | undefined;
+            if (innerRaw) this.handleInnerMessage(innerRaw);
+            return;
+        }
+
+        if (msg.method === 'Target.targetCreated' || msg.method === 'Target.targetDestroyed') {
+            this.emit(msg.method, msg.params);
+        }
+
+        msg = this.translateIncoming(msg);
+
+        if (msg.id !== undefined) {
+            const pending = this.pending.get(msg.id);
+            if (pending) {
+                this.pending.delete(msg.id);
+                if (msg.error) pending.reject(new Error(msg.error.message));
+                else pending.resolve(msg.result || {});
+            }
+        } else if (msg.method) {
+            this.emit(msg.method, msg.params);
+        }
     }
 
-    /**
-     * Translate incoming WIP events/responses to CDP equivalents.
-     *
-     * Known differences:
-     *   WIP: Console.messageAdded({message: {source, level, text, ...}})
-     *   CDP: Runtime.consoleAPICalled({type, args, ...})
-     *
-     *   WIP: Debugger.scriptParsed includes `sourceURL` (sometimes instead of `url`)
-     */
+    private handleInnerMessage(raw: string): void {
+        this.log(`[CDPClient] ← (inner) ${raw.substring(0, 300)}`);
+
+        let msg: InspectorMessage;
+        try { msg = JSON.parse(raw); } catch { return; }
+
+        msg = this.translateIncoming(msg);
+
+        if (msg.id !== undefined) {
+            const pending = this.innerPending.get(msg.id);
+            if (pending) {
+                this.innerPending.delete(msg.id);
+                if (msg.error) pending.reject(new Error(msg.error.message));
+                else pending.resolve(msg.result || {});
+            }
+        } else if (msg.method) {
+            this.emit(msg.method, msg.params);
+        }
+    }
+
+    // ------------------------------------------------------------------ translate
+
     private translateIncoming(msg: InspectorMessage): InspectorMessage {
         if (msg.method === 'Console.messageAdded' && msg.params) {
             const wipMsg = msg.params.message as Record<string, unknown> | undefined;
@@ -226,33 +291,7 @@ export class CDPClient extends EventEmitter {
         return msg;
     }
 
-    private handleMessage(raw: string): void {
-        console.log(`[CDPClient] ← recv (${raw.length} bytes): ${raw.substring(0, 200)}`);
-
-        let msg: InspectorMessage;
-        try {
-            msg = JSON.parse(raw);
-        } catch (e) {
-            console.error(`[CDPClient] ← JSON parse error: ${e}. Raw: ${raw.substring(0, 100)}`);
-            return;
-        }
-
-        msg = this.translateIncoming(msg);
-
-        if (msg.id !== undefined) {
-            const pending = this.pending.get(msg.id);
-            if (pending) {
-                this.pending.delete(msg.id);
-                if (msg.error) {
-                    pending.reject(new Error(msg.error.message));
-                } else {
-                    pending.resolve(msg.result || {});
-                }
-            }
-        } else if (msg.method) {
-            this.emit(msg.method, msg.params);
-        }
-    }
+    // ------------------------------------------------------------------ discover
 
     private async discoverWebSocketUrl(host: string, port: number): Promise<string> {
         const jsonUrl = `http://${host}:${port}/json`;
@@ -260,21 +299,17 @@ export class CDPClient extends EventEmitter {
         return new Promise((resolve, reject) => {
             const req = http.get(jsonUrl, (res) => {
                 let body = '';
-                res.on('data', (chunk) => {
-                    body += chunk;
-                });
+                res.on('data', (chunk) => { body += chunk; });
                 res.on('end', () => {
                     if (res.statusCode !== 200) {
                         reject(new Error(
                             `GET ${jsonUrl} 返回 HTTP ${res.statusCode}。` +
-                            '请确认 WhiteNeedle App 已运行且 Inspector 端口（默认 9222）可访问。'
+                            '请确认 WhiteNeedle App 已运行且 Inspector 端口可访问。'
                         ));
                         return;
                     }
                     let targets: unknown;
-                    try {
-                        targets = JSON.parse(body);
-                    } catch {
+                    try { targets = JSON.parse(body); } catch {
                         reject(new Error(
                             `GET ${jsonUrl} 的响应不是合法 JSON。` +
                             '请确认连接的是 Inspector 端口 9222，而非引擎端口 27042。'
@@ -282,19 +317,15 @@ export class CDPClient extends EventEmitter {
                         return;
                     }
                     if (!Array.isArray(targets)) {
-                        reject(new Error(
-                            `GET ${jsonUrl} 未返回 JSON 数组（目标列表）。`
-                        ));
+                        reject(new Error(`GET ${jsonUrl} 未返回 JSON 数组。`));
                         return;
                     }
-                    const target = (targets as any[]).find((t) => t && t.webSocketDebuggerUrl);
-                    if (!target?.webSocketDebuggerUrl) {
-                        reject(new Error(
-                            `${jsonUrl} 中没有带 webSocketDebuggerUrl 的调试目标。`
-                        ));
+                    const t = (targets as any[]).find((x) => x && x.webSocketDebuggerUrl);
+                    if (!t?.webSocketDebuggerUrl) {
+                        reject(new Error(`${jsonUrl} 中没有带 webSocketDebuggerUrl 的调试目标。`));
                         return;
                     }
-                    resolve(target.webSocketDebuggerUrl as string);
+                    resolve(t.webSocketDebuggerUrl as string);
                 });
             });
 
@@ -313,9 +344,9 @@ export class CDPClient extends EventEmitter {
     }
 
     private rejectAll(err: Error): void {
-        for (const [, pending] of this.pending) {
-            pending.reject(err);
-        }
+        for (const [, p] of this.pending) p.reject(err);
         this.pending.clear();
+        for (const [, p] of this.innerPending) p.reject(err);
+        this.innerPending.clear();
     }
 }

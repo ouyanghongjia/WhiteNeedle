@@ -75,7 +75,6 @@ iPhone 上需开启：**设置 > Safari > 高级 > Web 检查器 = 开**
       "name": "WhiteNeedle: Debug",
       "host": "127.0.0.1",
       "inspectorPort": 9222,
-      "targetTitle": "WhiteNeedle",
       "script": "${file}"
     }
   ]
@@ -84,7 +83,7 @@ iPhone 上需开启：**设置 > Safari > 高级 > Web 检查器 = 开**
 
 | 参数 | 说明 |
 |------|------|
-| `targetTitle` | 首选目标名称。匹配失败或有多个目标时弹出选择列表 |
+| `targetTitle` | 可选。仅一个目标时无影响；多个目标时**始终**弹出列表，本字段只把同名项排到列表最前，**不会**自动连接 |
 | `inspectorPort` | ios_webkit_debug_proxy 的本地端口（默认 9222） |
 
 ### 5. 开始调试

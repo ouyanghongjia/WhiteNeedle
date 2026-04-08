@@ -384,8 +384,18 @@
               },
               "targetTitle": {
                 "type": "string",
-                "description": "首选调试目标名称（如 WhiteNeedle），自动匹配。未指定时弹出选择列表",
-                "default": "WhiteNeedle"
+                "description": "多个调试目标时始终弹出选择列表。填写时仅将同名目标排在列表最前，不会自动连接（避免误选 JSContext 而跳过 WKWebView）",
+                "default": ""
+              },
+              "webkitDeviceUdid": {
+                "type": "string",
+                "description": "可选：仅为此 UDID 启动 ios_webkit_debug_proxy（-u），避免多设备时 9222/9223 抢端口与反复断连。留空则使用设置 whiteneedle.webkitDeviceUdid，再留空则代理所有已连接设备",
+                "default": ""
+              },
+              "verbose": {
+                "type": "boolean",
+                "description": "在 Debug Console 输出完整 CDP/WIP 协议日志（开发插件时使用）",
+                "default": false
               }
             }
           }
@@ -400,7 +410,6 @@
               "name": "WhiteNeedle: Debug",
               "host": "127.0.0.1",
               "inspectorPort": 9222,
-              "targetTitle": "WhiteNeedle",
               "script": "^\"\\${file}\""
             }
           }
@@ -424,6 +433,11 @@
           "type": "number",
           "default": 9222,
           "description": "ios_webkit_debug_proxy 本地端口（默认 9222，通常无需修改）"
+        },
+        "whiteneedle.webkitDeviceUdid": {
+          "type": "string",
+          "default": "",
+          "description": "仅将 Web Inspector 代理到此 iOS 设备的 UDID（ios_webkit_debug_proxy -u）。多机 USB 同时连接时可避免非目标机占用 9222 或频繁 Connected/Disconnected。留空表示代理所有设备（默认行为）。可用 idevice_id -l 或 Xcode 设备信息查看 UDID"
         },
         "whiteneedle.deviceHost": {
           "type": "string",

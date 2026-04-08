@@ -71,8 +71,7 @@ export class DeviceManager extends EventEmitter {
 
         const cfg = vscode.workspace.getConfiguration('whiteneedle');
         await cfg.update('deviceHost', device.host, vscode.ConfigurationTarget.Global);
-<<<<<<< HEAD
-=======
+
         if (device.bundleId && device.bundleId !== 'unknown') {
             await cfg.update('lastBundleId', device.bundleId, vscode.ConfigurationTarget.Global);
         }
@@ -82,7 +81,6 @@ export class DeviceManager extends EventEmitter {
         if (device.inspectorPort > 0) {
             await cfg.update('inspectorPort', device.inspectorPort, vscode.ConfigurationTarget.Global);
         }
->>>>>>> e24cd1f (增加了团队代码片段的配置（git仓库）)
         this.outputChannel.appendLine(
             `[DeviceManager] Connected (engine=${device.enginePort})`
         );
