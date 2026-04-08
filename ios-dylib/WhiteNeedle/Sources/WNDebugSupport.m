@@ -18,6 +18,8 @@ static NSString *const kLogPrefix = @"[WNDebugSupport]";
     //
     // These exist on iOS but are not public. We call them via performSelector
     // to keep the code compiling without private header imports.
+    
+//    context.inspectable = YES;
 
     SEL remoteInspect = NSSelectorFromString(@"_setRemoteInspectionEnabled:");
     if ([context respondsToSelector:remoteInspect]) {

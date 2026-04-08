@@ -13,7 +13,7 @@ import {
 } from '@vscode/debugadapter';
 import { DebugProtocol } from '@vscode/debugprotocol';
 import { CDPClient } from './cdpClient';
-import { USBTunnel } from './usbTunnel';
+import { WebKitProxy, InspectorTarget } from './webKitProxy';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -22,6 +22,8 @@ interface WhiteNeedleLaunchArgs extends DebugProtocol.LaunchRequestArguments {
     inspectorPort: number;
     script?: string;
     useUSB?: boolean;
+    /** Preferred target title (e.g. "WhiteNeedle"). Auto-selects if matched. */
+    targetTitle?: string;
 }
 
 interface CDPBreakpoint {
@@ -46,7 +48,7 @@ const THREAD_ID = 1;
 
 export class WhiteNeedleDebugSession extends DebugSession {
     private cdp: CDPClient | null = null;
-    private tunnel: USBTunnel | null = null;
+    private proxy: WebKitProxy | null = null;
     private launchArgs: WhiteNeedleLaunchArgs | null = null;
     private scriptSources = new Map<string, { url: string; source?: string }>();
     private breakpoints = new Map<string, string[]>();
@@ -121,46 +123,53 @@ export class WhiteNeedleDebugSession extends DebugSession {
             });
 
             this.cdp.on('close', () => {
-                this.cleanupTunnel();
+                this.cleanupProxy();
                 this.sendEvent(new TerminatedEvent());
             });
 
-            const useUSB = args.useUSB !== false;
-            const isLocalhost =
-                args.host === '127.0.0.1' || args.host === 'localhost' || !args.host;
-            let connectHost = args.host || '127.0.0.1';
-            let rewriteWsHost: string | undefined;
+            const proxyPort = args.inspectorPort || 9222;
 
-            if (useUSB && isLocalhost) {
+            this.sendEvent(
+                new OutputEvent(
+                    '[WhiteNeedle] 启动 ios_webkit_debug_proxy...\n',
+                    'console'
+                )
+            );
+
+            this.proxy = new WebKitProxy();
+            try {
+                await this.proxy.start(proxyPort);
                 this.sendEvent(
                     new OutputEvent(
-                        '[WhiteNeedle] 启动 USB 隧道 (iproxy)...\n',
+                        `[WhiteNeedle] Proxy 就绪: http://127.0.0.1:${proxyPort}/json\n`,
                         'console'
                     )
                 );
-                try {
-                    this.tunnel = new USBTunnel(args.inspectorPort, args.inspectorPort);
-                    await this.tunnel.start();
-                    connectHost = '127.0.0.1';
-                    rewriteWsHost = '127.0.0.1';
-                    this.sendEvent(
-                        new OutputEvent(
-                            `[WhiteNeedle] USB 隧道就绪: localhost:${args.inspectorPort}\n`,
-                            'console'
-                        )
-                    );
-                } catch (err: any) {
-                    this.sendEvent(
-                        new OutputEvent(
-                            `[WhiteNeedle] USB 隧道失败 (${err.message})，尝试直连...\n`,
-                            'console'
-                        )
-                    );
-                    this.tunnel = null;
-                }
+            } catch (err: any) {
+                this.sendEvent(
+                    new OutputEvent(
+                        `[WhiteNeedle] Proxy 启动失败 (${err.message})，尝试直连...\n`,
+                        'console'
+                    )
+                );
+                this.proxy = null;
             }
 
-            await this.cdp.connect(connectHost, args.inspectorPort, rewriteWsHost);
+            const target = await this.selectTarget(proxyPort, args.targetTitle);
+
+            const wsUrl = target.webSocketDebuggerUrl.replace(
+                /ws:\/\/[^/]+/,
+                `ws://127.0.0.1:${proxyPort}`
+            );
+
+            this.sendEvent(
+                new OutputEvent(
+                    `[WhiteNeedle] 连接目标: ${target.title} (${wsUrl})\n`,
+                    'console'
+                )
+            );
+
+            await this.cdp.connectDirect(wsUrl);
             await this.cdp.send('Debugger.enable', {});
             await this.cdp.send('Debugger.setBreakpointsActive', { active: true }).catch(() => {});
             await this.cdp.send('Runtime.enable', {});
@@ -169,17 +178,61 @@ export class WhiteNeedleDebugSession extends DebugSession {
             this.sendEvent(new InitializedEvent());
             this.sendResponse(response);
         } catch (err: any) {
-            this.cleanupTunnel();
+            this.cleanupProxy();
             response.success = false;
             response.message = err.message;
             this.sendResponse(response);
         }
     }
 
-    private cleanupTunnel(): void {
-        if (this.tunnel) {
-            this.tunnel.stop();
-            this.tunnel = null;
+    private async selectTarget(port: number, preferredTitle?: string): Promise<InspectorTarget> {
+        const proxy = this.proxy ?? new WebKitProxy();
+        const targets = await proxy.fetchTargets(port);
+
+        if (targets.length === 0) {
+            throw new Error(
+                '未发现调试目标。请确认：\n' +
+                '  1. iPhone 已通过 USB 连接\n' +
+                '  2. Safari > Web Inspector 已开启\n' +
+                '  3. WhiteNeedle App 正在运行'
+            );
+        }
+
+        if (preferredTitle) {
+            const match = targets.find(
+                t => t.title.toLowerCase() === preferredTitle.toLowerCase()
+            );
+            if (match) return match;
+        }
+
+        if (targets.length === 1) {
+            return targets[0];
+        }
+
+        const vscode = await import('vscode');
+        const items = targets.map((t, i) => ({
+            label: t.title || `Target ${i + 1}`,
+            description: t.url || '',
+            detail: t.appId || '',
+            target: t,
+        }));
+
+        const picked = await vscode.window.showQuickPick(items, {
+            placeHolder: '选择要调试的目标 (JSContext / WKWebView)',
+            ignoreFocusOut: true,
+        });
+
+        if (!picked) {
+            throw new Error('用户取消了目标选择');
+        }
+
+        return picked.target;
+    }
+
+    private cleanupProxy(): void {
+        if (this.proxy) {
+            this.proxy.stop();
+            this.proxy = null;
         }
     }
 
@@ -479,7 +532,7 @@ export class WhiteNeedleDebugSession extends DebugSession {
         _args: DebugProtocol.TerminateArguments
     ): Promise<void> {
         this.cdp?.disconnect();
-        this.cleanupTunnel();
+        this.cleanupProxy();
         this.sendResponse(response);
     }
 
@@ -488,7 +541,7 @@ export class WhiteNeedleDebugSession extends DebugSession {
         _args: DebugProtocol.DisconnectArguments
     ): void {
         this.cdp?.disconnect();
-        this.cleanupTunnel();
+        this.cleanupProxy();
         this.sendResponse(response);
     }
 

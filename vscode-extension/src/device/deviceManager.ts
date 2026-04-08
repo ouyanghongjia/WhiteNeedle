@@ -69,11 +69,8 @@ export class DeviceManager extends EventEmitter {
 
         const cfg = vscode.workspace.getConfiguration('whiteneedle');
         await cfg.update('deviceHost', device.host, vscode.ConfigurationTarget.Global);
-        if (device.inspectorPort > 0) {
-            await cfg.update('inspectorPort', device.inspectorPort, vscode.ConfigurationTarget.Global);
-        }
         this.outputChannel.appendLine(
-            `[DeviceManager] Connected (engine=${device.enginePort}, inspector=${device.inspectorPort})`
+            `[DeviceManager] Connected (engine=${device.enginePort})`
         );
     }
 

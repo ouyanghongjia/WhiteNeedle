@@ -16,6 +16,7 @@ export interface WNDevice {
     wnVersion: string;
     enginePort: number;
     engineType: string;
+    /** @deprecated No longer advertised; debugging uses ios_webkit_debug_proxy */
     inspectorPort: number;
     raw?: Service;
 }
@@ -128,7 +129,7 @@ export class DeviceDiscovery extends EventEmitter {
         if (!host) { return null; }
 
         const enginePort = parseInt(this.decodeTxt(txt['enginePort']) || String(service.port), 10);
-        const inspectorPort = parseInt(this.decodeTxt(txt['inspectorPort']) || '9222', 10);
+        const inspectorPort = parseInt(this.decodeTxt(txt['inspectorPort']) || '0', 10);
 
         return {
             name: service.name,

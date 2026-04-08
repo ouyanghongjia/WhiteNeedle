@@ -10,7 +10,7 @@
             "name": "WhiteNeedle: Debug Script",
             "host": "127.0.0.1",
             "inspectorPort": 9222,
-            "useUSB": true,
+            "targetTitle": "WhiteNeedle",
             "script": "${file}"
         }
     ]

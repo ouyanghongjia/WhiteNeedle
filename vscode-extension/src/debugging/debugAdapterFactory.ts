@@ -47,20 +47,11 @@ export class WhiteNeedleConfigurationProvider
             config.host = ws.get<string>('deviceHost') || '127.0.0.1';
         }
 
-        const defaultInspector = ws.get<number>('inspectorPort') ?? 9222;
         if (config.inspectorPort === undefined || config.inspectorPort === null || config.inspectorPort === '') {
-            config.inspectorPort = defaultInspector;
+            config.inspectorPort = 9222;
         } else {
             const n = Number(config.inspectorPort);
-            if (!Number.isFinite(n)) {
-                config.inspectorPort = defaultInspector;
-            } else {
-                config.inspectorPort = n;
-            }
-        }
-
-        if (config.useUSB === undefined) {
-            config.useUSB = true;
+            config.inspectorPort = Number.isFinite(n) ? n : 9222;
         }
 
         return config;
@@ -77,7 +68,6 @@ export class WhiteNeedleConfigurationProvider
                 name: 'WhiteNeedle: Debug Script',
                 host: '127.0.0.1',
                 inspectorPort: 9222,
-                useUSB: true,
                 script: '${file}',
             },
         ];

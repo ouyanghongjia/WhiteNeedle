@@ -5,10 +5,10 @@ import WebSocket from 'ws';
 /**
  * Inspector protocol client.
  *
- * Connects to WhiteNeedle's Inspector WebSocket server (port 9222 by default)
- * which speaks WebKit Inspector Protocol (WIP). WIP is very similar to CDP
- * — both use JSON-RPC over WebSocket with the same core domains
- * (Debugger, Runtime, Console).
+ * Connects to a WebKit Inspector Protocol (WIP) endpoint — either directly
+ * via a WebSocket URL, or by discovering one from ios_webkit_debug_proxy's
+ * HTTP /json listing. WIP is very similar to CDP — both use JSON-RPC over
+ * WebSocket with the same core domains (Debugger, Runtime, Console).
  *
  * This client handles the minor WIP ↔ CDP translation needed for DAP.
  */
@@ -21,7 +21,7 @@ interface InspectorMessage {
     error?: { code: number; message: string; data?: unknown };
 }
 
-/** Default Inspector port matching WNInspectorServer */
+/** Default Inspector port (ios_webkit_debug_proxy default for first device) */
 export const DEFAULT_INSPECTOR_PORT = 9222;
 
 export class CDPClient extends EventEmitter {
@@ -68,6 +68,36 @@ export class CDPClient extends EventEmitter {
         });
     }
 
+    /**
+     * Connect directly to a known WebSocket URL (e.g. from ios_webkit_debug_proxy).
+     */
+    async connectDirect(wsUrl: string): Promise<void> {
+        return new Promise((resolve, reject) => {
+            const ws = new WebSocket(wsUrl);
+            this.ws = ws;
+
+            ws.on('open', () => {
+                resolve();
+            });
+
+            ws.on('message', (data: WebSocket.Data) => {
+                this.handleMessage(data.toString());
+            });
+
+            ws.on('close', () => {
+                this.rejectAll(new Error('WebSocket closed'));
+                this.emit('close');
+            });
+
+            ws.on('error', (err) => {
+                reject(new Error(
+                    `无法连接 Inspector WebSocket: ${err.message}\nURL: ${wsUrl}`
+                ));
+                this.emit('error', err);
+            });
+        });
+    }
+
     private static wrapConnectionError(
         err: Error,
         host: string,
@@ -76,10 +106,11 @@ export class CDPClient extends EventEmitter {
     ): Error {
         const msg = err.message || String(err);
         const hint =
-            'WhiteNeedle Inspector 服务默认监听端口 9222。请确认：\n' +
+            'ios_webkit_debug_proxy 默认在端口 9222 提供调试目标。请确认：\n' +
             '  1. iOS 设备已运行包含 WhiteNeedle 的 App\n' +
-            '  2. iPhone 已通过 USB 连接到 Mac（默认通过 USB 隧道）\n' +
-            '  3. 已安装 iproxy: brew install libimobiledevice\n' +
+            '  2. iPhone 已通过 USB 连接到 Mac\n' +
+            '  3. 已安装: brew install ios-webkit-debug-proxy\n' +
+            '  4. Settings > Safari > Advanced > Web Inspector 已开启\n' +
             '详情见 docs/inspector-vscode.md';
         if (/hang up|ECONNRESET|ECONNREFUSED|ENOTFOUND/i.test(msg)) {
             return new Error(

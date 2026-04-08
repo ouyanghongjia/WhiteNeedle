@@ -19,9 +19,9 @@ Pod::Spec.new do |s|
                        'Sources/libffi/src/debug.c',
                        'Sources/libffi/src/java_raw_api.c',
                        'Sources/libffi/src/raw_api.c'
-  s.public_header_files = 'Sources/*.h', 'Sources/Inspector/WNInspectorBridge.h', 'Sources/Inspector/WNInspectorServer.h'
+  s.public_header_files = 'Sources/*.h'
 
-  s.frameworks       = 'Foundation', 'UIKit', 'JavaScriptCore', 'Security'
+  s.frameworks       = 'Foundation', 'UIKit', 'JavaScriptCore', 'Security', 'WebKit'
   s.libraries        = 'c++', 'sqlite3'
   s.xcconfig         = { 'CLANG_CXX_LANGUAGE_STANDARD' => 'c++17' }
   s.pod_target_xcconfig = {

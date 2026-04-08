@@ -237,7 +237,7 @@ export function activate(context: vscode.ExtensionContext) {
                 wnVersion: 'unknown',
                 enginePort: port,
                 engineType: 'jscore',
-                inspectorPort: 9222,
+                inspectorPort: 0,
             };
 
             try {
@@ -634,7 +634,7 @@ function scheduleLastDeviceFallback(
             wnVersion: 'unknown',
             enginePort: port,
             engineType: 'jscore',
-            inspectorPort: cfg.get<number>('inspectorPort', 9222),
+            inspectorPort: 0,
         };
 
         try {

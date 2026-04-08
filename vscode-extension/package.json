@@ -342,18 +342,17 @@
         "configurationAttributes": {
           "launch": {
             "required": [
-              "host",
-              "inspectorPort"
+              "host"
             ],
             "properties": {
               "host": {
                 "type": "string",
-                "description": "Target device IP address",
+                "description": "Target device IP address (use 127.0.0.1 for USB)",
                 "default": "127.0.0.1"
               },
               "inspectorPort": {
                 "type": "number",
-                "description": "WhiteNeedle Inspector WebSocket 端口（设备上 /json 发现端点）",
+                "description": "ios_webkit_debug_proxy 本地端口（默认 9222）",
                 "default": 9222
               },
               "script": {
@@ -361,25 +360,25 @@
                 "description": "Optional: script path for reference; load script on device via Push & Run before debugging",
                 "default": "${file}"
               },
-              "useUSB": {
-                "type": "boolean",
-                "description": "通过 USB 隧道 (iproxy) 连接真机（需要 brew install libimobiledevice）",
-                "default": true
+              "targetTitle": {
+                "type": "string",
+                "description": "首选调试目标名称（如 WhiteNeedle），自动匹配。未指定时弹出选择列表",
+                "default": "WhiteNeedle"
               }
             }
           }
         },
         "configurationSnippets": [
           {
-            "label": "WhiteNeedle: Debug Script (Inspector)",
-            "description": "连接 WhiteNeedle Inspector（WebKit Inspector Protocol over WebSocket）",
+            "label": "WhiteNeedle: Debug Script",
+            "description": "通过 ios_webkit_debug_proxy 调试 JSContext / WKWebView",
             "body": {
               "type": "whiteneedle",
               "request": "launch",
               "name": "WhiteNeedle: Debug",
               "host": "127.0.0.1",
               "inspectorPort": 9222,
-              "useUSB": true,
+              "targetTitle": "WhiteNeedle",
               "script": "^\"\\${file}\""
             }
           }
@@ -402,7 +401,7 @@
         "whiteneedle.inspectorPort": {
           "type": "number",
           "default": 9222,
-          "description": "WhiteNeedle Inspector 端口（设备上 HTTP /json 发现与 WebSocket 调试端口）"
+          "description": "ios_webkit_debug_proxy 本地端口（默认 9222，通常无需修改）"
         },
         "whiteneedle.deviceHost": {
           "type": "string",
