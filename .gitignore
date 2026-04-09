@@ -25,8 +25,9 @@ log.txt
 # Release artifacts (use GitHub Releases instead; vsix is large)
 *.vsix
 
-# Resign payload: copy from `ios-dylib/build/WhiteNeedle.dylib` after `make`
-resign-tool/payload/*.dylib
+# Pre-built dylib binaries — only dist/ (via build-dist.sh) should contain them
+ios-dylib/WhiteNeedle.dylib
+skills/whiteneedle-resign/payload/WhiteNeedle.dylib
 
 # Secrets & signing (never commit)
 .env

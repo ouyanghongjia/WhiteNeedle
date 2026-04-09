@@ -36,6 +36,23 @@ async function rpc(method: string, params: Record<string, unknown> = {}): Promis
     return client.call(method, params);
 }
 
+type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
+
+async function safeRpc(
+    method: string,
+    params: Record<string, unknown> = {},
+    format?: (raw: unknown) => string,
+): Promise<ToolResult> {
+    try {
+        const result = await rpc(method, params);
+        const text = format ? format(result) : formatResult(result);
+        return { content: [{ type: 'text', text }] };
+    } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text', text: `${method} failed: ${msg}` }], isError: true };
+    }
+}
+
 // ---------------------------------------------------------------------------
 // MCP Server
 // ---------------------------------------------------------------------------
@@ -82,14 +99,10 @@ server.tool(
         filter: z.string().optional().describe('Prefix or substring filter for class names'),
     },
     async ({ filter }) => {
-        const result = (await rpc('getClassNames', { filter: filter ?? '' })) as { classes?: string[] };
-        const classes = result.classes ?? [];
-        return {
-            content: [{
-                type: 'text',
-                text: `Found ${classes.length} classes:\n${classes.join('\n')}`,
-            }],
-        };
+        return safeRpc('getClassNames', { filter: filter ?? '' }, (raw) => {
+            const classes = (raw as { classes?: string[] }).classes ?? [];
+            return `Found ${classes.length} classes:\n${classes.join('\n')}`;
+        });
     },
 );
 
@@ -105,34 +118,18 @@ server.tool(
             .describe('instance = -[...], class = +[...], both = both sections'),
     },
     async ({ className, which }) => {
-        const result = (await rpc('getMethods', { className })) as {
-            instanceMethods?: string[];
-            classMethods?: string[];
-        };
-        const inst = result.instanceMethods ?? [];
-        const cls = result.classMethods ?? [];
-        if (which === 'instance') {
-            return {
-                content: [{
-                    type: 'text',
-                    text: `-[${className}] — ${inst.length} instance methods:\n${inst.join('\n')}`,
-                }],
-            };
-        }
-        if (which === 'class') {
-            return {
-                content: [{
-                    type: 'text',
-                    text: `+[${className}] — ${cls.length} class methods:\n${cls.join('\n')}`,
-                }],
-            };
-        }
-        return {
-            content: [{
-                type: 'text',
-                text: `-[${className}] — ${inst.length} instance methods:\n${inst.join('\n')}\n\n+[${className}] — ${cls.length} class methods:\n${cls.join('\n')}`,
-            }],
-        };
+        return safeRpc('getMethods', { className }, (raw) => {
+            const result = raw as { instanceMethods?: string[]; classMethods?: string[] };
+            const inst = result.instanceMethods ?? [];
+            const cls = result.classMethods ?? [];
+            if (which === 'instance') {
+                return `-[${className}] — ${inst.length} instance methods:\n${inst.join('\n')}`;
+            }
+            if (which === 'class') {
+                return `+[${className}] — ${cls.length} class methods:\n${cls.join('\n')}`;
+            }
+            return `-[${className}] — ${inst.length} instance methods:\n${inst.join('\n')}\n\n+[${className}] — ${cls.length} class methods:\n${cls.join('\n')}`;
+        });
     },
 );
 
@@ -193,14 +190,10 @@ server.tool(
     'List loaded script names',
     {},
     async () => {
-        const result = (await rpc('listScripts', {})) as { scripts?: string[] };
-        const scripts = result.scripts ?? [];
-        return {
-            content: [{
-                type: 'text',
-                text: scripts.length > 0 ? `Loaded scripts:\n${scripts.join('\n')}` : 'No scripts loaded',
-            }],
-        };
+        return safeRpc('listScripts', {}, (raw) => {
+            const scripts = (raw as { scripts?: string[] }).scripts ?? [];
+            return scripts.length > 0 ? `Loaded scripts:\n${scripts.join('\n')}` : 'No scripts loaded';
+        });
     },
 );
 
@@ -210,14 +203,10 @@ server.tool(
     'List active ObjC and C hook descriptors (summary)',
     {},
     async () => {
-        const result = (await rpc('listHooks', {})) as { hooks?: string[] };
-        const hooks = result.hooks ?? [];
-        return {
-            content: [{
-                type: 'text',
-                text: hooks.length > 0 ? `Active hooks (${hooks.length}):\n${hooks.join('\n')}` : 'No active hooks',
-            }],
-        };
+        return safeRpc('listHooks', {}, (raw) => {
+            const hooks = (raw as { hooks?: string[] }).hooks ?? [];
+            return hooks.length > 0 ? `Active hooks (${hooks.length}):\n${hooks.join('\n')}` : 'No active hooks';
+        });
     },
 );
 
@@ -225,30 +214,21 @@ server.tool(
     'list_hooks_detailed',
     'List hooks with extra metadata from the hook engine',
     {},
-    async () => {
-        const result = await rpc('listHooksDetailed', {});
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async () => safeRpc('listHooksDetailed'),
 );
 
 server.tool(
     'pause_hook',
     'Pause an active hook by selector string (e.g. -[Foo bar:])',
     { selector: z.string().describe('Hook selector / key') },
-    async ({ selector }) => {
-        const result = await rpc('pauseHook', { selector });
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async ({ selector }) => safeRpc('pauseHook', { selector }),
 );
 
 server.tool(
     'resume_hook',
     'Resume a paused hook',
     { selector: z.string().describe('Hook selector / key') },
-    async ({ selector }) => {
-        const result = await rpc('resumeHook', { selector });
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async ({ selector }) => safeRpc('resumeHook', { selector }),
 );
 
 // ---- Modules ----
@@ -257,9 +237,10 @@ server.tool(
     'List loaded dylibs / modules',
     {},
     async () => {
-        const result = (await rpc('listModules', {})) as { modules?: unknown[] };
-        const modules = result.modules ?? [];
-        return { content: [{ type: 'text', text: `Loaded modules (${modules.length}):\n${formatResult(modules)}` }] };
+        return safeRpc('listModules', {}, (raw) => {
+            const modules = (raw as { modules?: unknown[] }).modules ?? [];
+            return `Loaded modules (${modules.length}):\n${formatResult(modules)}`;
+        });
     },
 );
 
@@ -387,40 +368,28 @@ server.tool(
     'list_network_requests',
     'List captured HTTP requests (summary)',
     {},
-    async () => {
-        const result = await rpc('listNetworkRequests', {});
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async () => safeRpc('listNetworkRequests'),
 );
 
 server.tool(
     'get_network_request',
     'Get one captured request by id',
     { id: z.string().describe('Request id from list_network_requests') },
-    async ({ id }) => {
-        const result = await rpc('getNetworkRequest', { id });
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async ({ id }) => safeRpc('getNetworkRequest', { id }),
 );
 
 server.tool(
     'clear_network_requests',
     'Clear network capture buffer',
     {},
-    async () => {
-        const result = await rpc('clearNetworkRequests', {});
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async () => safeRpc('clearNetworkRequests'),
 );
 
 server.tool(
     'set_network_capture',
     'Enable or disable network capture',
     { enabled: z.boolean().describe('true to capture') },
-    async ({ enabled }) => {
-        const result = await rpc('setNetworkCapture', { enabled });
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async ({ enabled }) => safeRpc('setNetworkCapture', { enabled }),
 );
 
 // ---- UI debug ----
@@ -428,40 +397,28 @@ server.tool(
     'get_view_hierarchy',
     'Snapshot UI view tree (addresses, classes, hierarchy)',
     {},
-    async () => {
-        const result = await rpc('getViewHierarchy', {});
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async () => safeRpc('getViewHierarchy'),
 );
 
 server.tool(
     'get_view_controllers',
     'Snapshot view controller tree',
     {},
-    async () => {
-        const result = await rpc('getViewControllers', {});
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async () => safeRpc('getViewControllers'),
 );
 
 server.tool(
     'get_vc_detail',
     'Details for one UIViewController by address string from get_view_controllers',
     { address: z.string().describe('Hex address string') },
-    async ({ address }) => {
-        const result = await rpc('getVCDetail', { address });
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async ({ address }) => safeRpc('getVCDetail', { address }),
 );
 
 server.tool(
     'get_view_detail',
     'Details for one UIView by address from get_view_hierarchy',
     { address: z.string().describe('Hex address string') },
-    async ({ address }) => {
-        const result = await rpc('getViewDetail', { address });
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async ({ address }) => safeRpc('getViewDetail', { address }),
 );
 
 server.tool(
@@ -472,50 +429,35 @@ server.tool(
         key: z.string().describe('Key path / property name'),
         value: z.unknown().describe('JSON-serializable value'),
     },
-    async ({ address, key, value }) => {
-        const result = await rpc('setViewProperty', { address, key, value });
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async ({ address, key, value }) => safeRpc('setViewProperty', { address, key, value: value as Record<string, unknown> }),
 );
 
 server.tool(
     'highlight_view',
     'Highlight a view by address',
     { address: z.string() },
-    async ({ address }) => {
-        const result = await rpc('highlightView', { address });
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async ({ address }) => safeRpc('highlightView', { address }),
 );
 
 server.tool(
     'clear_highlight',
     'Remove UI highlight overlay',
     {},
-    async () => {
-        const result = await rpc('clearHighlight', {});
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async () => safeRpc('clearHighlight'),
 );
 
 server.tool(
     'search_views',
     'Find views whose class name contains the given name',
     { className: z.string().describe('UIView subclass name, e.g. UILabel') },
-    async ({ className }) => {
-        const result = await rpc('searchViews', { className });
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async ({ className }) => safeRpc('searchViews', { className }),
 );
 
 server.tool(
     'get_screenshot',
     'Take window screenshot as base64 PNG (large payload)',
     {},
-    async () => {
-        const result = await rpc('getScreenshot', {});
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async () => safeRpc('getScreenshot'),
 );
 
 // ---- Mock interceptor ----
@@ -535,10 +477,7 @@ server.tool(
     'list_mock_rules',
     'List HTTP mock rules',
     {},
-    async () => {
-        const result = await rpc('listMockRules', {});
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async () => safeRpc('listMockRules'),
 );
 
 server.tool(
@@ -555,10 +494,7 @@ server.tool(
         delay: z.number().optional(),
         id: z.string().optional(),
     },
-    async (params) => {
-        const result = await rpc('addMockRule', params as Record<string, unknown>);
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async (params) => safeRpc('addMockRule', params as Record<string, unknown>),
 );
 
 server.tool(
@@ -568,61 +504,42 @@ server.tool(
         ruleId: z.string(),
         ...mockRuleShape,
     },
-    async ({ ruleId, ...rest }) => {
-        const params: Record<string, unknown> = { ruleId, ...rest };
-        const result = await rpc('updateMockRule', params);
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async ({ ruleId, ...rest }) => safeRpc('updateMockRule', { ruleId, ...rest }),
 );
 
 server.tool(
     'remove_mock_rule',
     'Remove one mock rule',
     { ruleId: z.string() },
-    async ({ ruleId }) => {
-        const result = await rpc('removeMockRule', { ruleId });
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async ({ ruleId }) => safeRpc('removeMockRule', { ruleId }),
 );
 
 server.tool(
     'remove_all_mock_rules',
     'Clear all mock rules',
     {},
-    async () => {
-        const result = await rpc('removeAllMockRules', {});
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async () => safeRpc('removeAllMockRules'),
 );
 
 server.tool(
     'enable_mock_interceptor',
     'Install NSURLProtocol mock interceptor',
     {},
-    async () => {
-        const result = await rpc('enableMockInterceptor', {});
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async () => safeRpc('enableMockInterceptor'),
 );
 
 server.tool(
     'disable_mock_interceptor',
     'Uninstall mock interceptor',
     {},
-    async () => {
-        const result = await rpc('disableMockInterceptor', {});
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async () => safeRpc('disableMockInterceptor'),
 );
 
 server.tool(
     'get_mock_interceptor_status',
     'Whether mock is installed and rule count',
     {},
-    async () => {
-        const result = await rpc('getMockInterceptorStatus', {});
-        return { content: [{ type: 'text', text: formatResult(result) }] };
-    },
+    async () => safeRpc('getMockInterceptorStatus'),
 );
 
 // ---------------------------------------------------------------------------

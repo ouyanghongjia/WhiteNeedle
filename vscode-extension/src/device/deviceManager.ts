@@ -214,6 +214,50 @@ export class DeviceManager extends EventEmitter {
         return result?.capturing ?? enabled;
     }
 
+    // --- Mock Interceptor ---
+
+    async listMockRules(): Promise<any[]> {
+        if (!this.bridge?.isConnected) { throw new Error('Not connected to any device'); }
+        const result = await this.bridge.call('listMockRules', {}) as any;
+        return result?.rules || [];
+    }
+
+    async addMockRule(rule: Record<string, unknown>): Promise<any> {
+        if (!this.bridge?.isConnected) { throw new Error('Not connected to any device'); }
+        return await this.bridge.call('addMockRule', rule);
+    }
+
+    async updateMockRule(ruleId: string, updates: Record<string, unknown>): Promise<any> {
+        if (!this.bridge?.isConnected) { throw new Error('Not connected to any device'); }
+        return await this.bridge.call('updateMockRule', { ruleId, ...updates });
+    }
+
+    async removeMockRule(ruleId: string): Promise<void> {
+        if (!this.bridge?.isConnected) { throw new Error('Not connected to any device'); }
+        await this.bridge.call('removeMockRule', { ruleId });
+    }
+
+    async removeAllMockRules(): Promise<void> {
+        if (!this.bridge?.isConnected) { throw new Error('Not connected to any device'); }
+        await this.bridge.call('removeAllMockRules', {});
+    }
+
+    async enableMockInterceptor(): Promise<void> {
+        if (!this.bridge?.isConnected) { throw new Error('Not connected to any device'); }
+        await this.bridge.call('enableMockInterceptor', {});
+    }
+
+    async disableMockInterceptor(): Promise<void> {
+        if (!this.bridge?.isConnected) { throw new Error('Not connected to any device'); }
+        await this.bridge.call('disableMockInterceptor', {});
+    }
+
+    async getMockInterceptorStatus(): Promise<{ installed: boolean; ruleCount: number }> {
+        if (!this.bridge?.isConnected) { throw new Error('Not connected to any device'); }
+        const result = await this.bridge.call('getMockInterceptorStatus', {}) as any;
+        return { installed: result?.installed ?? false, ruleCount: result?.ruleCount ?? 0 };
+    }
+
     // --- View Hierarchy Inspector ---
 
     async getViewHierarchy(): Promise<any> {

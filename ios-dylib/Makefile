@@ -7,10 +7,7 @@ SYSROOT   := -isysroot $(SDK)
 FRAMEWORKS := -framework Foundation -framework UIKit -framework JavaScriptCore -framework Security
 
 OBJC_SOURCES  := $(wildcard WhiteNeedle/Sources/*.m)
-OBJCXX_SOURCES := $(wildcard WhiteNeedle/Sources/Inspector/*.mm)
-C_SOURCES     := $(wildcard WhiteNeedle/Sources/*.c) $(wildcard WhiteNeedle/Sources/Inspector/*.c)
-CXX_SOURCES   := $(wildcard WhiteNeedle/Sources/Inspector/*.cpp)
-INSP_M_SOURCES := $(wildcard WhiteNeedle/Sources/Inspector/*.m)
+C_SOURCES     := $(wildcard WhiteNeedle/Sources/*.c)
 
 # libffi sources (arm64 only)
 FFI_C_SOURCES := WhiteNeedle/Sources/libffi/src/ffi_arm64.c \
@@ -20,13 +17,10 @@ FFI_C_SOURCES := WhiteNeedle/Sources/libffi/src/ffi_arm64.c \
 FFI_ASM_SOURCES := WhiteNeedle/Sources/libffi/src/sysv_arm64.S
 
 OBJC_OBJECTS   := $(patsubst %.m,build/%.o,$(notdir $(OBJC_SOURCES)))
-OBJCXX_OBJECTS := $(patsubst %.mm,build/%.o,$(notdir $(OBJCXX_SOURCES)))
 C_OBJECTS      := $(patsubst %.c,build/%.o,$(notdir $(C_SOURCES)))
-CXX_OBJECTS    := $(patsubst %.cpp,build/%.o,$(notdir $(CXX_SOURCES)))
-INSPM_OBJECTS  := $(patsubst %.m,build/insp_%.o,$(notdir $(INSP_M_SOURCES)))
 FFI_C_OBJECTS  := $(patsubst %.c,build/ffi_%.o,$(notdir $(FFI_C_SOURCES)))
 FFI_ASM_OBJECTS := $(patsubst %.S,build/ffi_%.o,$(notdir $(FFI_ASM_SOURCES)))
-OBJECTS        := $(OBJC_OBJECTS) $(OBJCXX_OBJECTS) $(C_OBJECTS) $(CXX_OBJECTS) $(INSPM_OBJECTS) $(FFI_C_OBJECTS) $(FFI_ASM_OBJECTS)
+OBJECTS        := $(OBJC_OBJECTS) $(C_OBJECTS) $(FFI_C_OBJECTS) $(FFI_ASM_OBJECTS)
 
 OUTPUT       := build/WhiteNeedle.dylib
 
@@ -34,7 +28,7 @@ FFI_INCLUDE  := -IWhiteNeedle/Sources/libffi/include -IWhiteNeedle/Sources/libff
 # RefGraph module (set WN_REFGRAPH=0 to disable)
 WN_REFGRAPH ?= 1
 
-COMMON_FLAGS := $(ARCH) $(SYSROOT) $(MIN_VER) -O2 -IWhiteNeedle/Sources -IWhiteNeedle/Sources/Inspector $(FFI_INCLUDE)
+COMMON_FLAGS := $(ARCH) $(SYSROOT) $(MIN_VER) -O2 -IWhiteNeedle/Sources $(FFI_INCLUDE)
 CFLAGS       := $(COMMON_FLAGS) -fobjc-arc -fmodules
 
 ifeq ($(WN_REFGRAPH),1)
@@ -62,26 +56,6 @@ build/%.o: WhiteNeedle/Sources/%.m
 build/%.o: WhiteNeedle/Sources/%.c
 	@mkdir -p build
 	$(CC) $(COMMON_FLAGS) -c -o $@ $<
-
-# C sources (Inspector/)
-build/%.o: WhiteNeedle/Sources/Inspector/%.c
-	@mkdir -p build
-	$(CC) $(COMMON_FLAGS) -c -o $@ $<
-
-# C++ sources (Inspector/)
-build/%.o: WhiteNeedle/Sources/Inspector/%.cpp
-	@mkdir -p build
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
-
-# ObjC++ sources (Inspector/)
-build/%.o: WhiteNeedle/Sources/Inspector/%.mm
-	@mkdir -p build
-	$(CXX) $(OBJCXXFLAGS) -c -o $@ $<
-
-# ObjC sources (Inspector/) — prefixed to avoid name collision
-build/insp_%.o: WhiteNeedle/Sources/Inspector/%.m
-	@mkdir -p build
-	$(CC) $(CFLAGS) -c -o $@ $<
 
 # libffi C sources
 build/ffi_%.o: WhiteNeedle/Sources/libffi/src/%.c

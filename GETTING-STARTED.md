@@ -26,7 +26,7 @@ make
 ### 2. 重签名你的 IPA
 
 ```bash
-cd resign-tool
+cd skills/whiteneedle-resign
 
 # 确保 insert_dylib 已编译
 cc -o insert_dylib insert_dylib.c
@@ -40,6 +40,8 @@ chmod +x insert_dylib
 ```
 
 输出文件: `YourApp_whiteneedle.ipa`
+
+> Cursor 用户可直接使用 `whiteneedle-resign` skill，在对话中说「重签名这个 IPA: ~/path/to/your.ipa」即可自动完成。
 
 ### 3. 安装到设备
 
@@ -95,7 +97,6 @@ npm run compile
 ```
 WhiteNeedle/
 ├── ios-dylib/           # iOS 动态库源码（JSC 引擎 + TCP 27042）
-├── resign-tool/         # IPA 重签名与注入
 ├── vscode-extension/    # VS Code 扩展（Bonjour、推脚本、DAP）
 │   ├── src/
 │   │   ├── debugging/   # DAP + CDP 客户端
@@ -104,6 +105,8 @@ WhiteNeedle/
 │   │   ├── scripting/
 │   │   └── views/
 │   └── DEBUGGING.md     # 调试与端口说明
+├── mcp-server/          # MCP Server（AI Agent 工具链）
+├── skills/              # Cursor Agent Skills（含重签名工具）
 └── sample-scripts/      # 示例脚本
 ```
 

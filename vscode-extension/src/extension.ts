@@ -20,11 +20,13 @@ import { LeakDetectorPanel } from './panels/leakDetectorPanel';
 import { RetainGraphPanel } from './panels/retainGraphPanel';
 import { SQLitePanel } from './panels/sqlitePanel';
 import { ApiDocsPanel } from './panels/apiDocsPanel';
+import { MockPanel } from './panels/mockPanel';
 import { ProxyServer } from './proxy/proxyServer';
 import {
     WhiteNeedleConfigurationProvider,
     WhiteNeedleDebugAdapterFactory,
 } from './debugging/debugAdapterFactory';
+import { ensureTypingsForWorkspace, getBundledTypingsPath } from './typings/typingsManager';
 
 let discovery: DeviceDiscovery;
 let deviceManager: DeviceManager;
@@ -369,7 +371,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('whiteneedle.newScript', async () => {
             const doc = await vscode.workspace.openTextDocument({
                 language: 'javascript',
-                content: SCRIPT_TEMPLATE,
+                content: buildScriptTemplate(context),
             });
             await vscode.window.showTextDocument(doc);
         }),
@@ -420,6 +422,10 @@ export function activate(context: vscode.ExtensionContext) {
 
         vscode.commands.registerCommand('whiteneedle.openNetwork', () => {
             NetworkPanel.createOrShow(context.extensionUri, deviceManager);
+        }),
+
+        vscode.commands.registerCommand('whiteneedle.openMockRules', () => {
+            MockPanel.createOrShow(context.extensionUri, deviceManager);
         }),
 
         vscode.commands.registerCommand('whiteneedle.openViewHierarchy', () => {
@@ -500,6 +506,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.workspace.onDidChangeWorkspaceFolders(() => {
+            ensureTypingsForWorkspace(context);
             void loadTeamSnippetsFromWorkspace().then(() => SnippetPanel.refreshIfOpen());
         }),
         vscode.workspace.onDidChangeConfiguration((e) => {
@@ -561,6 +568,8 @@ export function activate(context: vscode.ExtensionContext) {
             }
         }
     });
+
+    ensureTypingsForWorkspace(context);
 
     discovery.start();
     outputChannel.appendLine('[WhiteNeedle] Scanning for devices on LAN...');
@@ -701,7 +710,10 @@ function tcpProbe(host: string, port: number, timeoutMs: number): Promise<boolea
     });
 }
 
-const SCRIPT_TEMPLATE = `// WhiteNeedle Script (JavaScriptCore)
+function buildScriptTemplate(context: vscode.ExtensionContext): string {
+    const dtsPath = getBundledTypingsPath(context);
+    return `/// <reference path="${dtsPath}" />
+// WhiteNeedle Script (JavaScriptCore)
 // API: ObjC.use(), ObjC.classes, Interceptor.attach(), console.log()
 // Push: Cmd+Shift+R or click Play button in editor title bar
 
@@ -726,3 +738,4 @@ rpc.exports = {
 
 console.log('[WhiteNeedle] Script loaded successfully');
 `;
+}

@@ -15,7 +15,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONF_FILE="$ROOT_DIR/deploy.conf"
 DYLIB_DIR="$ROOT_DIR/ios-dylib"
-RESIGN_DIR="$ROOT_DIR/resign-tool"
+RESIGN_DIR="$ROOT_DIR/skills/whiteneedle-resign"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 
@@ -148,7 +148,7 @@ if [[ "$SKIP_BUILD" == false ]]; then
 
     mkdir -p "$RESIGN_DIR/payload"
     cp "$BUILT_DYLIB" "$RESIGN_DIR/payload/WhiteNeedle.dylib"
-    log "dylib → resign-tool/payload/"
+    log "dylib → skills/whiteneedle-resign/payload/"
 
     cd "$ROOT_DIR"
 else
