@@ -1,0 +1,13 @@
+{
+    "compilerOptions": {
+        "target": "ES6",
+        "module": "commonjs",
+        "noEmit": true,
+        "allowJs": true,
+        "checkJs": false
+    },
+    "include": [
+        "**/*.js",
+        "/Users/ouyanghongjia/.cursor/extensions/whiteneedle.whiteneedle-0.1.0/typings/whiteneedle.d.ts"
+    ]
+}

@@ -102,10 +102,17 @@ static NSMutableDictionary<NSString *, NSString *> *g_builtinModules;
     NSFileManager *fm = [NSFileManager defaultManager];
     NSArray<NSString *> *extensions = @[@"", @".js", @".json"];
 
+    // Strip leading ./ — it's relative to the search paths
+    NSString *cleanName = moduleName;
+    if ([cleanName hasPrefix:@"./"]) {
+        cleanName = [cleanName substringFromIndex:2];
+    }
+
     for (NSString *searchPath in g_searchPaths) {
         for (NSString *ext in extensions) {
-            NSString *fullPath = [[searchPath stringByAppendingPathComponent:moduleName]
+            NSString *fullPath = [[searchPath stringByAppendingPathComponent:cleanName]
                                   stringByAppendingString:ext];
+            fullPath = [fullPath stringByStandardizingPath];
             if ([fm fileExistsAtPath:fullPath]) {
                 NSError *error;
                 NSString *content = [NSString stringWithContentsOfFile:fullPath
@@ -119,8 +126,9 @@ static NSMutableDictionary<NSString *, NSString *> *g_builtinModules;
                 }
             }
 
-            NSString *indexPath = [[[searchPath stringByAppendingPathComponent:moduleName]
+            NSString *indexPath = [[[searchPath stringByAppendingPathComponent:cleanName]
                                     stringByAppendingPathComponent:@"index"] stringByAppendingString:@".js"];
+            indexPath = [indexPath stringByStandardizingPath];
             if ([fm fileExistsAtPath:indexPath]) {
                 return [NSString stringWithContentsOfFile:indexPath
                                                 encoding:NSUTF8StringEncoding
@@ -175,9 +183,16 @@ static NSMutableDictionary<NSString *, NSString *> *g_builtinModules;
     moduleNS[@"searchPaths"] = g_searchPaths;
 
     moduleNS[@"addSearchPath"] = ^(NSString *path) {
-        if (path && ![g_searchPaths containsObject:path]) {
-            [g_searchPaths addObject:path];
-            NSLog(@"%@ Added search path: %@", kLogPrefix, path);
+        if (!path) return;
+        NSString *resolved = path;
+        if (![path hasPrefix:@"/"]) {
+            NSString *docPath = NSSearchPathForDirectoriesInDomains(
+                NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+            resolved = [docPath stringByAppendingPathComponent:path];
+        }
+        if (![g_searchPaths containsObject:resolved]) {
+            [g_searchPaths addObject:resolved];
+            NSLog(@"%@ Added search path: %@", kLogPrefix, resolved);
         }
     };
 

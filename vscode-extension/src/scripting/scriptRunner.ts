@@ -31,6 +31,10 @@ export class ScriptRunner {
         }
     }
 
+    private static hasEsmSyntax(code: string): boolean {
+        return /\b(import\s+.+from\s+|export\s+(default|function|class|\{))/m.test(code);
+    }
+
     /** Single-file mode: IIFE wrap + reuse existing JSContext (fast) */
     private async pushAndRunSingle(code: string, filePath: string): Promise<void> {
         if (this.currentScriptName) {
@@ -39,8 +43,13 @@ export class ScriptRunner {
         }
 
         const name = path.basename(filePath);
+        let finalCode = code;
+        if (ScriptRunner.hasEsmSyntax(code)) {
+            this.outputChannel.appendLine('[ScriptRunner] ESM syntax detected, converting to CJS...');
+            finalCode = DependencyAnalyzer.esmToCjs(code);
+        }
         this.outputChannel.appendLine(`[ScriptRunner] Loading (single): ${name}`);
-        await this.deviceManager.loadScript(code, name);
+        await this.deviceManager.loadScript(finalCode, name);
         this.currentScriptName = name;
         this.outputChannel.appendLine(`[ScriptRunner] Running: ${name}`);
     }
@@ -75,7 +84,19 @@ export class ScriptRunner {
             }
         }
 
-        // 4. Push dependencies to temporary directory on device
+        // 4. Detect ESM and convert all sources to CJS
+        const useEsm = ScriptRunner.hasEsmSyntax(code) ||
+            deps.some(d => ScriptRunner.hasEsmSyntax(d.content));
+        let mainCode = code;
+        if (useEsm) {
+            this.outputChannel.appendLine('[ScriptRunner] ESM syntax detected, converting to CJS...');
+            mainCode = DependencyAnalyzer.esmToCjs(code);
+            for (const dep of deps) {
+                dep.content = DependencyAnalyzer.esmToCjs(dep.content);
+            }
+        }
+
+        // 5. Push dependencies to temporary directory on device
         await this.deviceManager.removeDirOnDevice(TMP_DIR);
         if (deps.length > 0) {
             await this.deviceManager.mkdirOnDevice(TMP_DIR);
@@ -93,9 +114,9 @@ export class ScriptRunner {
             this.outputChannel.appendLine(`[ScriptRunner] Pushed ${deps.length} dep(s) to ${TMP_DIR}`);
         }
 
-        // 5. Load main script
+        // 6. Load main script
         this.outputChannel.appendLine(`[ScriptRunner] Loading (project): ${name}`);
-        await this.deviceManager.loadScript(code, name);
+        await this.deviceManager.loadScript(mainCode, name);
         this.currentScriptName = name;
         this.outputChannel.appendLine(`[ScriptRunner] Running: ${name}`);
     }

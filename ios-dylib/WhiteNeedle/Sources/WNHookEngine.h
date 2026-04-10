@@ -49,6 +49,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (BOOL)resumeHook:(NSString *)selectorKey;
 
++ (void)detachAll;
+
 @end
 
 NS_ASSUME_NONNULL_END

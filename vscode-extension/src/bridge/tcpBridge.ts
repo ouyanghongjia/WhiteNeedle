@@ -194,22 +194,7 @@ export class TcpBridge extends EventEmitter {
     }
 
     private handleNotification(notification: JsonRpcNotification): void {
-        switch (notification.method) {
-            case 'console':
-                this.outputChannel.appendLine(
-                    `[Device:${notification.params['level'] || 'log'}] ${notification.params['message'] || ''}`
-                );
-                this.emit('console', notification.params);
-                break;
-            case 'scriptError':
-                this.outputChannel.appendLine(
-                    `[Device:Error] ${notification.params['message'] || ''}`
-                );
-                this.emit('scriptError', notification.params);
-                break;
-            default:
-                this.emit(notification.method, notification.params);
-        }
+        this.emit(notification.method, notification.params);
     }
 
     private rejectAllPending(err: Error): void {

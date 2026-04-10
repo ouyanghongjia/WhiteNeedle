@@ -38,11 +38,13 @@ package_white_needle_vsix() {
     log "Packaging .vsix -> $(basename "$out_vsix") ..."
     (
         cd "$EXT_DIR"
+        npm install --no-audit --no-fund 2>&1 | tail -1
+        cp -f "$ROOT_DIR/LICENSE" "$EXT_DIR/LICENSE" 2>/dev/null || true
         if command -v vsce >/dev/null 2>&1; then
-            vsce package --no-dependencies -o "$out_vsix"
+            echo 'y' | vsce package -o "$out_vsix"
         else
             warn "vsce not in PATH; using npx @vscode/vsce (first run may download)"
-            npx --yes @vscode/vsce package --no-dependencies -o "$out_vsix"
+            echo 'y' | npx --yes @vscode/vsce package -o "$out_vsix"
         fi
     )
 }
