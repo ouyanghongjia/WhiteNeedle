@@ -311,6 +311,38 @@ export class DeviceManager extends EventEmitter {
         return result?.base64 || null;
     }
 
+    // --- JSContext Reset ---
+
+    async resetContext(): Promise<void> {
+        if (!this.bridge?.isConnected) { throw new Error('Not connected to any device'); }
+        await this.bridge.call('resetContext', {});
+    }
+
+    // --- File System Operations ---
+
+    async writeFileOnDevice(filePath: string, content: string): Promise<void> {
+        if (!this.bridge?.isConnected) { throw new Error('Not connected to any device'); }
+        await this.bridge.call('writeFile', { path: filePath, content });
+    }
+
+    async mkdirOnDevice(dirPath: string): Promise<void> {
+        if (!this.bridge?.isConnected) { throw new Error('Not connected to any device'); }
+        await this.bridge.call('mkdir', { path: dirPath });
+    }
+
+    async removeDirOnDevice(dirPath: string): Promise<void> {
+        if (!this.bridge?.isConnected) { throw new Error('Not connected to any device'); }
+        await this.bridge.call('removeDir', { path: dirPath });
+    }
+
+    // --- Installed JS Modules ---
+
+    async listInstalledJsModules(): Promise<Array<{ name: string; size: number }>> {
+        if (!this.bridge?.isConnected) { throw new Error('Not connected to any device'); }
+        const result = await this.bridge.call('listInstalledJsModules', {}) as any;
+        return result?.modules || [];
+    }
+
     getConnectedDevice(): WNDevice | null {
         return this.connectedDevice;
     }

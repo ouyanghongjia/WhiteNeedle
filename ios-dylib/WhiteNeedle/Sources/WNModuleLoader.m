@@ -24,15 +24,32 @@ static NSMutableDictionary<NSString *, NSString *> *g_builtinModules;
         g_searchPaths = [NSMutableArray new];
         g_builtinModules = [NSMutableDictionary new];
 
-        NSString *docPath = NSSearchPathForDirectoriesInDomains(
-            NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
-        if (docPath) {
-            [g_searchPaths addObject:[docPath stringByAppendingPathComponent:@"wn_modules"]];
-        }
-
-        NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
-        [g_searchPaths addObject:[bundlePath stringByAppendingPathComponent:@"wn_modules"]];
+        [self buildDefaultSearchPaths];
     });
+}
+
++ (void)buildDefaultSearchPaths {
+    [g_searchPaths removeAllObjects];
+
+    NSString *docPath = NSSearchPathForDirectoriesInDomains(
+        NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+    if (docPath) {
+        [g_searchPaths addObject:[docPath stringByAppendingPathComponent:@"wn_modules"]];
+        [g_searchPaths addObject:[docPath stringByAppendingPathComponent:@"wn_installed_modules"]];
+    }
+
+    NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
+    [g_searchPaths addObject:[bundlePath stringByAppendingPathComponent:@"wn_modules"]];
+}
+
++ (void)clearAllCache {
+    [g_moduleCache removeAllObjects];
+    NSLog(@"%@ Module cache cleared (all)", kLogPrefix);
+}
+
++ (void)resetSearchPaths {
+    [self buildDefaultSearchPaths];
+    NSLog(@"%@ Search paths reset to defaults: %@", kLogPrefix, g_searchPaths);
 }
 
 + (void)registerInContext:(JSContext *)context {

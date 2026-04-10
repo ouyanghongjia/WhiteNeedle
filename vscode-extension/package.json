@@ -4,13 +4,30 @@
   "description": "Remote iOS debugging powered by WhiteNeedle Engine — LAN discovery, script push, ObjC runtime inspection",
   "version": "0.1.0",
   "publisher": "whiteneedle",
+  "license": "UNLICENSED",
   "engines": {
     "vscode": "^1.85.0"
   },
+  "keywords": [
+    "ios",
+    "debugging",
+    "objective-c",
+    "runtime",
+    "hook",
+    "reverse-engineering",
+    "mobile",
+    "dylib",
+    "javascript",
+    "injection"
+  ],
   "categories": [
     "Debuggers",
     "Other"
   ],
+  "galleryBanner": {
+    "color": "#1a1a2e",
+    "theme": "dark"
+  },
   "activationEvents": [
     "onView:whiteneedle-devices",
     "onCommand:whiteneedle.connectByIP",
@@ -39,6 +56,10 @@
     "onCommand:whiteneedle.openLeakDetector",
     "onCommand:whiteneedle.openRetainGraph",
     "onCommand:whiteneedle.toggleProxy",
+    "onCommand:whiteneedle.installModule",
+    "onCommand:whiteneedle.uninstallModule",
+    "onCommand:whiteneedle.refreshModules",
+    "onView:whiteneedle-modules",
     "onDebugResolve:whiteneedle"
   ],
   "main": "./out/extension.js",
@@ -48,7 +69,7 @@
         {
           "id": "whiteneedle",
           "title": "WhiteNeedle",
-          "icon": "$(debug-alt)"
+          "icon": "resources/icon-needle.svg"
         }
       ]
     },
@@ -61,6 +82,10 @@
         {
           "id": "whiteneedle-scripts",
           "name": "Scripts"
+        },
+        {
+          "id": "whiteneedle-modules",
+          "name": "Installed Modules"
         }
       ]
     },
@@ -240,6 +265,24 @@
         "title": "Retain Graph",
         "icon": "$(type-hierarchy)",
         "category": "WhiteNeedle"
+      },
+      {
+        "command": "whiteneedle.installModule",
+        "title": "Install JS Module",
+        "icon": "$(add)",
+        "category": "WhiteNeedle"
+      },
+      {
+        "command": "whiteneedle.uninstallModule",
+        "title": "Uninstall Module",
+        "icon": "$(trash)",
+        "category": "WhiteNeedle"
+      },
+      {
+        "command": "whiteneedle.refreshModules",
+        "title": "Refresh Modules",
+        "icon": "$(refresh)",
+        "category": "WhiteNeedle"
       }
     ],
     "menus": {
@@ -258,6 +301,16 @@
           "submenu": "whiteneedle.devicesPanels",
           "when": "view == whiteneedle-devices",
           "group": "navigation@3"
+        },
+        {
+          "command": "whiteneedle.installModule",
+          "when": "view == whiteneedle-modules",
+          "group": "navigation@1"
+        },
+        {
+          "command": "whiteneedle.refreshModules",
+          "when": "view == whiteneedle-modules",
+          "group": "navigation@2"
         },
         {
           "command": "whiteneedle.pushScript",
@@ -342,6 +395,13 @@
         {
           "command": "whiteneedle.stopProxy",
           "group": "wn_proxy@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "whiteneedle.uninstallModule",
+          "when": "view == whiteneedle-modules && viewItem == installedModule",
+          "group": "inline"
         }
       ],
       "editor/title": [
@@ -434,6 +494,16 @@
           "type": "boolean",
           "default": true,
           "description": "Auto-reload script on save"
+        },
+        "whiteneedle.scriptMode": {
+          "type": "string",
+          "enum": ["single", "project"],
+          "default": "single",
+          "enumDescriptions": [
+            "Single-file mode: wraps code in IIFE, reuses existing JSContext (fast)",
+            "Project mode: creates fresh JSContext, pushes local require() dependencies, replays panel hooks"
+          ],
+          "description": "Script execution mode — 'single' for quick single-file iteration, 'project' for multi-file projects with clean JSContext"
         },
         "whiteneedle.enginePort": {
           "type": "number",

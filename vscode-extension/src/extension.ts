@@ -27,6 +27,9 @@ import {
     WhiteNeedleDebugAdapterFactory,
 } from './debugging/debugAdapterFactory';
 import { ensureTypingsForWorkspace, getBundledTypingsPath } from './typings/typingsManager';
+import { HookCodeRegistry } from './panels/hookCodeRegistry';
+import { ModuleManager } from './modules/moduleManager';
+import { ModuleTreeProvider, ModuleItem } from './views/moduleTreeView';
 
 let discovery: DeviceDiscovery;
 let deviceManager: DeviceManager;
@@ -36,6 +39,9 @@ let outputChannel: vscode.OutputChannel;
 let statusBarItem: vscode.StatusBarItem;
 let proxyStatusBarItem: vscode.StatusBarItem;
 let extensionContext: vscode.ExtensionContext;
+let hookCodeRegistry: HookCodeRegistry;
+let moduleManager: ModuleManager;
+let moduleTreeProvider: ModuleTreeProvider;
 
 function appendLog(category: LogCategory, level: LogLevel, message: string, source?: string): void {
     outputChannel.appendLine(`[${category}:${level}] ${message}`);
@@ -43,12 +49,26 @@ function appendLog(category: LogCategory, level: LogLevel, message: string, sour
 }
 
 export function activate(context: vscode.ExtensionContext) {
+    try {
+        activateImpl(context);
+    } catch (err: any) {
+        const msg = err?.message ?? String(err);
+        void vscode.window.showErrorMessage(
+            `WhiteNeedle failed to activate: ${msg}. Check the Output panel or Developer Tools.`
+        );
+        console.error('[WhiteNeedle] activate failed', err);
+        throw err;
+    }
+}
+
+function activateImpl(context: vscode.ExtensionContext) {
     extensionContext = context;
     outputChannel = vscode.window.createOutputChannel('WhiteNeedle');
     outputChannel.appendLine('[WhiteNeedle] Extension activated');
 
     deviceManager = new DeviceManager(outputChannel);
-    scriptRunner = new ScriptRunner(deviceManager, outputChannel);
+    hookCodeRegistry = new HookCodeRegistry();
+    scriptRunner = new ScriptRunner(deviceManager, outputChannel, hookCodeRegistry);
     discovery = new DeviceDiscovery();
 
     // --- Proxy Server ---
@@ -115,6 +135,14 @@ export function activate(context: vscode.ExtensionContext) {
         treeDataProvider: scriptTreeProvider,
     });
 
+    const moduleChangedEmitter = new vscode.EventEmitter<void>();
+    moduleManager = new ModuleManager(deviceManager, outputChannel, moduleChangedEmitter);
+    moduleTreeProvider = new ModuleTreeProvider(moduleManager);
+    moduleChangedEmitter.event(() => moduleTreeProvider.refresh());
+    const moduleTreeView = vscode.window.createTreeView('whiteneedle-modules', {
+        treeDataProvider: moduleTreeProvider,
+    });
+
     // --- Debug ---
     const debugFactory = new WhiteNeedleDebugAdapterFactory();
     const debugConfigProvider = new WhiteNeedleConfigurationProvider();
@@ -135,6 +163,7 @@ export function activate(context: vscode.ExtensionContext) {
     const refreshAllViews = () => {
         deviceTreeProvider.refresh();
         scriptTreeProvider.refresh();
+        moduleTreeProvider.refresh();
     };
 
     const attachedBridges = new WeakSet<object>();
@@ -164,8 +193,11 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         deviceTreeView,
         scriptTreeView,
+        moduleTreeView,
+        moduleChangedEmitter,
         outputChannel,
         statusBarItem,
+        proxyStatusBarItem,
 
         // --- Status Bar Action ---
         vscode.commands.registerCommand('whiteneedle.statusBarAction', async () => {
@@ -417,7 +449,7 @@ export function activate(context: vscode.ExtensionContext) {
         }),
 
         vscode.commands.registerCommand('whiteneedle.openHooks', () => {
-            HookPanel.createOrShow(context.extensionUri, deviceManager);
+            HookPanel.createOrShow(context.extensionUri, deviceManager, hookCodeRegistry);
         }),
 
         vscode.commands.registerCommand('whiteneedle.openNetwork', () => {
@@ -462,6 +494,84 @@ export function activate(context: vscode.ExtensionContext) {
 
         vscode.commands.registerCommand('whiteneedle.inspectInGraph', (address: string) => {
             RetainGraphPanel.createOrShowAt(context.extensionUri, deviceManager, address);
+        }),
+
+        // --- Module commands ---
+        vscode.commands.registerCommand('whiteneedle.installModule', async () => {
+            if (!deviceManager.isConnected) {
+                vscode.window.showWarningMessage('WhiteNeedle: Not connected to any device.');
+                return;
+            }
+            const source = await vscode.window.showQuickPick([
+                { label: '$(globe) From URL', id: 'url' },
+                { label: '$(file) From Local File', id: 'file' },
+                { label: '$(package) From npm', id: 'npm' },
+            ], { placeHolder: 'Select module source' });
+            if (!source) { return; }
+
+            try {
+                switch (source.id) {
+                    case 'url': {
+                        const url = await vscode.window.showInputBox({
+                            prompt: 'Enter URL to JS module file',
+                            placeHolder: 'https://unpkg.com/lodash/lodash.min.js',
+                        });
+                        if (!url) { return; }
+                        await moduleManager.installFromUrl(url);
+                        vscode.window.showInformationMessage('Module installed from URL');
+                        break;
+                    }
+                    case 'file': {
+                        const uris = await vscode.window.showOpenDialog({
+                            canSelectMany: false,
+                            filters: { 'JavaScript': ['js'] },
+                            openLabel: 'Install Module',
+                        });
+                        if (!uris || uris.length === 0) { return; }
+                        await moduleManager.installFromFile(uris[0].fsPath);
+                        vscode.window.showInformationMessage('Module installed from local file');
+                        break;
+                    }
+                    case 'npm': {
+                        const pkg = await vscode.window.showInputBox({
+                            prompt: 'Enter npm package name',
+                            placeHolder: 'lodash',
+                        });
+                        if (!pkg) { return; }
+                        await moduleManager.installFromNpm(pkg);
+                        vscode.window.showInformationMessage(`Module installed from npm: ${pkg}`);
+                        break;
+                    }
+                }
+            } catch (err: any) {
+                vscode.window.showErrorMessage(`Module install failed: ${err.message}`);
+                outputChannel.appendLine(`[Module] Install error: ${err.message}`);
+            }
+        }),
+
+        vscode.commands.registerCommand('whiteneedle.uninstallModule', async (item?: ModuleItem) => {
+            if (!deviceManager.isConnected) {
+                vscode.window.showWarningMessage('WhiteNeedle: Not connected to any device.');
+                return;
+            }
+            const name = item?.moduleName ?? await vscode.window.showInputBox({
+                prompt: 'Enter module name to uninstall',
+            });
+            if (!name) { return; }
+            const confirm = await vscode.window.showWarningMessage(
+                `Uninstall module "${name}"?`, { modal: true }, 'Uninstall'
+            );
+            if (confirm !== 'Uninstall') { return; }
+            try {
+                await moduleManager.uninstall(name);
+                vscode.window.showInformationMessage(`Module "${name}" uninstalled`);
+            } catch (err: any) {
+                vscode.window.showErrorMessage(`Uninstall failed: ${err.message}`);
+            }
+        }),
+
+        vscode.commands.registerCommand('whiteneedle.refreshModules', () => {
+            moduleTreeProvider.refresh();
         }),
 
         // --- Proxy commands ---

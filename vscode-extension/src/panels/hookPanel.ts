@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { DeviceManager } from '../device/deviceManager';
 import { bindConnectionState, OVERLAY_CSS, OVERLAY_HTML, OVERLAY_JS } from './connectionOverlay';
+import { HookCodeRegistry } from './hookCodeRegistry';
 
 export interface HookInfo {
     selector: string;
@@ -60,10 +61,15 @@ export class HookPanel {
     private readonly panel: vscode.WebviewPanel;
     private readonly extensionUri: vscode.Uri;
     private readonly deviceManager: DeviceManager;
+    private readonly hookRegistry: HookCodeRegistry;
     private disposables: vscode.Disposable[] = [];
     private refreshTimer: ReturnType<typeof setInterval> | null = null;
 
-    public static createOrShow(extensionUri: vscode.Uri, deviceManager: DeviceManager): HookPanel {
+    public static createOrShow(
+        extensionUri: vscode.Uri,
+        deviceManager: DeviceManager,
+        hookRegistry: HookCodeRegistry,
+    ): HookPanel {
         const column = vscode.ViewColumn.One;
         if (HookPanel.currentPanel) {
             HookPanel.currentPanel.panel.reveal(column);
@@ -75,14 +81,20 @@ export class HookPanel {
             column,
             { enableScripts: true, retainContextWhenHidden: true }
         );
-        HookPanel.currentPanel = new HookPanel(panel, extensionUri, deviceManager);
+        HookPanel.currentPanel = new HookPanel(panel, extensionUri, deviceManager, hookRegistry);
         return HookPanel.currentPanel;
     }
 
-    private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri, deviceManager: DeviceManager) {
+    private constructor(
+        panel: vscode.WebviewPanel,
+        extensionUri: vscode.Uri,
+        deviceManager: DeviceManager,
+        hookRegistry: HookCodeRegistry,
+    ) {
         this.panel = panel;
         this.extensionUri = extensionUri;
         this.deviceManager = deviceManager;
+        this.hookRegistry = hookRegistry;
 
         this.panel.webview.html = this.getHtmlContent();
         this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
@@ -133,6 +145,7 @@ export class HookPanel {
         if (confirm !== 'Detach') { return; }
         try {
             await this.deviceManager.detachHook(selector);
+            this.hookRegistry.remove(`template-${selector}`);
             await this.loadHooks();
         } catch (e: any) {
             vscode.window.showErrorMessage(`Failed to detach hook: ${e.message}`);
@@ -155,6 +168,7 @@ export class HookPanel {
 
         try {
             await this.deviceManager.evaluate(template.code);
+            this.hookRegistry.record(`template-${template.label}`, template.code);
             vscode.window.showInformationMessage(`Template "${template.label}" applied`);
             setTimeout(() => this.loadHooks(), 500);
         } catch (e: any) {
@@ -165,6 +179,7 @@ export class HookPanel {
     private async runCustomCode(code: string): Promise<void> {
         try {
             await this.deviceManager.evaluate(code);
+            this.hookRegistry.record(`custom-${Date.now()}`, code);
             vscode.window.showInformationMessage('Hook code executed');
             setTimeout(() => this.loadHooks(), 500);
         } catch (e: any) {

@@ -123,6 +123,17 @@ static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
     NSLog(@"%@ Engine torn down", kWNLogPrefix);
 }
 
+- (void)resetContext {
+    NSLog(@"%@ Resetting JSContext...", kWNLogPrefix);
+    [WNPerformanceBridge stopFpsMonitor];
+    [WNHookEngine detachAll];
+    [WNModuleLoader clearAllCache];
+    [WNModuleLoader resetSearchPaths];
+    [self teardown];
+    [self setup];
+    NSLog(@"%@ JSContext reset complete", kWNLogPrefix);
+}
+
 #pragma mark - Script management
 
 - (BOOL)loadScript:(NSString *)code name:(NSString *)name {
@@ -133,7 +144,16 @@ static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
 
     [self unloadScript:name];
 
-    JSValue *result = [self.context evaluateScript:code withSourceURL:[NSURL URLWithString:name]];
+    // Re-evaluating the same script in one JSContext leaves top-level `class` / `let` / `const`
+    // bindings in the global environment; a second run causes "Can't create duplicate variable".
+    // Run user scripts inside an IIFE so each load gets a fresh function scope. Optional
+    // bootstrap (bundled as bootstrap.js) is left unwrapped so it can intentionally populate globals.
+    NSString *codeToEval = code;
+    if (![name isEqualToString:@"bootstrap.js"]) {
+        codeToEval = [NSString stringWithFormat:@"(function(){\n%@\n})();", code];
+    }
+
+    JSValue *result = [self.context evaluateScript:codeToEval withSourceURL:[NSURL URLWithString:name]];
     if (!result) {
         NSLog(@"%@ Failed to evaluate script: %@", kWNLogPrefix, name);
         return NO;

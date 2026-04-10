@@ -1,6 +1,6 @@
 # WhiteNeedle 分发包
 
-基于 **JavaScriptCore** 的 iOS 远程调试工具套件 — 通过 VS Code / Cursor 实现局域网设备发现、脚本推送、JS 断点调试，以及 ObjC 运行时浏览。
+基于 **JavaScriptCore** 的 iOS 远程调试工具套件 — 通过 VS Code / Cursor 实现局域网设备发现、脚本推送、JS 断点调试、ObjC 运行时浏览，以及设备端 JS 模块管理。
 
 ## 分发包内容
 
@@ -41,6 +41,8 @@ dist/
 ---
 
 ## 快速开始
+
+> **首次使用？** 推荐先阅读 [📖 新手使用指南（docs/USAGE-GUIDE.md）](docs/USAGE-GUIDE.md)，包含每个功能的详细操作步骤和截图说明。
 
 ### 1. 安装 VS Code / Cursor 扩展
 
@@ -179,6 +181,10 @@ pod 'WhiteNeedle', '~> 2.0'
 3. `Cmd+Shift+R` 推送并运行
 4. 在 **Output → WhiteNeedle** 查看日志
 
+> **脚本执行模式：** 设置 `whiteneedle.scriptMode` 可切换 `single`（默认，IIFE 快速迭代）和 `project`（全新 JSContext + 自动推送 `require('./...')` 依赖）两种模式。Project 模式下会自动分析本地依赖、重建执行环境、回放 Hook，适合多文件项目调试。详见 [使用指南第 6 节](docs/USAGE-GUIDE.md#6-脚本执行模式single--project)。
+
+> **JS 模块管理：** 可通过 `WhiteNeedle: Install JS Module` 命令将常用 JS 库（从 URL / 本地文件 / npm）安装到设备端，脚本中直接 `require('模块名')` 使用。在侧边栏 **Installed Modules** 面板管理已安装模块。详见 [使用指南第 7 节](docs/USAGE-GUIDE.md#7-js-模块管理)。
+
 ### 5. 断点调试（DAP）
 
 详见 `docs/inspector-vscode.md`。
@@ -264,6 +270,12 @@ cp -R skills/whiteneedle-resign ~/.cursor/skills/
 **Q: 脚本推送报 "Not connected"？**
 先在 Devices 面板连接设备。WhiteNeedle 引擎默认监听 TCP 27042 端口。
 
+**Q: Project 模式下 `require('./xxx')` 依赖找不到？**
+确认依赖文件存在于 Mac 端且路径正确。裸模块名（如 `require('lodash')`）需要提前通过 `WhiteNeedle: Install JS Module` 安装到设备端。
+
+**Q: npm 安装的模块内容不正确？**
+部分 npm 包没有提供 UMD 单文件 bundle，手动从 CDN 找到正确的 JS 文件 URL 后用「From URL」方式安装。
+
 **Q: MCP Server 连接不上设备？**
 确认 `WN_HOST` 填的是 iPhone 的局域网 IP（不是 Mac 的 IP），`WN_PORT` 为 27042（默认）。可以先用 VS Code 扩展的 Connect by IP 测试 `<IP>:27042` 能否连通，确认通了之后 MCP 用同样的地址即可。
 
@@ -273,6 +285,7 @@ cp -R skills/whiteneedle-resign ~/.cursor/skills/
 
 | 文档 | 说明 |
 |------|------|
+| `docs/USAGE-GUIDE.md` | **📖 新手使用指南（推荐首先阅读）** |
 | `docs/api-*.md` | 各模块 API 参考 |
 | `docs/inspector-vscode.md` | DAP 调试配置 |
 

@@ -17,6 +17,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (void)registerInContext:(JSContext *)context;
 
++ (void)stopFpsMonitor;
+
 @end
 
 NS_ASSUME_NONNULL_END

@@ -11,6 +11,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (void)registerBuiltinModule:(NSString *)name source:(NSString *)source;
 
++ (void)clearAllCache;
+
++ (void)resetSearchPaths;
+
 @end
 
 NS_ASSUME_NONNULL_END

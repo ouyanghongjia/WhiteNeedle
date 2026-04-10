@@ -19,6 +19,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (void)setup;
 - (void)teardown;
+- (void)resetContext;
 
 - (BOOL)loadScript:(NSString *)code name:(NSString *)name;
 - (void)unloadScript:(NSString *)name;

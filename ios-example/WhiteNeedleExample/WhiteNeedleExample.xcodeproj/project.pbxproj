@@ -96,7 +96,7 @@
 				6CDBE6FF2F76CDF6006DCC01 /* Sources */,
 				6CDBE7002F76CDF6006DCC01 /* Frameworks */,
 				6CDBE7012F76CDF6006DCC01 /* Resources */,
-				39DEEAA3F9914E20E8617141 /* [CP-User] Copy Sample Scripts */,
+				39DEEAA3F9914E20E8617141 /* [CP-User] Copy Test Scripts */,
 			);
 			buildRules = (
 			);
@@ -154,12 +154,16 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		39DEEAA3F9914E20E8617141 /* [CP-User] Copy Sample Scripts */ = {
+		39DEEAA3F9914E20E8617141 /* [CP-User] Copy Test Scripts */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
+			inputPaths = (
+			);
 			name = "[CP-User] Copy Test Scripts";
+			outputPaths = (
+			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "rsync -av --delete \"${SRCROOT}/../../test-scripts/\" \"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/test-scripts/\"";
@@ -207,7 +211,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = UWKKPSDZ7F;
+				DEVELOPMENT_TEAM = YK4WKE5WAM;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = WhiteNeedleExample/Info.plist;
@@ -238,7 +242,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = UWKKPSDZ7F;
+				DEVELOPMENT_TEAM = YK4WKE5WAM;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = WhiteNeedleExample/Info.plist;

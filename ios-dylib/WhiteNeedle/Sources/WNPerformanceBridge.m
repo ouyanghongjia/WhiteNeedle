@@ -150,4 +150,11 @@ static WNFPSMonitor *sFPSMonitor = nil;
     NSLog(@"%@ Performance bridge registered", kLogPrefix);
 }
 
++ (void)stopFpsMonitor {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [sFPSMonitor stop];
+        sFPSMonitor = nil;
+    });
+}
+
 @end

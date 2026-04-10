@@ -518,6 +518,91 @@ static void WNSocketCallback(CFSocketRef socket, CFSocketCallBackType type,
                  @"ruleCount": @([WNMockInterceptor shared].allRules.count)};
     }
 
+    // --- JSContext Reset ---
+
+    if ([method isEqualToString:@"resetContext"]) {
+        [self.engine resetContext];
+        return @{@"success": @YES};
+    }
+
+    // --- File System Operations (sandboxed to Documents/) ---
+
+    if ([method isEqualToString:@"writeFile"]) {
+        NSString *relativePath = params[@"path"];
+        NSString *content = params[@"content"];
+        if (!relativePath || !content) {
+            return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Missing path or content"}];
+        }
+        NSString *docPath = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+        NSString *fullPath = [docPath stringByAppendingPathComponent:relativePath];
+
+        NSString *dir = [fullPath stringByDeletingLastPathComponent];
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSError *err;
+        [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:&err];
+        if (err) {
+            return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: err.localizedDescription}];
+        }
+        BOOL ok = [content writeToFile:fullPath atomically:YES encoding:NSUTF8StringEncoding error:&err];
+        if (!ok) {
+            return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: err.localizedDescription ?: @"writeFile failed"}];
+        }
+        return @{@"success": @YES};
+    }
+
+    if ([method isEqualToString:@"mkdir"]) {
+        NSString *relativePath = params[@"path"];
+        if (!relativePath) {
+            return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Missing path"}];
+        }
+        NSString *docPath = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+        NSString *fullPath = [docPath stringByAppendingPathComponent:relativePath];
+        NSError *err;
+        [[NSFileManager defaultManager] createDirectoryAtPath:fullPath withIntermediateDirectories:YES attributes:nil error:&err];
+        if (err) {
+            return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: err.localizedDescription}];
+        }
+        return @{@"success": @YES};
+    }
+
+    if ([method isEqualToString:@"removeDir"]) {
+        NSString *relativePath = params[@"path"];
+        if (!relativePath) {
+            return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Missing path"}];
+        }
+        NSString *docPath = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+        NSString *fullPath = [docPath stringByAppendingPathComponent:relativePath];
+        NSFileManager *fm = [NSFileManager defaultManager];
+        if ([fm fileExistsAtPath:fullPath]) {
+            NSError *err;
+            [fm removeItemAtPath:fullPath error:&err];
+            if (err) {
+                return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: err.localizedDescription}];
+            }
+        }
+        return @{@"success": @YES};
+    }
+
+    if ([method isEqualToString:@"listInstalledJsModules"]) {
+        NSString *docPath = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+        NSString *modulesDir = [docPath stringByAppendingPathComponent:@"wn_installed_modules"];
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSMutableArray *modules = [NSMutableArray array];
+        if ([fm fileExistsAtPath:modulesDir]) {
+            NSArray *contents = [fm contentsOfDirectoryAtPath:modulesDir error:nil];
+            for (NSString *name in contents) {
+                if ([name hasPrefix:@"."]) continue;
+                NSString *fullPath = [modulesDir stringByAppendingPathComponent:name];
+                NSDictionary *attrs = [fm attributesOfItemAtPath:fullPath error:nil];
+                [modules addObject:@{
+                    @"name": name,
+                    @"size": attrs[NSFileSize] ?: @(0)
+                }];
+            }
+        }
+        return @{@"modules": modules};
+    }
+
     return [NSError errorWithDomain:@"WN" code:-32601
                            userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"Unknown method: %@", method]}];
 }
