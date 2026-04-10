@@ -11,9 +11,9 @@ WhiteNeedle is an iOS dynamic scripting engine built on **JavaScriptCore**. It e
 | `docs/` | JavaScript API reference (Markdown) |
 | `vscode-extension/` | VS Code / Cursor extension (TypeScript) |
 | `mcp-server/` | Optional MCP server (Node.js) for editor/agent tooling |
-| `sample-scripts/` | Sample scripts for the engine |
+| `sample-scripts/` | User-facing sample scripts (API demos & usage examples) |
+| `test-scripts/` | API stability tests (for ios-example integration testing) |
 | `skills/` | Cursor Agent Skills (includes resign workflow + JS API docs) |
-| `deploy.sh` | Optional pipeline: build dylib → resign → install (configure `deploy.conf`) |
 
 ## Documentation
 

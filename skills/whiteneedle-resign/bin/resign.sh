@@ -7,6 +7,7 @@ set -euo pipefail
 # ============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SKILL_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WORK_DIR=""
 
 usage() {
@@ -65,7 +66,7 @@ INPUT_IPA=""
 SIGN_IDENTITY=""
 PROVISION_PROFILE=""
 OUTPUT_IPA=""
-DYLIB_DIR="$SCRIPT_DIR/payload"
+DYLIB_DIR="$SKILL_ROOT/payload"
 KEEP_EXTENSIONS=false
 EXT_PROFILE=""
 EXT_PROFILE_DIR=""
@@ -111,13 +112,13 @@ WN_DYLIB="$DYLIB_DIR/WhiteNeedle.dylib"
 
 # --- Check for insert_dylib ---
 INSERT_DYLIB=""
-if command -v insert_dylib &>/dev/null; then
-    INSERT_DYLIB="insert_dylib"
-elif [[ -x "$SCRIPT_DIR/insert_dylib" ]]; then
+if [[ -x "$SCRIPT_DIR/insert_dylib" ]]; then
     INSERT_DYLIB="$SCRIPT_DIR/insert_dylib"
+elif command -v insert_dylib &>/dev/null; then
+    INSERT_DYLIB="insert_dylib"
 else
-    err "insert_dylib not found. Install it or place it next to this script.
-    Build from source: https://github.com/nicklama/insert_dylib"
+    err "insert_dylib not found. Place it in $SCRIPT_DIR/ or install it globally.
+    Build from source: clang -o insert_dylib insert_dylib.c"
 fi
 
 # ---------------------------------------------------------------------------

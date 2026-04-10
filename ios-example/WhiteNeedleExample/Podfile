@@ -8,9 +8,9 @@ target 'WhiteNeedleExample' do
   # 本地开发 Pod：源码在 ios-dylib/WhiteNeedle，可在 Xcode 中单步调试
   pod 'WhiteNeedle', :path => '../../ios-dylib/WhiteNeedle'
 
-  # 将 sample-scripts/ 同步到 app bundle，供运行时加载测试脚本
-  script_phase :name => 'Copy Sample Scripts',
-    :script => 'rsync -av --delete "${SRCROOT}/../../sample-scripts/" "${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/sample-scripts/"',
+  # 将 test-scripts/ 同步到 app bundle，供运行时加载测试脚本
+  script_phase :name => 'Copy Test Scripts',
+    :script => 'rsync -av --delete "${SRCROOT}/../../test-scripts/" "${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/test-scripts/"',
     :execution_position => :after_compile
 end
 

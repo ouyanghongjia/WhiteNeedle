@@ -1,6 +1,6 @@
 # WhiteNeedle IPA Resign Skill
 
-将 WhiteNeedle.dylib 注入 IPA 并重签名，使其可以安装到 iOS 设备上进行调试。本 skill 自包含——resign.sh 和 insert_dylib.c 均在同一目录下。
+将 WhiteNeedle.dylib 注入 IPA 并重签名，使其可以安装到 iOS 设备上进行调试。本 skill 自包含——所有工具、配置和产物均按子目录归类。
 
 Use when the user asks to resign an IPA, inject WhiteNeedle dylib, re-sign an app, prepare an IPA for debugging, deploy WhiteNeedle to an app, or install a debug-enabled IPA.
 
@@ -11,9 +11,16 @@ Trigger phrases: "resign IPA", "re-sign", "inject dylib", "重签名", "注入 d
 All tools are bundled alongside this SKILL.md. Determine this skill's directory from the `fullPath` used to read this file.
 
 ```
-<SKILL_DIR>/resign.sh      # IPA resign + inject script
-<SKILL_DIR>/insert_dylib.c  # Mach-O patcher source
-<SKILL_DIR>/deploy.conf     # User-persistent config (cert, profile, device, etc.)
+<SKILL_DIR>/
+├── SKILL.md                    # Skill definition (this file)
+├── bin/                        # Executables
+│   ├── resign.sh               #   IPA resign + inject script
+│   ├── insert_dylib            #   Mach-O patcher binary (pre-compiled)
+│   └── insert_dylib.c          #   Mach-O patcher source (for cross-arch build)
+├── config/                     # User configuration
+│   └── deploy.conf             #   Signing cert, profile, device, etc.
+└── payload/                    # Bundled artifacts
+    └── WhiteNeedle.dylib       #   Pre-built dylib
 ```
 
 Where `<SKILL_DIR>` is the directory containing this SKILL.md.
@@ -29,13 +36,13 @@ Where `<SKILL_DIR>` is the directory containing this SKILL.md.
 
 ### Step 0: Load & Validate Saved Configuration
 
-**Before asking the user for anything**, check `<SKILL_DIR>/deploy.conf` for pre-configured values. Only prompt for parameters that are missing or invalid.
+**Before asking the user for anything**, check `<SKILL_DIR>/config/deploy.conf` for pre-configured values. Only prompt for parameters that are missing or invalid.
 
 #### 0a. Read deploy.conf
 
 ```bash
 SKILL_DIR="<SKILL_DIR>"
-CONF_FILE="$SKILL_DIR/deploy.conf"
+CONF_FILE="$SKILL_DIR/config/deploy.conf"
 
 # Source the config to get: SIGN_IDENTITY, PROVISION_PROFILE, DEVICE_UDID, KEEP_EXTENSIONS, INSTALL_TOOL
 if [ -f "$CONF_FILE" ]; then
@@ -133,18 +140,18 @@ Only use AskQuestion or direct conversation to collect the **missing** parameter
 
 ```
 💡 提示: 您可以直接编辑配置文件预设这些参数，之后重签名将自动使用，无需再次提供:
-   <SKILL_DIR的实际绝对路径>/deploy.conf
+   <SKILL_DIR的实际绝对路径>/config/deploy.conf
 ```
 
 Use the **actual absolute path** resolved from `<SKILL_DIR>` so the user can directly click/open it. This tip should only appear when there are missing parameters, not when everything is already configured.
 
 ### Step 0.5: Save Configuration
 
-After successful resign, **automatically** save the user-provided values (cert, profile, device) to `<SKILL_DIR>/deploy.conf` and inform the user:
+After successful resign, **automatically** save the user-provided values (cert, profile, device) to `<SKILL_DIR>/config/deploy.conf` and inform the user:
 
 ```
 已将本次使用的配置保存到:
-   <SKILL_DIR的实际绝对路径>/deploy.conf
+   <SKILL_DIR的实际绝对路径>/config/deploy.conf
 
 下次重签名将自动使用这些配置，无需再次提供。如需修改，直接编辑该文件即可。
 ```
@@ -152,7 +159,7 @@ After successful resign, **automatically** save the user-provided values (cert, 
 Implementation:
 
 ```bash
-CONF_FILE="$SKILL_DIR/deploy.conf"
+CONF_FILE="$SKILL_DIR/config/deploy.conf"
 # Only update the fields that the user provided new values for, preserve other values
 ```
 
@@ -283,21 +290,21 @@ If there are `❌` errors, list them with the config file path tip:
 
 ```
 请修正以上标记为 ❌ 的问题后重试。
-💡 提示: 常用配置可以保存到: <SKILL_DIR的实际绝对路径>/deploy.conf
+    💡 提示: 常用配置可以保存到: <SKILL_DIR的实际绝对路径>/config/deploy.conf
 ```
 
 If there are only `⚠️` warnings, ask user whether to proceed.
 
 ### Step 1: Compile insert_dylib (if needed)
 
-Check if `insert_dylib` binary exists in the skill directory. If not, compile it:
+Check if `insert_dylib` binary exists in `<SKILL_DIR>/bin/`. If not, compile from source:
 
 ```bash
 SKILL_DIR="<SKILL_DIR>"
-if [ ! -x "$SKILL_DIR/insert_dylib" ]; then
+if [ ! -x "$SKILL_DIR/bin/insert_dylib" ]; then
     echo "Compiling insert_dylib..."
-    clang -o "$SKILL_DIR/insert_dylib" "$SKILL_DIR/insert_dylib.c"
-    chmod +x "$SKILL_DIR/insert_dylib"
+    clang -o "$SKILL_DIR/bin/insert_dylib" "$SKILL_DIR/bin/insert_dylib.c"
+    chmod +x "$SKILL_DIR/bin/insert_dylib"
 fi
 ```
 
@@ -314,7 +321,7 @@ cp "<DYLIB_PATH>" "$PAYLOAD_DIR/WhiteNeedle.dylib"
 ### Step 3: Execute Resign
 
 ```bash
-bash "$SKILL_DIR/resign.sh" \
+bash "$SKILL_DIR/bin/resign.sh" \
   -i "<IPA_PATH>" \
   -c "<SIGN_IDENTITY>" \
   -p "<PROVISION_PROFILE>" \
@@ -376,7 +383,7 @@ AI: [读取 deploy.conf — 发现证书、描述文件均未配置]
     3. 描述文件路径
 
     💡 提示: 您也可以直接编辑下面的配置文件预设这些参数，之后重签名将自动使用，无需再次提供:
-       /Users/you/.cursor/skills/whiteneedle-resign/deploy.conf
+       /Users/you/.cursor/skills/whiteneedle-resign/config/deploy.conf
 
 User: ~/Downloads/MyApp.ipa，用第1个证书，描述文件在 ~/profiles/dev.mobileprovision
 
@@ -384,7 +391,7 @@ AI: [验证文件 + 执行重签名]
     重签名完成！
 
     已将本次使用的配置保存到:
-       /Users/you/.cursor/skills/whiteneedle-resign/deploy.conf
+       /Users/you/.cursor/skills/whiteneedle-resign/config/deploy.conf
 
     下次重签名将自动使用这些配置，无需再次提供证书和描述文件。
 ```
@@ -444,7 +451,7 @@ AI: [验证参数]
     3. 提供未过期的描述文件
 
     💡 提示: 常用配置可以保存到:
-       /Users/you/.cursor/skills/whiteneedle-resign/deploy.conf
+       /Users/you/.cursor/skills/whiteneedle-resign/config/deploy.conf
 ```
 
 ### Session 5: Config has stale values
@@ -466,7 +473,7 @@ AI: [读取 deploy.conf — 发现已有配置]
     1) Apple Development: new@example.com (DEF456)
 
     💡 提示: 更新后的证书会自动保存到:
-       /Users/you/.cursor/skills/whiteneedle-resign/deploy.conf
+       /Users/you/.cursor/skills/whiteneedle-resign/config/deploy.conf
 
 User: 用第 1 个
 
@@ -474,7 +481,7 @@ AI: [更新证书 + 验证通过 + 执行重签名]
     重签名完成！
 
     已更新配置文件中的签名证书:
-       /Users/you/.cursor/skills/whiteneedle-resign/deploy.conf
+       /Users/you/.cursor/skills/whiteneedle-resign/config/deploy.conf
     ⚠️ 提醒: 描述文件将于 2026-04-14 过期，届时需要更新。
 ```
 
@@ -562,7 +569,7 @@ xcode-select --install
 App Extensions 需要单独的描述文件。使用 `-e` + `--ext-profile` 指定通配符描述文件，或使用 `--ext-profile-dir` 指定每个 extension 的独立描述文件。
 
 **Q: 描述文件已过期**
-重新从 Apple Developer Portal 下载或通过 Xcode 自动管理。更新后修改 `<SKILL_DIR>/deploy.conf` 中的 `PROVISION_PROFILE` 路径。
+重新从 Apple Developer Portal 下载或通过 Xcode 自动管理。更新后修改 `<SKILL_DIR>/config/deploy.conf` 中的 `PROVISION_PROFILE` 路径。
 
 ## Installation
 
@@ -571,19 +578,21 @@ To install this skill:
 1. Copy the entire `whiteneedle-resign/` directory to the target skills directory:
    - **Cursor**: `~/.cursor/skills/whiteneedle-resign/`
    - **Claude Code**: `~/.claude/skills/whiteneedle-resign/`
-2. Ensure `resign.sh` has execute permission: `chmod +x resign.sh`
-3. Edit `deploy.conf` to fill in your signing certificate, provisioning profile, and device UDID
-4. The `insert_dylib` binary will be auto-compiled on first use
+2. Ensure scripts have execute permission: `chmod +x bin/resign.sh bin/insert_dylib`
+3. Edit `config/deploy.conf` to fill in your signing certificate, provisioning profile, and device UDID
+4. The `insert_dylib` binary will be auto-compiled from `bin/insert_dylib.c` on first use if missing
 
 The complete directory structure:
 
 ```
 whiteneedle-resign/
-├── SKILL.md            # Skill definition (this file)
-├── deploy.conf         # User configuration (cert, profile, device, etc.)
-├── resign.sh           # IPA resign + inject script
-├── insert_dylib        # Mach-O patcher binary (auto-compiled)
-├── insert_dylib.c      # Mach-O patcher source
-└── payload/
-    └── WhiteNeedle.dylib  # Pre-built dylib
+├── SKILL.md                    # Skill definition (this file)
+├── bin/                        # Executables
+│   ├── resign.sh               #   IPA resign + inject script
+│   ├── insert_dylib            #   Mach-O patcher binary (pre-compiled)
+│   └── insert_dylib.c          #   Mach-O patcher source (for cross-arch build)
+├── config/                     # User configuration
+│   └── deploy.conf             #   Signing cert, profile, device, etc.
+└── payload/                    # Bundled artifacts
+    └── WhiteNeedle.dylib       #   Pre-built dylib
 ```

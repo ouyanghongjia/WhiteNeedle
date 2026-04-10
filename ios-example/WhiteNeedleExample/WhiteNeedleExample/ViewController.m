@@ -53,7 +53,7 @@ static NSString *const kNetworkCellID = @"NetworkCell";
 
 - (void)loadScriptList {
     NSString *scriptsDir = [[[NSBundle mainBundle] resourcePath]
-                            stringByAppendingPathComponent:@"sample-scripts"];
+                            stringByAppendingPathComponent:@"test-scripts"];
     NSArray *all = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:scriptsDir error:nil];
     NSMutableArray *tests = [NSMutableArray array];
     for (NSString *name in all) {
@@ -460,7 +460,7 @@ static NSString *const kNetworkCellID = @"NetworkCell";
 
 - (void)runScriptFile:(NSString *)fileName {
     NSString *scriptsDir = [[[NSBundle mainBundle] resourcePath]
-                            stringByAppendingPathComponent:@"sample-scripts"];
+                            stringByAppendingPathComponent:@"test-scripts"];
     NSString *path = [scriptsDir stringByAppendingPathComponent:fileName];
     NSError *error;
     NSString *code = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:&error];

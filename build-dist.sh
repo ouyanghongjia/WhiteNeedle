@@ -10,7 +10,8 @@ set -euo pipefail
 #   - skills/                   (Cursor agent skills)
 #   - WhiteNeedle.dylib         (pre-built dynamic library)
 #   - cocoapods/WhiteNeedle/    (CocoaPods private pod source + podspec)
-#   - sample-scripts/           (example scripts)
+#   - sample-scripts/           (example scripts for users)
+#   - test-scripts/            (API stability tests, not for distribution)
 #   - docs/                     (API & usage documentation)
 #   - README.md                 (distribution guide)
 #
@@ -120,8 +121,18 @@ mkdir -p "$DIST_DIR/skills"
 cp -R "$ROOT_DIR/skills/whiteneedle-js-api" "$DIST_DIR/skills/"
 cp -R "$ROOT_DIR/skills/whiteneedle-resign" "$DIST_DIR/skills/"
 
-# Update the resign skill's payload dylib with the fresh build
-cp "$DIST_DIR/WhiteNeedle.dylib" "$DIST_DIR/skills/whiteneedle-resign/payload/WhiteNeedle.dylib"
+# Build universal insert_dylib (arm64 + x86_64) so it works on any Mac
+RESIGN_SKILL="$DIST_DIR/skills/whiteneedle-resign"
+INSERT_SRC="$RESIGN_SKILL/bin/insert_dylib.c"
+if [[ -f "$INSERT_SRC" ]]; then
+    log "Compiling insert_dylib (universal binary) ..."
+    clang -arch arm64 -arch x86_64 -O2 -o "$RESIGN_SKILL/bin/insert_dylib" "$INSERT_SRC"
+    rm -f "$INSERT_SRC"
+    log "Compiled insert_dylib, removed source"
+fi
+
+# Place the freshly-built dylib into the resign skill's payload
+cp "$DIST_DIR/WhiteNeedle.dylib" "$RESIGN_SKILL/payload/WhiteNeedle.dylib"
 log "→ dist/skills/"
 
 # ============================================================================
@@ -138,7 +149,7 @@ cp "$ROOT_DIR/cocoapods-dist/WhiteNeedle/WhiteNeedle.podspec" "$POD_DIR/WhiteNee
 log "→ dist/cocoapods/WhiteNeedle/"
 
 # ============================================================================
-# Step 6: Copy Sample Scripts
+# Step 6: Copy Sample Scripts (user-facing examples only; test scripts stay in repo)
 # ============================================================================
 step 6 "Copy sample scripts"
 
@@ -147,7 +158,7 @@ cp "$ROOT_DIR/sample-scripts/"*.js "$DIST_DIR/sample-scripts/" 2>/dev/null || tr
 if [[ -d "$ROOT_DIR/sample-scripts/.vscode" ]]; then
     cp -R "$ROOT_DIR/sample-scripts/.vscode" "$DIST_DIR/sample-scripts/.vscode"
 fi
-log "→ dist/sample-scripts/"
+log "→ dist/sample-scripts/ ($(ls "$DIST_DIR/sample-scripts/"*.js 2>/dev/null | wc -l | tr -d ' ') scripts)"
 
 # ============================================================================
 # Step 7: Copy Documentation
