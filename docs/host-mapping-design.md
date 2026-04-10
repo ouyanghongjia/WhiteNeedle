@@ -1,7 +1,7 @@
 # Host Mapping + Mock 方案设计与演进
 
 > 记录 WhiteNeedle Host Mapping 和 Mock 功能从初版到最终方案的技术演进过程。
-> 最后更新：2026-03-31
+> 最后更新：2026-04-09
 
 ---
 
@@ -141,7 +141,7 @@ iOS App 中发起网络请求的路径多种多样：
 │  │  ┌──────────────────────────────────────┐                 │   │
 │  │  │ 其他 UI Panels                       │                 │   │
 │  │  │  ├─ Network Panel (请求监控展示)      │                 │   │
-│  │  │  └─ Mock Panel (Mock 规则管理) [计划] │                 │   │
+│  │  │  └─ Mock Panel (Mock 规则管理) ✅     │                 │   │
 │  │  └──────────────────────────────────────┘                 │   │
 │  │                                                            │   │
 │  └────────────────────────────────────────────────────────────┘   │
@@ -312,8 +312,9 @@ protocolClasses getter 被调用
 | `proxy/proxyServer.ts` | HTTP/HTTPS 正向代理 + Host Mapping 转发 |
 | `panels/hostMappingPanel.ts` | Host Mapping 规则管理 UI + 本地持久化 + 推送到 ProxyServer |
 | `panels/networkPanel.ts` | 请求监控 UI |
-| `extension.ts` | 扩展入口，代理生命周期管理 + 规则同步 |
-| `device/deviceManager.ts` | 设备 RPC 通信（Mock 规则等） |
+| `panels/mockPanel.ts` | HTTP Mock 规则管理 UI（CRUD + 拦截器开关 + 连接状态感知） |
+| `extension.ts` | 扩展入口，代理生命周期管理 + 规则同步 + Mock 面板命令注册 |
+| `device/deviceManager.ts` | 设备 RPC 通信（含 Mock 规则 CRUD、拦截器启停等 8 个方法） |
 
 ### 已删除的文件（v5 → v6 清理）
 

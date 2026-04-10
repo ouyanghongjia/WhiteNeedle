@@ -1,7 +1,7 @@
 # WhiteNeedle 演进路线图
 
 > 基于当前能力现状，从深度 iOS 调试用户视角出发的功能规划。
-> 最后更新：2026-03-31
+> 最后更新：2026-04-09
 
 ---
 
@@ -17,7 +17,8 @@
 | 调试器 | 断点、单步、变量查看（WebKit Inspector Protocol） |
 | 主线程调度 | `dispatch.main()` / `dispatch.mainAsync()` / `dispatch.after()` |
 | 网络监控 | NSURLSession / NSURLConnection / knet(curl) 请求捕获、应用级 Host 映射（SwitchHosts 风格） |
-| VS Code 集成 | Bonjour 发现、手动 IP 连接、侧边栏 TreeView × 6、脚本编辑器、网络面板、Host 映射面板 |
+| HTTP Mock | 纯本地 Mock / 响应改写（NSURLProtocol 拦截）、URL 模式匹配（子串/通配符/正则） |
+| VS Code 集成 | Bonjour 发现、手动 IP 连接、侧边栏 TreeView × 6、脚本编辑器、网络面板、Host 映射面板、Mock 规则面板 |
 
 ---
 
@@ -52,7 +53,7 @@
 
 - [ ] 请求时间线可视化
 - [ ] cURL 命令导出（方便复现）
-- [ ] Response Mock（拦截并修改返回数据）
+- [x] Response Mock（拦截并修改返回数据）— 已实现 `WNMockInterceptor`（Pure Mock / Rewrite Response），VS Code Mock 规则管理面板
 - [ ] WKWebView 请求捕获（Phase 2）
 - [ ] **SwitchHosts JSON 导入修复** — 当前 SwitchHosts v3/v4 导出文件解析存在兼容性问题（v4 将 host 列表元数据和内容分离存储在 potdb 中，`type` 字段可能为数字或字符串，根节点结构因版本而异），按钮暂时隐藏。需要获取真实 SwitchHosts 导出文件样本进行适配测试后重新启用。用户可通过 "Import Text" 以 `/etc/hosts` 文本格式手动导入。
 
@@ -221,7 +222,7 @@
 
 | 优先级 | 功能 | 价值 | 预估工作量 |
 |--------|------|------|-----------|
-| **P0** | ~~网络请求监控~~ ✅ | 替代 Charles/Proxyman + SwitchHosts，已实现 | — |
+| **P0** | ~~网络请求监控~~ ✅ | 替代 Charles/Proxyman + SwitchHosts，已实现（含 HTTP Mock） | — |
 | **P0** | 视图层级检查器 | 替代 Reveal，UI 调试核心工具 | 大 |
 | **P1** | 结构化日志系统 | 解决当前最大体验痛点 | 中 |
 | **P1** | Hook 管理面板 | 让 Hook 操作从写代码变为点按钮 | 中 |
@@ -244,7 +245,7 @@
 - 沙盒文件上传
 
 ### v0.3 — 核心调试工具
-- ~~网络请求监控~~ ✅ 已完成（含应用级 Host 映射、knet/curl 监控）
+- ~~网络请求监控~~ ✅ 已完成（含应用级 Host 映射、knet/curl 监控、HTTP Mock + VS Code 管理面板）
 - 视图层级检查器
 
 ### v0.4 — 数据调试套件
