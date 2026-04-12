@@ -94,6 +94,25 @@ static int sWatchCounter = 0;
 
 #pragma mark - Database Discovery
 
++ (BOOL)wn_shouldSkipDescendantsForSandboxPath:(NSString *)relativePath {
+    NSString *low = relativePath.lowercaseString;
+    // Skip heavy / non-user DB locations to keep discovery fast (VS Code bridge evaluate ~30s timeout).
+    static NSArray<NSString *> *exact;
+    static NSArray<NSString *> *prefixes;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        exact = @[ @"library/caches", @"library/logs", @"library/developer", @"library/saved application state" ];
+        prefixes = @[ @"library/caches/", @"library/logs/", @"library/developer/", @"systemdata/" ];
+    });
+    for (NSString *e in exact) {
+        if ([low isEqualToString:e]) return YES;
+    }
+    for (NSString *p in prefixes) {
+        if ([low hasPrefix:p]) return YES;
+    }
+    return NO;
+}
+
 + (NSArray<NSDictionary *> *)discoverDatabases {
     NSString *root = [self sandboxRoot];
     NSFileManager *fm = [NSFileManager defaultManager];
@@ -103,10 +122,18 @@ static int sWatchCounter = 0;
     NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:root];
     NSString *relativePath;
     while ((relativePath = [enumerator nextObject])) {
+        NSString *absPath = [root stringByAppendingPathComponent:relativePath];
+        BOOL isDir = NO;
+        if ([fm fileExistsAtPath:absPath isDirectory:&isDir] && isDir) {
+            if ([self wn_shouldSkipDescendantsForSandboxPath:relativePath]) {
+                [enumerator skipDescendants];
+            }
+            continue;
+        }
+
         NSString *ext = [relativePath pathExtension].lowercaseString;
         if (![extensions containsObject:ext]) continue;
 
-        NSString *absPath = [root stringByAppendingPathComponent:relativePath];
         NSDictionary *attrs = [fm attributesOfItemAtPath:absPath error:nil];
         if (!attrs || [attrs[NSFileType] isEqualToString:NSFileTypeDirectory]) continue;
 

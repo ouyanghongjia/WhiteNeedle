@@ -36,30 +36,38 @@ export class TcpBridge extends EventEmitter {
     private buffer = '';
     private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
     private heartbeatPending = false;
+    private _disposed = false;
 
     constructor(private outputChannel: vscode.OutputChannel) {
         super();
     }
 
     get isConnected(): boolean {
-        return this.socket !== null && !this.socket.destroyed;
+        return this.socket !== null && !this.socket.destroyed && !this._disposed;
     }
 
     async connect(host: string, port: number): Promise<void> {
         return new Promise((resolve, reject) => {
+            let settled = false;
+            const settle = (fn: typeof resolve | typeof reject, val?: any) => {
+                if (settled) { return; }
+                settled = true;
+                clearTimeout(timeout);
+                fn(val);
+            };
+
             this.socket = new net.Socket();
             this.socket.setKeepAlive(true, 5000);
 
             const timeout = setTimeout(() => {
                 this.socket?.destroy();
-                reject(new Error(`Connection timeout to ${host}:${port}`));
+                settle(reject, new Error(`Connection timeout to ${host}:${port}`));
             }, 10000);
 
             this.socket.connect(port, host, () => {
-                clearTimeout(timeout);
                 this.outputChannel.appendLine(`[TcpBridge] Connected to ${host}:${port}`);
                 this.startHeartbeat();
-                resolve();
+                settle(resolve);
             });
 
             this.socket.on('data', (data: Buffer) => {
@@ -68,13 +76,14 @@ export class TcpBridge extends EventEmitter {
             });
 
             this.socket.on('error', (err) => {
-                clearTimeout(timeout);
                 this.outputChannel.appendLine(`[TcpBridge] Error: ${err.message}`);
                 this.rejectAllPending(err);
-                reject(err);
+                settle(reject, err);
             });
 
             this.socket.on('close', () => {
+                if (this._disposed) { return; }
+                this._disposed = true;
                 this.outputChannel.appendLine('[TcpBridge] Connection closed');
                 this.stopHeartbeat();
                 this.rejectAllPending(new Error('Connection closed'));
@@ -85,6 +94,8 @@ export class TcpBridge extends EventEmitter {
     }
 
     disconnect(): void {
+        if (this._disposed) { return; }
+        this._disposed = true;
         this.stopHeartbeat();
         if (this.socket) {
             this.socket.destroy();

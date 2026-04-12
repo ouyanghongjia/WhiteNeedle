@@ -28,6 +28,7 @@ import {
 } from './debugging/debugAdapterFactory';
 import { ensureTypingsForWorkspace, getBundledTypingsPath } from './typings/typingsManager';
 import { HookCodeRegistry } from './panels/hookCodeRegistry';
+import { showPanelsMenu } from './views/panelsMenu';
 import { ModuleManager } from './modules/moduleManager';
 import { ModuleTreeProvider, ModuleItem } from './views/moduleTreeView';
 
@@ -496,6 +497,8 @@ function activateImpl(context: vscode.ExtensionContext) {
             RetainGraphPanel.createOrShowAt(context.extensionUri, deviceManager, address);
         }),
 
+        vscode.commands.registerCommand('whiteneedle.openPanelsMenu', () => showPanelsMenu()),
+
         // --- Module commands ---
         vscode.commands.registerCommand('whiteneedle.installModule', async () => {
             if (!deviceManager.isConnected) {
@@ -645,7 +648,11 @@ function activateImpl(context: vscode.ExtensionContext) {
 
     let autoConnecting = false;
     discovery.on('deviceFound', async (device: WNDevice) => {
-        if (deviceManager.isConnected || deviceManager.state === 'reconnecting' || deviceManager.state === 'connecting') { return; }
+        outputChannel.appendLine(
+            `[WhiteNeedle] Bonjour discovered: ${device.deviceName || device.name} at ${device.host}:${device.enginePort} (bundle=${device.bundleId})`
+        );
+
+        if (deviceManager.isConnected && deviceManager.isConnectedTo(device)) { return; }
         if (autoConnecting) { return; }
         const cfg = vscode.workspace.getConfiguration('whiteneedle');
         const autoConnect = cfg.get<boolean>('autoConnect', true);
@@ -662,7 +669,7 @@ function activateImpl(context: vscode.ExtensionContext) {
         if (matchesByIdentity || matchesByHost) {
             autoConnecting = true;
             outputChannel.appendLine(
-                `[WhiteNeedle] Auto-reconnecting to previously connected device: ${device.deviceName} (${device.host}:${device.enginePort})`
+                `[WhiteNeedle] Auto-connecting to Bonjour device: ${device.deviceName} (${device.host}:${device.enginePort})`
             );
             try {
                 await deviceManager.connect(device);
@@ -760,7 +767,8 @@ function scheduleLastDeviceFallback(
 
     const fallbackDelay = 6000;
     const timer = setTimeout(async () => {
-        if (deviceManager.isConnected) { return; }
+        const busy = deviceManager.state !== 'disconnected';
+        if (busy) { return; }
         if (discovery.getDevices().length > 0) { return; }
 
         const port = 27042;
@@ -773,7 +781,7 @@ function scheduleLastDeviceFallback(
             outputChannel.appendLine(`[WhiteNeedle] Last device ${lastHost}:${port} not reachable.`);
             return;
         }
-        if (deviceManager.isConnected) { return; }
+        if (deviceManager.state !== 'disconnected') { return; }
 
         const fallbackDevice: WNDevice = {
             name: `Fallback (${lastHost})`,

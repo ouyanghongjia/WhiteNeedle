@@ -18,6 +18,9 @@ NS_ASSUME_NONNULL_BEGIN
  *   FileSystem.stat(path)           → file attributes (size, dates, type)
  *   FileSystem.remove(path)         → delete file or empty directory
  *   FileSystem.mkdir(path)          → create directory (with intermediates)
+ *   FileSystem.move(from, to)       → move/rename file or directory
+ *   FileSystem.copy(from, to)       → copy file or directory
+ *   FileSystem.snapshot(paths, max) → recursive flat listing of multiple roots
  *   FileSystem.home                 → sandbox root path (getter)
  */
 @interface WNFileSystemBridge : NSObject

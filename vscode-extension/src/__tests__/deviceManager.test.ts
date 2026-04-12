@@ -167,8 +167,9 @@ describe('DeviceManager', () => {
         });
 
         it('returns false for different device', async () => {
-            await dm.connect(makeDevice({ host: '10.0.0.1', port: 1 }));
-            expect(dm.isConnectedTo(makeDevice({ host: '10.0.0.2', port: 2 }))).toBe(false);
+            // Use bundleId 'unknown' so identity (bundleId+deviceName) does not mask host+port.
+            await dm.connect(makeDevice({ host: '10.0.0.1', port: 1, bundleId: 'unknown' }));
+            expect(dm.isConnectedTo(makeDevice({ host: '10.0.0.2', port: 2, bundleId: 'unknown' }))).toBe(false);
         });
 
         it('returns false when disconnected', () => {
@@ -426,25 +427,35 @@ describe('DeviceManager', () => {
         it('BUG: isConnectedTo compares host+port, but connect uses host+enginePort', async () => {
             // A device discovered via Bonjour might have port=27042 (mDNS service port)
             // but enginePort=27043 (the actual TCP engine port)
-            const device = makeDevice({ host: '10.0.0.1', port: 27042, enginePort: 27043 });
+            const device = makeDevice({
+                host: '10.0.0.1',
+                port: 27042,
+                enginePort: 27043,
+                bundleId: 'unknown',
+            });
             await dm.connect(device);
 
             // isConnectedTo checks host + port (27042), which is the mDNS port
             expect(dm.isConnectedTo(device)).toBe(true);
 
             // But a device with same host but different mDNS port (e.g. from re-broadcast)
-            const samDeviceDiffPort = makeDevice({ host: '10.0.0.1', port: 27043, enginePort: 27043 });
+            const samDeviceDiffPort = makeDevice({
+                host: '10.0.0.1',
+                port: 27043,
+                enginePort: 27043,
+                bundleId: 'unknown',
+            });
             // This should logically be the same device (same host, same engine), but isConnectedTo returns false
             expect(dm.isConnectedTo(samDeviceDiffPort)).toBe(false);
         });
 
         it('matches device by host and port correctly', async () => {
-            const device = makeDevice({ host: '10.0.0.1', port: 27042 });
+            const device = makeDevice({ host: '10.0.0.1', port: 27042, bundleId: 'unknown' });
             await dm.connect(device);
 
-            expect(dm.isConnectedTo(makeDevice({ host: '10.0.0.1', port: 27042 }))).toBe(true);
-            expect(dm.isConnectedTo(makeDevice({ host: '10.0.0.2', port: 27042 }))).toBe(false);
-            expect(dm.isConnectedTo(makeDevice({ host: '10.0.0.1', port: 99999 }))).toBe(false);
+            expect(dm.isConnectedTo(makeDevice({ host: '10.0.0.1', port: 27042, bundleId: 'unknown' }))).toBe(true);
+            expect(dm.isConnectedTo(makeDevice({ host: '10.0.0.2', port: 27042, bundleId: 'unknown' }))).toBe(false);
+            expect(dm.isConnectedTo(makeDevice({ host: '10.0.0.1', port: 99999, bundleId: 'unknown' }))).toBe(false);
         });
     });
 
@@ -534,8 +545,8 @@ describe('DeviceManager', () => {
         });
 
         it('does not reconnect if connect() is called during reconnect', async () => {
-            const device1 = makeDevice({ host: '10.0.0.1' });
-            const device2 = makeDevice({ host: '10.0.0.2' });
+            const device1 = makeDevice({ host: '10.0.0.1', bundleId: 'unknown' });
+            const device2 = makeDevice({ host: '10.0.0.2', bundleId: 'unknown' });
 
             await dm.connect(device1);
             mockBridgeInstance.emit('disconnected');
@@ -549,6 +560,28 @@ describe('DeviceManager', () => {
             // Advancing time should not cause reconnect to device1
             await vi.advanceTimersByTimeAsync(60000);
             expect(dm.getConnectedDevice()?.host).toBe('10.0.0.2');
+        });
+
+        it('after failed reconnect attempt, connect() uses the new device (no stale bridge)', async () => {
+            const deviceA = makeDevice({ host: '192.168.3.29', bundleId: 'unknown', enginePort: 27042 });
+            const deviceB = makeDevice({ host: '192.168.1.50', bundleId: 'unknown', enginePort: 27042 });
+
+            await dm.connect(deviceA);
+            mockBridgeInstance.emit('disconnected');
+            expect(dm.state).toBe('reconnecting');
+
+            permanentConnectError = new Error('Connection timeout');
+            await vi.advanceTimersByTimeAsync(1001);
+            expect(dm.state).toBe('reconnecting');
+
+            permanentConnectError = null;
+            await dm.connect(deviceB);
+
+            expect(dm.getConnectedDevice()?.host).toBe('192.168.1.50');
+            expect(mockBridgeInstance.connectFn).toHaveBeenLastCalledWith('192.168.1.50', 27042);
+
+            await vi.advanceTimersByTimeAsync(60000);
+            expect(dm.getConnectedDevice()?.host).toBe('192.168.1.50');
         });
 
         it('does not reconnect if disconnect() is called during reconnect', async () => {

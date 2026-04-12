@@ -2,6 +2,9 @@ import * as vscode from 'vscode';
 import { DeviceManager } from '../device/deviceManager';
 import { bindConnectionState, OVERLAY_CSS, OVERLAY_HTML, OVERLAY_JS } from './connectionOverlay';
 
+/** TODO: set false and remove dbg / debugLog / __WN_SQLITE_DEBUG paths after troubleshooting. */
+const SQLITE_PANEL_DEBUG = true;
+
 export class SQLitePanel {
     public static currentPanel: SQLitePanel | undefined;
     private static readonly viewType = 'whiteneedle.sqlitePanel';
@@ -9,6 +12,7 @@ export class SQLitePanel {
     private readonly panel: vscode.WebviewPanel;
     private readonly deviceManager: DeviceManager;
     private readonly outputChannel: vscode.OutputChannel;
+    private readonly extensionUri: vscode.Uri;
     private disposables: vscode.Disposable[] = [];
 
     public static createOrShow(
@@ -20,6 +24,8 @@ export class SQLitePanel {
 
         if (SQLitePanel.currentPanel) {
             SQLitePanel.currentPanel.panel.reveal(column);
+            // retainContextWhenHidden can leave a stale DOM if html was never reset; force latest script + handlers.
+            SQLitePanel.currentPanel.applyWebviewHtml();
             return SQLitePanel.currentPanel;
         }
 
@@ -27,28 +33,45 @@ export class SQLitePanel {
             SQLitePanel.viewType,
             'SQLite Browser',
             column,
-            { enableScripts: true, retainContextWhenHidden: true }
+            {
+                enableScripts: true,
+                retainContextWhenHidden: true,
+                localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'media')],
+            }
         );
 
         const ch = outputChannel ?? vscode.window.createOutputChannel('WhiteNeedle');
-        SQLitePanel.currentPanel = new SQLitePanel(panel, deviceManager, ch);
+        SQLitePanel.currentPanel = new SQLitePanel(panel, deviceManager, ch, extensionUri);
         return SQLitePanel.currentPanel;
     }
 
     private constructor(
         panel: vscode.WebviewPanel,
         deviceManager: DeviceManager,
-        outputChannel: vscode.OutputChannel
+        outputChannel: vscode.OutputChannel,
+        extensionUri: vscode.Uri
     ) {
         this.panel = panel;
         this.deviceManager = deviceManager;
         this.outputChannel = outputChannel;
+        this.extensionUri = extensionUri;
 
         this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
-        bindConnectionState(this.panel, this.deviceManager, this.disposables);
 
         this.panel.webview.onDidReceiveMessage(
             async (msg) => {
+                if (msg.command === 'debugLog') {
+                    if (SQLITE_PANEL_DEBUG) {
+                        const p = (msg as { payload?: unknown }).payload;
+                        const line =
+                            p !== undefined && p !== null && typeof p === 'object' && 'message' in (p as object)
+                                ? String((p as { message?: string }).message)
+                                : JSON.stringify(p ?? msg);
+                        this.outputChannel.appendLine(`[SQLitePanel][DEBUG] webview: ${line}`);
+                        this.outputChannel.show(true);
+                    }
+                    return;
+                }
                 this.outputChannel.appendLine(`[SQLitePanel] Received: ${msg.command}`);
                 try {
                     switch (msg.command) {
@@ -83,25 +106,104 @@ export class SQLitePanel {
             this.disposables
         );
 
+        this.applyWebviewHtml();
+        bindConnectionState(this.panel, this.deviceManager, this.disposables);
+    }
+
+    /** Assign webview HTML and (in debug) ping the webview to verify the script runs. */
+    public applyWebviewHtml(): void {
         this.panel.webview.html = this.getHtml();
+        try {
+            void this.panel.webview.postMessage({ command: 'connectionState', state: this.deviceManager.state });
+        } catch {
+            /* panel disposed */
+        }
+        if (SQLITE_PANEL_DEBUG) {
+            this.outputChannel.appendLine(
+                `[SQLitePanel][DEBUG] panel html set; isConnected=${this.deviceManager.isConnected} state=${this.deviceManager.state}`
+            );
+            this.outputChannel.show(true);
+            setTimeout(() => {
+                void this.panel.webview.postMessage({ command: 'hostPing', t: Date.now() });
+                this.outputChannel.appendLine('[SQLitePanel][DEBUG] postMessage hostPing sent (expect webview: hostPing ok)');
+                this.outputChannel.show(true);
+            }, 80);
+        }
+    }
+
+    private dbg(...parts: unknown[]): void {
+        if (!SQLITE_PANEL_DEBUG) {
+            return;
+        }
+        this.outputChannel.appendLine(`[SQLitePanel][DEBUG] ${parts.map((p) => (typeof p === 'string' ? p : JSON.stringify(p))).join(' ')}`);
     }
 
     private async discoverDatabases(): Promise<void> {
+        this.dbg(
+            'discoverDatabases: enter isConnected=',
+            this.deviceManager.isConnected,
+            'state=',
+            this.deviceManager.state
+        );
         if (!this.deviceManager.isConnected) {
+            const msg =
+                'WhiteNeedle 未连接设备：请求未发送到 App。请先在侧栏连接设备（状态为已连接）后再试。日志在「输出」面板选择渠道 WhiteNeedle，而非集成终端。';
+            this.outputChannel.appendLine('[SQLitePanel] discoverDatabases: skipped (device not connected)');
+            this.outputChannel.show(true);
+            void vscode.window.showWarningMessage(msg);
             this.postMessage({ command: 'error', text: 'Not connected to a device.' });
             return;
         }
         try {
             this.outputChannel.appendLine('[SQLitePanel] Evaluating SQLite.databases()...');
-            const raw = await this.deviceManager.evaluate('JSON.stringify(SQLite.databases())') as any;
-            const parsed = typeof raw === 'string' ? raw : raw?.value ?? JSON.stringify(raw);
-            const databases = JSON.parse(parsed);
+            this.outputChannel.show(true);
+            const evalCode =
+                "(function(){try{" +
+                "if(typeof SQLite==='undefined')return JSON.stringify({__wnError:'SQLite API not available on device (reload app with latest WhiteNeedle).'});" +
+                "return JSON.stringify(SQLite.databases());" +
+                "}catch(e){return JSON.stringify({__wnError:String(e&&e.message?e.message:e)});}" +
+                "})()";
+            const raw = await this.deviceManager.evaluate(evalCode) as any;
+            this.dbg(
+                'discoverDatabases: evaluate raw keys=',
+                raw && typeof raw === 'object' ? Object.keys(raw as object).join(',') : typeof raw,
+                'valueLen=',
+                typeof (raw as any)?.value === 'string' ? (raw as any).value.length : 'n/a'
+            );
+            const databases = this.parseEvaluateJsonArray(raw, 'databases');
             this.outputChannel.appendLine(`[SQLitePanel] Found ${databases.length} databases`);
             this.postMessage({ command: 'databasesLoaded', databases });
         } catch (err: any) {
             this.outputChannel.appendLine(`[SQLitePanel] Error: ${err.message}`);
             this.postMessage({ command: 'error', text: `Failed to discover databases: ${err.message}` });
         }
+    }
+
+    /** Unwrap JSON-RPC evaluate result and parse JSON; surface device-side __wnError. */
+    private parseEvaluateJson(raw: unknown): any {
+        const payload = typeof raw === 'string' ? raw : (raw as any)?.value;
+        if (payload === undefined || payload === null) {
+            throw new Error('Empty result from device');
+        }
+        const str = typeof payload === 'string' ? payload : String(payload);
+        let data: any;
+        try {
+            data = JSON.parse(str);
+        } catch {
+            throw new Error(`Device did not return JSON (got: ${str.slice(0, 180)}…)`);
+        }
+        if (data && typeof data === 'object' && data.__wnError) {
+            throw new Error(String(data.__wnError));
+        }
+        return data;
+    }
+
+    private parseEvaluateJsonArray(raw: unknown, label: string): any[] {
+        const data = this.parseEvaluateJson(raw);
+        if (!Array.isArray(data)) {
+            throw new Error(`Expected JSON array for ${label}`);
+        }
+        return data;
     }
 
     private async loadTables(dbPath: string): Promise<void> {
@@ -132,8 +234,7 @@ export class SQLitePanel {
     private async loadTableData(dbPath: string, tableName: string, limit: number = 100): Promise<void> {
         try {
             const ep = dbPath.replace(/'/g, "\\'");
-            const et = tableName.replace(/"/g, '""');
-            const sql = `SELECT * FROM "${et}" LIMIT ${limit}`;
+            const sql = `SELECT * FROM ${quoteSqlIdent(tableName)} LIMIT ${limit}`;
             const raw = await this.deviceManager.evaluate(`JSON.stringify(SQLite.query('${ep}', '${sql.replace(/'/g, "\\'")}', ${limit}))`) as any;
             const parsed = typeof raw === 'string' ? raw : raw?.value ?? JSON.stringify(raw);
             const result = JSON.parse(parsed);
@@ -147,8 +248,7 @@ export class SQLitePanel {
         try {
             const ep = dbPath.replace(/'/g, "\\'");
             const es = sql.replace(/'/g, "\\'");
-            const isSelect = sql.trim().toUpperCase().startsWith('SELECT') ||
-                             sql.trim().toUpperCase().startsWith('PRAGMA');
+            const isSelect = isSqlReadQuery(sql);
             const apiCall = isSelect
                 ? `SQLite.query('${ep}', '${es}', ${limit})`
                 : `SQLite.execute('${ep}', '${es}')`;
@@ -204,12 +304,16 @@ export class SQLitePanel {
 
     private getHtml(): string {
         const nonce = getNonce();
+        const mainScriptUri = this.panel.webview.asWebviewUri(
+            vscode.Uri.joinPath(this.extensionUri, 'media', 'sqlitePanelMain.js')
+        );
+        const csp = this.panel.webview.cspSource;
         return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${csp}; script-src 'nonce-${nonce}' ${csp};">
 <title>SQLite Browser</title>
 <style>
     :root {
@@ -231,7 +335,8 @@ export class SQLitePanel {
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size, 13px); color: var(--fg); background: var(--bg); padding: 12px; }
-    .toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
+    /* Above wn-offline-overlay (z-index 9999) so Discover still posts to extension when offline; user then gets a clear "not connected" message. */
+    .toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; position: relative; z-index: 10001; background: var(--bg); padding-bottom: 2px; }
     button { padding: 5px 12px; background: var(--btn-bg); color: var(--btn-fg); border: none; border-radius: 3px; cursor: pointer; font-size: 12px; }
     button:hover { background: var(--btn-hover); }
     button:disabled { opacity: 0.5; cursor: default; }
@@ -263,8 +368,15 @@ export class SQLitePanel {
     .tab.active { border-bottom-color: var(--btn-bg); font-weight: 600; }
     .tab-content { display: none; }
     .tab-content.active { display: block; }
-    .query-area { margin-bottom: 8px; }
-    .query-area textarea { width: 100%; height: 60px; background: var(--input-bg); color: var(--input-fg); border: 1px solid var(--input-border); border-radius: 3px; padding: 6px; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; resize: vertical; }
+    .query-area { margin-bottom: 8px; position: relative; }
+    .query-area textarea { width: 100%; height: 80px; background: var(--input-bg); color: var(--input-fg); border: 1px solid var(--input-border); border-radius: 3px; padding: 6px; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; resize: vertical; }
+    .query-hint { font-size: 11px; opacity: 0.45; margin: 2px 0 0; }
+    .sql-suggest { display: none; position: absolute; left: 6px; right: 6px; max-height: 200px; overflow-y: auto; background: var(--vscode-editorSuggestWidget-background, var(--vscode-dropdown-background, var(--input-bg))); border: 1px solid var(--vscode-editorSuggestWidget-border, var(--input-border)); border-radius: 3px; z-index: 50; box-shadow: 0 4px 12px rgba(0,0,0,0.3); padding: 2px 0; }
+    .sql-suggest.show { display: block; }
+    .sg-opt { padding: 3px 8px; cursor: pointer; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-radius: 2px; margin: 0 2px; }
+    .sg-opt:hover { background: var(--vscode-list-hoverBackground, rgba(255,255,255,0.06)); }
+    .sg-opt.active { background: var(--vscode-editorSuggestWidget-selectedBackground, var(--vscode-list-activeSelectionBackground, #094771)); color: var(--vscode-editorSuggestWidget-selectedForeground, var(--vscode-list-activeSelectionForeground, #fff)); }
+    .sg-opt b { font-weight: 700; }
     .query-toolbar { display: flex; gap: 8px; margin-top: 4px; align-items: center; }
     .data-scroll { max-height: 400px; overflow: auto; border: 1px solid var(--border); border-radius: 3px; }
     .diff-section { margin-top: 8px; }
@@ -294,355 +406,94 @@ ${OVERLAY_HTML}
 ${OVERLAY_JS}
 (function() {
     var vscode = acquireVsCodeApi();
-    var databases = [];
-    var openDbs = {};
-    var tableCache = {};
-    var selectedDb = null;
-    var selectedTable = null;
-    var schemaCache = {};
-    var dataCache = {};
-    var queryResults = {};
-    var snapshots = {};
-
-    var discoverBtn = document.getElementById('discoverBtn');
-    var statusEl = document.getElementById('status');
-    var sidebarEl = document.getElementById('sidebar');
-    var detailEl = document.getElementById('detail');
-    var toastEl = document.getElementById('toast');
-
-    discoverBtn.addEventListener('click', function() {
-        discoverBtn.disabled = true;
-        statusEl.textContent = 'Scanning...';
-        vscode.postMessage({ command: 'discoverDatabases' });
-    });
-
-    function renderSidebar() {
-        if (databases.length === 0) {
-            sidebarEl.innerHTML = '<div class="empty">Click "Discover Databases" to scan sandbox</div>';
+    window.__WN_SQLITE_VSCODE = vscode;
+    var __WN_SQLITE_DEBUG = ${SQLITE_PANEL_DEBUG ? 'true' : 'false'};
+    function wnDbg(msg) {
+        if (!__WN_SQLITE_DEBUG) return;
+        try {
+            vscode.postMessage({ command: 'debugLog', payload: { message: String(msg), t: Date.now() } });
+        } catch (e) {}
+    }
+    window.__WN_SQLITE_WNDBG = wnDbg;
+    wnDbg('webview: script boot (shell)');
+    window.addEventListener('message', function(ev) {
+        var d = ev.data;
+        if (!d) return;
+        if (d.command === 'hostPing') {
+            wnDbg('webview: hostPing ok');
             return;
         }
-        var html = '';
-        for (var i = 0; i < databases.length; i++) {
-            var db = databases[i];
-            var isOpen = !!openDbs[db.path];
-            html += '<div class="db-section">';
-            html += '<div class="db-header" data-db-idx="' + i + '">';
-            html += '<span class="arrow ' + (isOpen ? 'open' : '') + '">&#9654;</span>';
-            html += '<strong>' + esc(db.name) + '</strong>';
-            html += ' <span class="badge">' + db.tableCount + ' tables</span>';
-            html += ' <span class="size-label">' + formatSize(db.size) + '</span>';
-            html += '</div>';
-            if (isOpen) {
-                var tables = tableCache[db.path];
-                if (!tables) {
-                    html += '<div style="padding:12px 24px;opacity:0.5">Loading tables...</div>';
-                } else {
-                    for (var j = 0; j < tables.length; j++) {
-                        var t = tables[j];
-                        var isActive = selectedDb === db.path && selectedTable === t.name;
-                        html += '<div class="table-item' + (isActive ? ' active' : '') + '" data-db="' + esc(db.path) + '" data-table="' + esc(t.name) + '">';
-                        html += '&#128202; ' + esc(t.name);
-                        html += ' <span class="badge">' + t.rowCount + ' rows</span>';
-                        html += '</div>';
-                    }
-                }
-            }
-            html += '</div>';
-        }
-        sidebarEl.innerHTML = html;
-        bindSidebarClicks();
-    }
-
-    function bindSidebarClicks() {
-        var headers = sidebarEl.querySelectorAll('.db-header');
-        for (var i = 0; i < headers.length; i++) {
-            headers[i].addEventListener('click', function() {
-                var idx = parseInt(this.getAttribute('data-db-idx'), 10);
-                var db = databases[idx];
-                if (!db) return;
-                openDbs[db.path] = !openDbs[db.path];
-                if (openDbs[db.path] && !tableCache[db.path]) {
-                    vscode.postMessage({ command: 'loadTables', dbPath: db.path });
-                }
-                renderSidebar();
-            });
-        }
-        var items = sidebarEl.querySelectorAll('.table-item');
-        for (var j = 0; j < items.length; j++) {
-            items[j].addEventListener('click', function() {
-                var dbPath = this.getAttribute('data-db');
-                var tableName = this.getAttribute('data-table');
-                selectTable(dbPath, tableName);
-            });
-        }
-    }
-
-    function selectTable(dbPath, tableName) {
-        selectedDb = dbPath;
-        selectedTable = tableName;
-        renderSidebar();
-        renderDetail();
-        var key = dbPath + '::' + tableName;
-        if (!schemaCache[key]) {
-            vscode.postMessage({ command: 'loadSchema', dbPath: dbPath, tableName: tableName });
-        }
-        if (!dataCache[key]) {
-            vscode.postMessage({ command: 'loadTableData', dbPath: dbPath, tableName: tableName, limit: 100 });
-        }
-    }
-
-    function renderDetail() {
-        if (!selectedDb || !selectedTable) {
-            detailEl.innerHTML = '<div class="empty">Select a table from the sidebar</div>';
+        if (d.command === 'connectionState') {
+            wnDbg('webview: connectionState=' + d.state);
             return;
         }
-
-        var key = selectedDb + '::' + selectedTable;
-        var activeTab = (detailEl._activeTab && detailEl._activeTab[key]) || 'data';
-
-        var html = '<h3 style="margin-bottom:8px">' + esc(selectedTable) + ' <span class="size-label">in ' + esc(selectedDb) + '</span></h3>';
-        html += '<div class="tab-bar">';
-        html += '<div class="tab' + (activeTab === 'data' ? ' active' : '') + '" data-tab="data">Data</div>';
-        html += '<div class="tab' + (activeTab === 'schema' ? ' active' : '') + '" data-tab="schema">Schema</div>';
-        html += '<div class="tab' + (activeTab === 'query' ? ' active' : '') + '" data-tab="query">Query</div>';
-        html += '<div class="tab' + (activeTab === 'monitor' ? ' active' : '') + '" data-tab="monitor">Monitor</div>';
-        html += '</div>';
-
-        // Data tab
-        html += '<div class="tab-content' + (activeTab === 'data' ? ' active' : '') + '" data-tab-content="data">';
-        var data = dataCache[key];
-        if (!data) {
-            html += '<div style="padding:12px;opacity:0.5">Loading...</div>';
-        } else if (data.error) {
-            html += '<div style="padding:12px;color:var(--error-fg)">' + esc(data.error) + '</div>';
-        } else {
-            html += '<div style="margin-bottom:4px;font-size:11px;opacity:0.6">' + data.rowCount + ' rows' + (data.truncated ? ' (truncated)' : '') + '</div>';
-            html += '<div class="data-scroll">' + buildDataTable(data.rows) + '</div>';
-        }
-        html += '</div>';
-
-        // Schema tab
-        html += '<div class="tab-content' + (activeTab === 'schema' ? ' active' : '') + '" data-tab-content="schema">';
-        var schema = schemaCache[key];
-        if (!schema) {
-            html += '<div style="padding:12px;opacity:0.5">Loading...</div>';
-        } else {
-            html += '<table><tr><th>#</th><th>Name</th><th>Type</th><th>NotNull</th><th>Default</th><th>PK</th></tr>';
-            for (var s = 0; s < schema.length; s++) {
-                var col = schema[s];
-                html += '<tr>';
-                html += '<td>' + col.cid + '</td>';
-                html += '<td><strong>' + esc(col.name) + '</strong></td>';
-                html += '<td>' + esc(col.type || 'ANY') + '</td>';
-                html += '<td>' + (col.notnull ? '&#10003;' : '') + '</td>';
-                html += '<td>' + (col.dflt_value != null ? esc(String(col.dflt_value)) : '<span style="opacity:0.4">NULL</span>') + '</td>';
-                html += '<td>' + (col.pk ? '&#128273;' : '') + '</td>';
-                html += '</tr>';
-            }
-            html += '</table>';
-        }
-        html += '</div>';
-
-        // Query tab
-        html += '<div class="tab-content' + (activeTab === 'query' ? ' active' : '') + '" data-tab-content="query">';
-        html += '<div class="query-area">';
-        html += '<textarea id="sqlInput" placeholder="SELECT * FROM ' + esc(selectedTable) + ' WHERE ...">' + (queryResults[key + '::lastSql'] || 'SELECT * FROM "' + selectedTable.replace(/"/g, '""') + '" LIMIT 50') + '</textarea>';
-        html += '<div class="query-toolbar">';
-        html += '<button id="runQueryBtn">Run Query</button>';
-        html += '<span id="queryStatus" style="font-size:11px;opacity:0.6"></span>';
-        html += '</div></div>';
-        var qr = queryResults[key];
-        if (qr) {
-            if (qr.error) {
-                html += '<div style="padding:8px;color:var(--error-fg)">' + esc(qr.error) + '</div>';
-            } else if (qr.rows) {
-                html += '<div style="margin-bottom:4px;font-size:11px;opacity:0.6">' + qr.rowCount + ' rows' + (qr.truncated ? ' (truncated)' : '') + '</div>';
-                html += '<div class="data-scroll">' + buildDataTable(qr.rows) + '</div>';
-            } else if (qr.ok !== undefined) {
-                html += '<div style="padding:8px;color:var(--success)">' + qr.changes + ' rows affected</div>';
-            }
-        }
-        html += '</div>';
-
-        // Monitor tab
-        html += '<div class="tab-content' + (activeTab === 'monitor' ? ' active' : '') + '" data-tab-content="monitor">';
-        html += '<div class="snapshot-bar">';
-        html += '<input id="snapTag" placeholder="snapshot tag" value="' + (snapshots[key + '::lastTag'] || 'before') + '" />';
-        html += '<button id="snapBtn" class="success small">Take Snapshot</button>';
-        html += '<button id="diffBtn" class="warning small">Diff vs Snapshot</button>';
-        html += '</div>';
-        var snap = snapshots[key + '::snap'];
-        if (snap) {
-            html += '<div style="font-size:11px;opacity:0.6;margin-bottom:4px">Snapshot "' + esc(snap.tag) + '": ' + snap.result.rowCount + ' rows at ' + new Date(snap.result.timestamp || Date.now()).toLocaleTimeString() + '</div>';
-        }
-        var diff = snapshots[key + '::diff'];
-        if (diff) {
-            if (diff.error) {
-                html += '<div style="color:var(--error-fg)">' + esc(diff.error) + '</div>';
-            } else {
-                html += '<div style="margin-bottom:6px">';
-                html += '<span class="badge">' + diff.oldRowCount + ' → ' + diff.newRowCount + '</span> ';
-                if (diff.hasChanges) {
-                    html += '<span class="badge green">+' + diff.addedCount + '</span> ';
-                    html += '<span class="badge orange">-' + diff.removedCount + '</span>';
-                } else {
-                    html += '<span style="opacity:0.6">No changes</span>';
-                }
-                html += '</div>';
-                if (diff.added && diff.added.length > 0) {
-                    html += '<div style="margin-bottom:4px;font-size:11px;font-weight:600;color:var(--success)">Added rows:</div>';
-                    html += '<div class="data-scroll">' + buildDataTable(diff.added, 'diff-added') + '</div>';
-                }
-                if (diff.removed && diff.removed.length > 0) {
-                    html += '<div style="margin:8px 0 4px;font-size:11px;font-weight:600;color:var(--error-fg)">Removed rows:</div>';
-                    html += '<div class="data-scroll">' + buildDataTable(diff.removed, 'diff-removed') + '</div>';
+        if (typeof window.__WN_SQLITE_MAIN_MSG === 'function') {
+            try {
+                window.__WN_SQLITE_MAIN_MSG(ev);
+            } catch (ex) {
+                wnDbg('webview: main handler threw ' + (ex && ex.message ? ex.message : String(ex)));
+                if (d.command === 'databasesLoaded' || d.command === 'error') {
+                    var rb = document.getElementById('discoverBtn');
+                    var rs = document.getElementById('status');
+                    if (rb) rb.disabled = false;
+                    if (rs) rs.textContent = '';
                 }
             }
+            return;
         }
-        html += '</div>';
-
-        detailEl.innerHTML = html;
-        bindDetailEvents(key);
-    }
-
-    function bindDetailEvents(key) {
-        var tabs = detailEl.querySelectorAll('.tab');
-        for (var i = 0; i < tabs.length; i++) {
-            tabs[i].addEventListener('click', function() {
-                var tab = this.getAttribute('data-tab');
-                if (!detailEl._activeTab) detailEl._activeTab = {};
-                detailEl._activeTab[key] = tab;
-                renderDetail();
-            });
-        }
-
-        var runBtn = document.getElementById('runQueryBtn');
-        var sqlInput = document.getElementById('sqlInput');
-        if (runBtn && sqlInput) {
-            runBtn.addEventListener('click', function() {
-                var sql = sqlInput.value.trim();
-                if (!sql) return;
-                queryResults[key + '::lastSql'] = sql;
-                var qs = document.getElementById('queryStatus');
-                if (qs) qs.textContent = 'Executing...';
-                vscode.postMessage({ command: 'executeQuery', dbPath: selectedDb, sql: sql, limit: 500 });
-            });
-        }
-
-        var snapBtn = document.getElementById('snapBtn');
-        var diffBtn = document.getElementById('diffBtn');
-        var snapTag = document.getElementById('snapTag');
-        if (snapBtn && snapTag) {
-            snapBtn.addEventListener('click', function() {
-                var tag = snapTag.value.trim() || 'default';
-                snapshots[key + '::lastTag'] = tag;
-                vscode.postMessage({ command: 'takeSnapshot', dbPath: selectedDb, tableName: selectedTable, tag: tag });
-            });
-        }
-        if (diffBtn && snapTag) {
-            diffBtn.addEventListener('click', function() {
-                var tag = snapTag.value.trim() || 'default';
-                snapshots[key + '::lastTag'] = tag;
-                vscode.postMessage({ command: 'diffSnapshot', dbPath: selectedDb, tableName: selectedTable, tag: tag });
-            });
-        }
-    }
-
-    function buildDataTable(rows, rowClass) {
-        if (!rows || rows.length === 0) return '<div style="padding:8px;opacity:0.5">No data</div>';
-        var cols = Object.keys(rows[0]);
-        var html = '<table><tr>';
-        for (var c = 0; c < cols.length; c++) {
-            html += '<th>' + esc(cols[c]) + '</th>';
-        }
-        html += '</tr>';
-        for (var r = 0; r < rows.length; r++) {
-            html += '<tr' + (rowClass ? ' class="' + rowClass + '"' : '') + '>';
-            for (var ci = 0; ci < cols.length; ci++) {
-                var val = rows[r][cols[ci]];
-                if (val === null || val === undefined) {
-                    html += '<td class="null-val">NULL</td>';
-                } else {
-                    var s = typeof val === 'object' ? JSON.stringify(val) : String(val);
-                    html += '<td title="' + esc(s) + '">' + esc(trunc(s, 60)) + '</td>';
-                }
-            }
-            html += '</tr>';
-        }
-        html += '</table>';
-        return html;
-    }
-
-    window.addEventListener('message', function(e) {
-        var msg = e.data;
-        switch (msg.command) {
-            case 'databasesLoaded':
-                discoverBtn.disabled = false;
-                statusEl.textContent = '';
-                databases = msg.databases || [];
-                openDbs = {};
-                tableCache = {};
-                renderSidebar();
-                showToast(databases.length + ' databases found');
-                break;
-            case 'tablesLoaded':
-                tableCache[msg.dbPath] = msg.tables || [];
-                renderSidebar();
-                break;
-            case 'schemaLoaded':
-                schemaCache[msg.dbPath + '::' + msg.tableName] = msg.schema;
-                if (msg.dbPath === selectedDb && msg.tableName === selectedTable) renderDetail();
-                break;
-            case 'tableDataLoaded':
-                dataCache[msg.dbPath + '::' + msg.tableName] = msg.result;
-                if (msg.dbPath === selectedDb && msg.tableName === selectedTable) renderDetail();
-                break;
-            case 'queryResult':
-                var qKey = msg.dbPath + '::' + (selectedTable || '');
-                queryResults[qKey] = msg.result;
-                renderDetail();
-                break;
-            case 'snapshotTaken':
-                var sKey = msg.dbPath + '::' + msg.tableName;
-                snapshots[sKey + '::snap'] = { tag: msg.tag, result: msg.result };
-                showToast('Snapshot "' + msg.tag + '" saved (' + msg.result.rowCount + ' rows)');
-                renderDetail();
-                break;
-            case 'diffResult':
-                var dKey = msg.dbPath + '::' + msg.tableName;
-                snapshots[dKey + '::diff'] = msg.result;
-                if (msg.result.hasChanges) {
-                    showToast('Changes detected: +' + msg.result.addedCount + ' / -' + msg.result.removedCount);
-                } else {
-                    showToast('No changes detected');
-                }
-                renderDetail();
-                break;
-            case 'error':
-                discoverBtn.disabled = false;
-                statusEl.textContent = '';
-                showToast(msg.text, true);
-                break;
+        if (d.command === 'databasesLoaded' || d.command === 'error') {
+            var rb2 = document.getElementById('discoverBtn');
+            var rs2 = document.getElementById('status');
+            if (rb2) rb2.disabled = false;
+            if (rs2) rs2.textContent = '';
+            wnDbg('webview: discover reset (fallback, main script not ready)');
         }
     });
-
-    function formatSize(bytes) {
-        if (bytes < 1024) return bytes + ' B';
-        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-    }
-    function trunc(s, n) { return s && s.length > n ? s.substring(0, n) + '\\u2026' : (s || ''); }
-    function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
-    function showToast(text, isError) {
-        toastEl.textContent = text;
-        toastEl.className = 'toast show' + (isError ? ' error' : '');
-        setTimeout(function() { toastEl.className = 'toast'; }, 3000);
+    var discoverShell = document.getElementById('discoverBtn');
+    var statusShell = document.getElementById('status');
+    if (!discoverShell) {
+        wnDbg('webview: discoverBtn missing (shell)');
+    } else {
+        wnDbg('webview: discoverBtn bound (shell)');
+        discoverShell.addEventListener('click', function() {
+            discoverShell.disabled = true;
+            if (statusShell) statusShell.textContent = 'Scanning...';
+            vscode.postMessage({ command: 'discoverDatabases' });
+            wnDbg('webview: discoverDatabases postMessage (shell)');
+        });
     }
 })();
 </script>
+<script nonce="${nonce}" src="${mainScriptUri}"></script>
 </body>
 </html>`;
     }
+}
+
+/** SQLite identifier: quote only when needed (spaces, reserved words, special chars). */
+function quoteSqlIdent(name: string): string {
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+        return name;
+    }
+    return `"${name.replace(/"/g, '""')}"`;
+}
+
+/** Use query() for reads; execute() for DML/DDL and PRAGMA assignments. */
+function isSqlReadQuery(sql: string): boolean {
+    const u = sql.trim().toUpperCase();
+    if (/^PRAGMA\s+\w+\s*=/.test(u)) {
+        return false;
+    }
+    if (u.startsWith('PRAGMA')) {
+        return true;
+    }
+    if (u.startsWith('SELECT') || u.startsWith('WITH')) {
+        return true;
+    }
+    if (/^EXPLAIN(\s+QUERY\s+PLAN|\s+)/.test(u)) {
+        return true;
+    }
+    return false;
 }
 
 function getNonce(): string {

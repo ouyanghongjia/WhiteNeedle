@@ -32,6 +32,7 @@ export function bindConnectionState(
 export const OVERLAY_CSS = `
 .wn-offline-overlay {
     display: none;
+    pointer-events: none;
     position: fixed; inset: 0; z-index: 9999;
     background: rgba(0,0,0,0.55);
     backdrop-filter: blur(3px);
@@ -41,7 +42,7 @@ export const OVERLAY_CSS = `
     font-family: var(--vscode-font-family, sans-serif);
     font-size: 14px;
 }
-.wn-offline-overlay.visible { display: flex; }
+.wn-offline-overlay.visible { display: flex; pointer-events: auto; }
 .wn-offline-icon { font-size: 36px; opacity: 0.7; }
 .wn-offline-text { opacity: 0.9; }
 .wn-offline-sub { font-size: 12px; opacity: 0.6; }

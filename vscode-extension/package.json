@@ -59,6 +59,7 @@
     "onCommand:whiteneedle.syncTeamSnippets",
     "onCommand:whiteneedle.openLeakDetector",
     "onCommand:whiteneedle.openRetainGraph",
+    "onCommand:whiteneedle.openPanelsMenu",
     "onCommand:whiteneedle.toggleProxy",
     "onCommand:whiteneedle.installModule",
     "onCommand:whiteneedle.uninstallModule",
@@ -93,13 +94,7 @@
         }
       ]
     },
-    "submenus": [
-      {
-        "id": "whiteneedle.devicesPanels",
-        "label": "Panels",
-        "icon": "$(layout-panel)"
-      }
-    ],
+    "submenus": [],
     "commands": [
       {
         "command": "whiteneedle.refreshDevices",
@@ -287,6 +282,12 @@
         "title": "Refresh Modules",
         "icon": "$(refresh)",
         "category": "WhiteNeedle"
+      },
+      {
+        "command": "whiteneedle.openPanelsMenu",
+        "title": "Panels",
+        "icon": "$(layout-panel)",
+        "category": "WhiteNeedle"
       }
     ],
     "menus": {
@@ -302,7 +303,7 @@
           "group": "navigation@2"
         },
         {
-          "submenu": "whiteneedle.devicesPanels",
+          "command": "whiteneedle.openPanelsMenu",
           "when": "view == whiteneedle-devices",
           "group": "navigation@3"
         },
@@ -325,80 +326,6 @@
           "command": "whiteneedle.stopScript",
           "when": "view == whiteneedle-scripts",
           "group": "navigation@2"
-        }
-      ],
-      "whiteneedle.devicesPanels": [
-        {
-          "command": "whiteneedle.openLogs",
-          "group": "wn_logs@1"
-        },
-        {
-          "command": "whiteneedle.openCookies",
-          "group": "wn_storage@1"
-        },
-        {
-          "command": "whiteneedle.openUserDefaults",
-          "group": "wn_storage@2"
-        },
-        {
-          "command": "whiteneedle.openSandbox",
-          "group": "wn_storage@3"
-        },
-        {
-          "command": "whiteneedle.openSQLite",
-          "group": "wn_storage@4"
-        },
-        {
-          "command": "whiteneedle.openObjC",
-          "group": "wn_runtime@1"
-        },
-        {
-          "command": "whiteneedle.openHooks",
-          "group": "wn_runtime@2"
-        },
-        {
-          "command": "whiteneedle.openNetwork",
-          "group": "wn_live@1"
-        },
-        {
-          "command": "whiteneedle.openMockRules",
-          "group": "wn_live@2"
-        },
-        {
-          "command": "whiteneedle.openViewHierarchy",
-          "group": "wn_live@3"
-        },
-        {
-          "command": "whiteneedle.openHostMapping",
-          "group": "wn_live@4"
-        },
-        {
-          "command": "whiteneedle.openApiDocs",
-          "group": "wn_docs@1"
-        },
-        {
-          "command": "whiteneedle.openSnippets",
-          "group": "wn_scripts@1"
-        },
-        {
-          "command": "whiteneedle.syncTeamSnippets",
-          "group": "wn_scripts@2"
-        },
-        {
-          "command": "whiteneedle.openLeakDetector",
-          "group": "wn_live@4"
-        },
-        {
-          "command": "whiteneedle.openRetainGraph",
-          "group": "wn_live@5"
-        },
-        {
-          "command": "whiteneedle.startProxy",
-          "group": "wn_proxy@1"
-        },
-        {
-          "command": "whiteneedle.stopProxy",
-          "group": "wn_proxy@2"
         }
       ],
       "view/item/context": [
@@ -553,6 +480,12 @@
           "type": "string",
           "default": ".whiteneedle/team-snippets.json",
           "description": "Path to the team snippets JSON file, relative to each workspace folder root. Git-commit this file so the team can sync after pull."
+        },
+        "whiteneedle.favoritePanels": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "常用面板列表（命令 ID 数组），排列在 Panels 菜单顶部。通过 Panels → 管理常用面板 进行配置"
         }
       }
     }

@@ -164,6 +164,80 @@ static NSString *WNFSAbsolutePath(NSString *path, NSString *sandboxRoot) {
         return ok;
     };
 
+    ns[@"move"] = ^BOOL(NSString *fromRel, NSString *toRel) {
+        if (!fromRel || !toRel) return NO;
+        NSString *absFrom = WNFSAbsolutePath(fromRel, sandboxRoot);
+        NSString *absTo   = WNFSAbsolutePath(toRel, sandboxRoot);
+        NSString *toDir = [absTo stringByDeletingLastPathComponent];
+        [[NSFileManager defaultManager] createDirectoryAtPath:toDir
+                                  withIntermediateDirectories:YES attributes:nil error:nil];
+        NSError *error = nil;
+        BOOL ok = [[NSFileManager defaultManager] moveItemAtPath:absFrom toPath:absTo error:&error];
+        if (error) NSLog(@"%@ move error: %@", kLogPrefix, error.localizedDescription);
+        return ok;
+    };
+
+    ns[@"copy"] = ^BOOL(NSString *fromRel, NSString *toRel) {
+        if (!fromRel || !toRel) return NO;
+        NSString *absFrom = WNFSAbsolutePath(fromRel, sandboxRoot);
+        NSString *absTo   = WNFSAbsolutePath(toRel, sandboxRoot);
+        NSString *toDir = [absTo stringByDeletingLastPathComponent];
+        [[NSFileManager defaultManager] createDirectoryAtPath:toDir
+                                  withIntermediateDirectories:YES attributes:nil error:nil];
+        NSError *error = nil;
+        BOOL ok = [[NSFileManager defaultManager] copyItemAtPath:absFrom toPath:absTo error:&error];
+        if (error) NSLog(@"%@ copy error: %@", kLogPrefix, error.localizedDescription);
+        return ok;
+    };
+
+    ns[@"snapshot"] = ^JSValue *(JSValue *pathsVal, JSValue *maxDepthVal) {
+        JSContext *ctx = [JSContext currentContext];
+        NSArray *paths = @[@"Documents", @"Library", @"tmp"];
+        if (pathsVal && ![pathsVal isUndefined] && ![pathsVal isNull]) {
+            paths = [pathsVal toArray];
+        }
+        int maxDepth = 10;
+        if (maxDepthVal && ![maxDepthVal isUndefined] && ![maxDepthVal isNull]) {
+            maxDepth = [maxDepthVal toInt32];
+            if (maxDepth < 1) maxDepth = 1;
+        }
+
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSMutableArray *result = [NSMutableArray new];
+
+        for (NSString *rootRel in paths) {
+            if (![rootRel isKindOfClass:[NSString class]]) continue;
+            NSString *absRoot = WNFSAbsolutePath(rootRel, sandboxRoot);
+            BOOL isDir = NO;
+            if (![fm fileExistsAtPath:absRoot isDirectory:&isDir] || !isDir) continue;
+
+            NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:absRoot];
+            NSString *relItem;
+            while ((relItem = [enumerator nextObject])) {
+                if ([relItem hasPrefix:@"."]) {
+                    [enumerator skipDescendants];
+                    continue;
+                }
+                if ((int)enumerator.level > maxDepth) {
+                    [enumerator skipDescendants];
+                    continue;
+                }
+                NSDictionary *attrs = enumerator.fileAttributes;
+                if (!attrs) continue;
+                BOOL itemIsDir = [attrs[NSFileType] isEqualToString:NSFileTypeDirectory];
+                unsigned long long fileSize = [attrs fileSize];
+                NSDate *mtime = attrs[NSFileModificationDate];
+                [result addObject:@{
+                    @"path":  [rootRel stringByAppendingPathComponent:relItem],
+                    @"size":  @(fileSize),
+                    @"mtime": @(mtime ? [mtime timeIntervalSince1970] * 1000 : 0),
+                    @"isDir": @(itemIsDir),
+                }];
+            }
+        }
+        return [JSValue valueWithObject:result inContext:ctx];
+    };
+
     context[@"FileSystem"] = ns;
     NSLog(@"%@ FileSystem bridge registered", kLogPrefix);
 }

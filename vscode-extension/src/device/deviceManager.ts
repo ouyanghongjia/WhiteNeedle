@@ -13,11 +13,13 @@ export class DeviceManager extends EventEmitter {
     private bridge: TcpBridge | null = null;
     private connectedDevice: WNDevice | null = null;
     private _state: ConnectionState = 'disconnected';
-    private manualDisconnect = false;
     private reconnectAttempt = 0;
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private lastActiveScripts: string[] = [];
     private lastLoadedScript: { code: string; name: string } | null = null;
+    /** Monotonically increasing id — every connect()/disconnect() bumps this so stale
+     *  reconnect chains and lingering bridge event handlers become no-ops. */
+    private _epoch = 0;
 
     constructor(private outputChannel: vscode.OutputChannel) {
         super();
@@ -42,29 +44,41 @@ export class DeviceManager extends EventEmitter {
     }
 
     async connect(device: WNDevice): Promise<void> {
-        if (this.isConnected) {
-            await this.disconnect();
-        }
-        this.cancelReconnect();
-        this.manualDisconnect = false;
+        this.teardown();
+
+        const epoch = this._epoch;
 
         this.setState('connecting');
         this.outputChannel.appendLine(
             `[DeviceManager] Connecting to ${device.host}:${device.enginePort}...`
         );
 
-        this.bridge = new TcpBridge(this.outputChannel);
+        const bridge = new TcpBridge(this.outputChannel);
+        this.bridge = bridge;
 
-        this.bridge.on('disconnected', () => {
+        bridge.on('disconnected', () => {
+            if (this._epoch !== epoch) { return; }
             this.connectedDevice = null;
-            if (!this.manualDisconnect) {
-                this.onUnexpectedDisconnect(device);
-            } else {
-                this.setState('disconnected');
-            }
+            this.onUnexpectedDisconnect(device);
         });
 
-        await this.bridge.connect(device.host, device.enginePort);
+        try {
+            await bridge.connect(device.host, device.enginePort);
+        } catch (err) {
+            if (this._epoch === epoch) {
+                bridge.removeAllListeners('disconnected');
+                this.bridge = null;
+                bridge.disconnect();
+                this.setState('disconnected');
+            }
+            throw err;
+        }
+
+        if (this._epoch !== epoch) {
+            bridge.disconnect();
+            throw new Error('Connection superseded');
+        }
+
         this.connectedDevice = device;
         this.reconnectAttempt = 0;
         this.setState('connected');
@@ -87,14 +101,23 @@ export class DeviceManager extends EventEmitter {
     }
 
     async disconnect(): Promise<void> {
-        this.manualDisconnect = true;
-        this.cancelReconnect();
+        this.teardown();
+        this.setState('disconnected');
+    }
+
+    /** Atomically tear down the current connection/reconnect state and bump the epoch. */
+    private teardown(): void {
+        this._epoch++;
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+        this.reconnectAttempt = 0;
         if (this.bridge) {
             this.bridge.disconnect();
             this.bridge = null;
         }
         this.connectedDevice = null;
-        this.setState('disconnected');
     }
 
     setActiveScripts(scripts: string[]): void {
@@ -377,15 +400,9 @@ export class DeviceManager extends EventEmitter {
         this.emit('stateChanged', state);
     }
 
-    private cancelReconnect(): void {
-        if (this.reconnectTimer) {
-            clearTimeout(this.reconnectTimer);
-            this.reconnectTimer = null;
-        }
-        this.reconnectAttempt = 0;
-    }
-
     private onUnexpectedDisconnect(device: WNDevice): void {
+        const epoch = this._epoch;
+
         this.outputChannel.appendLine(
             `[DeviceManager] Unexpected disconnect from ${device.deviceName || device.host}`
         );
@@ -394,6 +411,7 @@ export class DeviceManager extends EventEmitter {
             this.outputChannel.appendLine(
                 `[DeviceManager] Max reconnect attempts (${MAX_RECONNECT_ATTEMPTS}) reached.`
             );
+            this.teardown();
             this.setState('disconnected');
             this.emit('reconnectFailed', device);
             return;
@@ -411,34 +429,46 @@ export class DeviceManager extends EventEmitter {
         );
 
         this.reconnectTimer = setTimeout(async () => {
+            if (this._epoch !== epoch) { return; }
+
+            const b = new TcpBridge(this.outputChannel);
+            this.bridge = b;
+
+            b.on('disconnected', () => {
+                if (this._epoch !== epoch) { return; }
+                this.connectedDevice = null;
+                this.onUnexpectedDisconnect(device);
+            });
+
             try {
-                this.bridge = new TcpBridge(this.outputChannel);
-                this.bridge.on('disconnected', () => {
-                    this.connectedDevice = null;
-                    if (!this.manualDisconnect) {
-                        this.onUnexpectedDisconnect(device);
-                    } else {
-                        this.setState('disconnected');
-                    }
-                });
-
-                await this.bridge.connect(device.host, device.enginePort);
-                this.connectedDevice = device;
-                this.reconnectAttempt = 0;
-                this.setState('connected');
-
-                this.outputChannel.appendLine(
-                    `[DeviceManager] Reconnected to ${device.deviceName || device.host}`
-                );
-
-                await this.restoreSessionState();
-                this.emit('reconnected', device);
+                await b.connect(device.host, device.enginePort);
             } catch (err: any) {
+                if (this._epoch !== epoch) { return; }
+                b.removeAllListeners('disconnected');
+                this.bridge = null;
+                b.disconnect();
                 this.outputChannel.appendLine(
                     `[DeviceManager] Reconnect attempt ${this.reconnectAttempt} failed: ${err.message}`
                 );
                 this.onUnexpectedDisconnect(device);
+                return;
             }
+
+            if (this._epoch !== epoch) {
+                b.disconnect();
+                return;
+            }
+
+            this.connectedDevice = device;
+            this.reconnectAttempt = 0;
+            this.setState('connected');
+
+            this.outputChannel.appendLine(
+                `[DeviceManager] Reconnected to ${device.deviceName || device.host}`
+            );
+
+            await this.restoreSessionState();
+            this.emit('reconnected', device);
         }, delay);
     }
 }
