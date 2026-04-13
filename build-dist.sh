@@ -237,7 +237,7 @@ PODSPEC
 
 # Copy hook helper script
 mkdir -p "$POD_DIR/Scripts"
-cp "$SCRIPT_DIR/ios-dylib/WhiteNeedle/Scripts/cocoapods_hook.rb" "$POD_DIR/Scripts/"
+cp "$ROOT_DIR/ios-dylib/WhiteNeedle/Scripts/cocoapods_hook.rb" "$POD_DIR/Scripts/"
 
 log "→ dist/cocoapods/WhiteNeedle/"
 
