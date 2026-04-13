@@ -4,6 +4,9 @@ source 'https://mirrors.tuna.tsinghua.edu.cn/git/CocoaPods/Specs.git'
 platform :ios, '15.0'
 inhibit_all_warnings!
 
+# WhiteNeedle: 自动注入 Bonjour / Local Network 权限到宿主 App Info.plist
+require_relative '../../ios-dylib/WhiteNeedle/Scripts/cocoapods_hook'
+
 target 'WhiteNeedleExample' do
   # 本地开发 Pod：源码在 ios-dylib/WhiteNeedle，可在 Xcode 中单步调试
   pod 'WhiteNeedle', :path => '../../ios-dylib/WhiteNeedle'
@@ -20,4 +23,6 @@ post_install do |installer|
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
     end
   end
+
+  whiteneedle_inject_permissions(installer)
 end

@@ -79,7 +79,7 @@ cursor --install-extension WhiteNeedle.vsix
 > ```
 >
 > - **重签名方式**：`resign.sh` 会自动注入这些条目。
-> - **CocoaPods 方式**：podspec 中内置了 Build Phase 脚本，编译时会自动检测并注入缺失的条目，无需手动修改。
+> - **CocoaPods 方式**：在 Podfile 中添加 hook 即可自动注入（见下方 CocoaPods 集成说明）。
 >
 > 如果上述权限缺失，设备不会出现在 Devices 列表中，但仍然可以通过 **Connect by IP**（`192.168.x.x:27042`）手动连接。
 
@@ -120,14 +120,25 @@ ios-deploy --bundle YourApp_whiteneedle.ipa
 
 #### 方式 B：CocoaPods Framework 集成（推荐长期使用）
 
-适合团队内正式集成，以预编译 Framework 方式分发，无需源码编译。Bonjour 设备发现所需的 Info.plist 条目会在编译时由内置 Build Phase 自动注入。
+适合团队内正式集成，以预编译 Framework 方式分发，无需源码编译。
 
 **本地路径引用（快速体验）：**
 
 ```ruby
 # Podfile
+require_relative 'Pods/WhiteNeedle/Scripts/cocoapods_hook'
+
 pod 'WhiteNeedle', :path => '/path/to/dist/cocoapods/WhiteNeedle'
+
+post_install do |installer|
+  whiteneedle_inject_permissions(installer)  # 自动注入 Bonjour 权限
+end
 ```
+
+> **注意**：首次 `pod install` 时 `Pods/` 目录尚不存在，`require_relative` 会报错。
+> 请先注释掉 `require_relative` 和 `whiteneedle_inject_permissions` 行，执行一次 `pod install`，
+> 然后取消注释再执行一次 `pod install` 即可。后续更新不再需要重复此步骤。
+> 或者直接将 `cocoapods_hook.rb` 复制到项目根目录，`require_relative './cocoapods_hook'`。
 
 **私有 Git 仓库（团队推荐）：**
 
@@ -160,7 +171,17 @@ pod 'WhiteNeedle', :git => 'git@your-server.com:ios/WhiteNeedle.git', :tag => '2
 pod 'WhiteNeedle', '~> 2.0'
 ```
 
-4. 执行 `pod install`。
+4. 在 Podfile 中添加 hook（自动注入 Bonjour 权限到 Info.plist）：
+
+```ruby
+require_relative './cocoapods_hook'  # 将 Scripts/cocoapods_hook.rb 复制到项目根目录
+
+post_install do |installer|
+  whiteneedle_inject_permissions(installer)
+end
+```
+
+5. 执行 `pod install`。
 
 > CocoaPods 以预编译 Framework 方式集成，宿主 App 需满足 iOS 15+。
 

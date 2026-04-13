@@ -28,35 +28,13 @@ Pod::Spec.new do |s|
     'HEADER_SEARCH_PATHS' => '"${PODS_TARGET_SRCROOT}/Sources/libffi/include" "${PODS_TARGET_SRCROOT}/Sources/libffi/src"'
   }
 
-  # ── Auto-inject Bonjour / Local Network permissions into host App Info.plist ──
-  s.script_phase = {
-    :name => '[WhiteNeedle] Inject Network Permissions',
-    :script => <<-'SCRIPT',
-      PLIST="${BUILT_PRODUCTS_DIR}/${INFOPLIST_PATH}"
-      if [ ! -f "$PLIST" ]; then
-        PLIST="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
-      fi
-      if [ ! -f "$PLIST" ]; then
-        echo "warning: [WhiteNeedle] Info.plist not found, skipping permission injection."
-        exit 0
-      fi
-
-      BUDDY=/usr/libexec/PlistBuddy
-
-      # NSBonjourServices — array containing _whiteneedle._tcp
-      if ! $BUDDY -c "Print :NSBonjourServices" "$PLIST" 2>/dev/null | grep -q "_whiteneedle._tcp"; then
-        $BUDDY -c "Add :NSBonjourServices array" "$PLIST" 2>/dev/null || true
-        $BUDDY -c "Add :NSBonjourServices: string _whiteneedle._tcp" "$PLIST"
-        echo "note: [WhiteNeedle] Added NSBonjourServices → _whiteneedle._tcp"
-      fi
-
-      # NSLocalNetworkUsageDescription
-      if ! $BUDDY -c "Print :NSLocalNetworkUsageDescription" "$PLIST" 2>/dev/null >/dev/null; then
-        $BUDDY -c "Add :NSLocalNetworkUsageDescription string 'WhiteNeedle uses the local network for remote debugging.'" "$PLIST"
-        echo "note: [WhiteNeedle] Added NSLocalNetworkUsageDescription"
-      fi
-    SCRIPT
-    :execution_position => :after_compile,
-    :shell_path => '/bin/sh'
-  }
+  # ── Bonjour / Local Network permissions ──────────────────────────────
+  # CocoaPods script_phase runs in the pod target context and CANNOT
+  # modify the host App's Info.plist. Use the Podfile hook instead:
+  #
+  #   require_relative 'Pods/WhiteNeedle/Scripts/cocoapods_hook'
+  #   post_install do |installer|
+  #     whiteneedle_inject_permissions(installer)
+  #   end
+  # ─────────────────────────────────────────────────────────────────────
 end

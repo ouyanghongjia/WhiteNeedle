@@ -224,39 +224,20 @@ Pod::Spec.new do |s|
   s.frameworks       = 'Foundation', 'UIKit', 'JavaScriptCore', 'Security', 'WebKit'
   s.libraries        = 'c++', 'sqlite3'
 
-  # ── Auto-inject Bonjour / Local Network permissions into host App Info.plist ──
-  s.script_phase = {
-    :name => '[WhiteNeedle] Inject Network Permissions',
-    :script => <<-'SCRIPT',
-      PLIST="${BUILT_PRODUCTS_DIR}/${INFOPLIST_PATH}"
-      if [ ! -f "$PLIST" ]; then
-        PLIST="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
-      fi
-      if [ ! -f "$PLIST" ]; then
-        echo "warning: [WhiteNeedle] Info.plist not found, skipping permission injection."
-        exit 0
-      fi
-
-      BUDDY=/usr/libexec/PlistBuddy
-
-      # NSBonjourServices — array containing _whiteneedle._tcp
-      if ! $BUDDY -c "Print :NSBonjourServices" "$PLIST" 2>/dev/null | grep -q "_whiteneedle._tcp"; then
-        $BUDDY -c "Add :NSBonjourServices array" "$PLIST" 2>/dev/null || true
-        $BUDDY -c "Add :NSBonjourServices: string _whiteneedle._tcp" "$PLIST"
-        echo "note: [WhiteNeedle] Added NSBonjourServices → _whiteneedle._tcp"
-      fi
-
-      # NSLocalNetworkUsageDescription
-      if ! $BUDDY -c "Print :NSLocalNetworkUsageDescription" "$PLIST" 2>/dev/null >/dev/null; then
-        $BUDDY -c "Add :NSLocalNetworkUsageDescription string 'WhiteNeedle uses the local network for remote debugging.'" "$PLIST"
-        echo "note: [WhiteNeedle] Added NSLocalNetworkUsageDescription"
-      fi
-    SCRIPT
-    :execution_position => :after_compile,
-    :shell_path => '/bin/sh'
-  }
+  # ── Bonjour / Local Network permissions ──────────────────────────────
+  # Add to your Podfile:
+  #
+  #   require_relative 'Pods/WhiteNeedle/Scripts/cocoapods_hook'
+  #   post_install do |installer|
+  #     whiteneedle_inject_permissions(installer)
+  #   end
+  # ─────────────────────────────────────────────────────────────────────
 end
 PODSPEC
+
+# Copy hook helper script
+mkdir -p "$POD_DIR/Scripts"
+cp "$SCRIPT_DIR/ios-dylib/WhiteNeedle/Scripts/cocoapods_hook.rb" "$POD_DIR/Scripts/"
 
 log "→ dist/cocoapods/WhiteNeedle/"
 
