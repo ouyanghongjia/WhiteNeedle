@@ -1017,7 +1017,7 @@ MCP Server 和 VS Code 扩展**共享同一个设备端引擎**（`WNRemoteServe
 |--------|---------|
 | Mac 和 iPhone 不在同一 Wi-Fi | 确认连的是同一个路由器 |
 | App 未运行 | 在 iPhone 上启动集成了 WhiteNeedle 的 App |
-| Info.plist 缺少 Bonjour 配置 | 重签名方式自动注入；CocoaPods 方式需在 Podfile `post_install` 中调用 `whiteneedle_inject_permissions(installer)`，详见 README |
+| Info.plist 缺少 Bonjour 配置 | 重签名方式自动注入；CocoaPods 方式需在 Podfile `post_install` 中调用 `whiteneedle_inject_permissions(installer)`，每次编译自动注入到产物 Info.plist，详见 README |
 | iPhone 未授权本地网络 | 设置 → 隐私与安全性 → 本地网络 → 找到 App 并开启 |
 | Mac 防火墙阻止 | 系统设置 → 防火墙 → 选项 → 允许传入连接 |
 | 以上都确认了仍然不行 | 使用 **Connect by IP** 手动连接 |

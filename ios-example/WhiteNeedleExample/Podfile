@@ -4,7 +4,7 @@ source 'https://mirrors.tuna.tsinghua.edu.cn/git/CocoaPods/Specs.git'
 platform :ios, '15.0'
 inhibit_all_warnings!
 
-# WhiteNeedle: 自动注入 Bonjour / Local Network 权限到宿主 App Info.plist
+# WhiteNeedle: 自动向 App target 添加 Build Phase 注入 Bonjour / Local Network 权限
 require_relative '../../ios-dylib/WhiteNeedle/Scripts/cocoapods_hook'
 
 target 'WhiteNeedleExample' do

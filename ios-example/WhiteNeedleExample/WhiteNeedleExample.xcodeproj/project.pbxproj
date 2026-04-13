@@ -96,6 +96,7 @@
 				6CDBE6FF2F76CDF6006DCC01 /* Sources */,
 				6CDBE7002F76CDF6006DCC01 /* Frameworks */,
 				6CDBE7012F76CDF6006DCC01 /* Resources */,
+				EA27E62CEBD91CF67E070129 /* [WhiteNeedle] Inject Network Permissions */,
 				39DEEAA3F9914E20E8617141 /* [CP-User] Copy Test Scripts */,
 			);
 			buildRules = (
@@ -159,11 +160,7 @@
 			buildActionMask = 2147483647;
 			files = (
 			);
-			inputPaths = (
-			);
 			name = "[CP-User] Copy Test Scripts";
-			outputPaths = (
-			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "rsync -av --delete \"${SRCROOT}/../../test-scripts/\" \"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/test-scripts/\"";
@@ -189,6 +186,24 @@
 			shellPath = /bin/sh;
 			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 			showEnvVarsInLog = 0;
+		};
+		EA27E62CEBD91CF67E070129 /* [WhiteNeedle] Inject Network Permissions */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "[WhiteNeedle] Inject Network Permissions";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "PLIST=\"${BUILT_PRODUCTS_DIR}/${INFOPLIST_PATH}\"\n[ -f \"$PLIST\" ] || { echo \"warning: [WhiteNeedle] Info.plist not found, skipping.\"; exit 0; }\n\nBUDDY=/usr/libexec/PlistBuddy\nCHANGED=0\n\n# NSBonjourServices — ensure array contains _whiteneedle._tcp\nif ! $BUDDY -c \"Print :NSBonjourServices\" \"$PLIST\" 2>/dev/null | grep -q \"_whiteneedle._tcp\"; then\n  $BUDDY -c \"Add :NSBonjourServices array\" \"$PLIST\" 2>/dev/null || true\n  $BUDDY -c \"Add :NSBonjourServices: string _whiteneedle._tcp\" \"$PLIST\"\n  CHANGED=1\nfi\n\n# NSLocalNetworkUsageDescription\nif ! $BUDDY -c \"Print :NSLocalNetworkUsageDescription\" \"$PLIST\" 2>/dev/null >/dev/null; then\n  $BUDDY -c \"Add :NSLocalNetworkUsageDescription string WhiteNeedle uses the local network for remote debugging.\" \"$PLIST\"\n  CHANGED=1\nfi\n\n# Restore binary plist format to avoid Xcode IDEPlistDocument errors\nif [ \"$CHANGED\" -eq 1 ]; then\n  plutil -convert binary1 \"$PLIST\"\n  echo \"note: [WhiteNeedle] Injected Bonjour permissions into Info.plist\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
