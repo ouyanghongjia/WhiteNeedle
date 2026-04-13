@@ -2,7 +2,7 @@
 
 本目录随 **whiteneedle-js-api** Cursor Skill 分发，**不依赖**仓库根目录下的 `docs/`。编写或核对 WhiteNeedle 设备端脚本时，以这里的 `api-*.md` 为 API 说明来源。
 
-- 引擎版本：**2.0.0**（以你实际注入的 dylib 为准）
+- 引擎版本：**2.0.0**（以你实际集成的 WhiteNeedle 版本为准）
 - 最低支持：**iOS 15.0** · 架构：**arm64**
 
 ## API 索引

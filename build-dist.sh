@@ -5,21 +5,21 @@ set -euo pipefail
 # WhiteNeedle Distribution Builder
 #
 # Assembles all deliverables into dist/:
-#   - WhiteNeedle.vsix          (VS Code / Cursor extension, includes typings)
-#   - mcp-server/               (compiled MCP server)
-#   - skills/                   (Cursor agent skills)
-#   - WhiteNeedle.dylib         (pre-built dynamic library)
-#   - cocoapods/WhiteNeedle/    (CocoaPods private pod source + podspec)
-#   - sample-scripts/           (example scripts for users)
-#   - test-scripts/            (API stability tests, not for distribution)
-#   - docs/                     (API & usage documentation)
-#   - README.md                 (distribution guide)
+#   - WhiteNeedle.vsix                # VS Code / Cursor extension
+#   - WhiteNeedle.framework/          # pre-built iOS framework (arm64, iOS 15+)
+#   - mcp-server/                     # compiled MCP server
+#   - skills/                         # Cursor agent skills
+#   - cocoapods/WhiteNeedle/          # CocoaPods private pod (framework distribution)
+#   - sample-scripts/                 # example scripts for users
+#   - test-scripts/                   # API stability tests, not for distribution
+#   - docs/                           # API & usage documentation
+#   - README.md                       # distribution guide
 #
 # Usage:
-#   ./build-dist.sh                  # full build + package (dylib, .vsix, mcp, skills, docs)
-#   ./build-dist.sh --skip-dylib     # skip dylib compile; use ios-dylib/build/WhiteNeedle.dylib
-#   ./build-dist.sh --vsix-only      # only vscode-extension → dist/WhiteNeedle.vsix
-#   ./build-dist.sh --skip-vsix      # full dist without packaging the VS Code extension
+#   ./build-dist.sh                      # full build + package
+#   ./build-dist.sh --skip-build         # skip framework compile; use existing build
+#   ./build-dist.sh --vsix-only          # only vscode-extension → dist/WhiteNeedle.vsix
+#   ./build-dist.sh --skip-vsix          # full dist without packaging the VS Code extension
 # ============================================================================
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,17 +57,18 @@ build_vscode_extension_tree() {
     cd "$ROOT_DIR"
 }
 
-SKIP_DYLIB=false
+SKIP_BUILD=false
 VSIX_ONLY=false
 SKIP_VSIX=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --skip-dylib) SKIP_DYLIB=true; shift ;;
+        --skip-build) SKIP_BUILD=true; shift ;;
+        --skip-dylib) SKIP_BUILD=true; shift ;; # deprecated alias
         --vsix-only) VSIX_ONLY=true; shift ;;
         --skip-vsix) SKIP_VSIX=true; shift ;;
         -h|--help)
             echo "Usage: $0 [options]"
-            echo "  --skip-dylib   Skip dylib compilation; use existing build/WhiteNeedle.dylib"
+            echo "  --skip-build   Skip framework compilation; use existing build/WhiteNeedle.framework"
             echo "  --vsix-only    Only build vscode-extension and write dist/WhiteNeedle.vsix"
             echo "  --skip-vsix    Full dist build but skip .vsix packaging"
             exit 0 ;;
@@ -103,37 +104,32 @@ mkdir -p "$DIST_DIR"
 log "Created $DIST_DIR"
 
 # ============================================================================
-# Step 1: Build WhiteNeedle.dylib
+# Step 1: Build WhiteNeedle.framework
 # ============================================================================
-step 1 "Build WhiteNeedle.dylib"
+step 1 "Build WhiteNeedle.framework"
 
-DYLIB_SRC="$ROOT_DIR/ios-dylib"
-DYLIB_OUT="$DYLIB_SRC/build/WhiteNeedle.dylib"
+FW_SRC="$ROOT_DIR/ios-dylib"
+FW_OUT="$FW_SRC/build/WhiteNeedle.framework"
 
-if [[ "$SKIP_DYLIB" == true ]]; then
-    if [[ -f "$DYLIB_OUT" ]]; then
-        log "Skipping build, using existing: $DYLIB_OUT"
-    elif [[ -f "$DYLIB_SRC/WhiteNeedle.dylib" ]]; then
-        DYLIB_OUT="$DYLIB_SRC/WhiteNeedle.dylib"
-        log "Skipping build, using existing: $DYLIB_OUT"
+if [[ "$SKIP_BUILD" == true ]]; then
+    if [[ -d "$FW_OUT" ]]; then
+        log "Skipping build, using existing: $FW_OUT"
     else
-        err "No pre-built dylib found. Run without --skip-dylib."
+        err "No pre-built framework found at $FW_OUT. Run without --skip-build."
     fi
 else
-    cd "$DYLIB_SRC"
+    cd "$FW_SRC"
     make clean >/dev/null 2>&1 || true
     make
-    [[ -f "$DYLIB_OUT" ]] || err "dylib build failed"
+    [[ -d "$FW_OUT" ]] || err "framework build failed"
     cd "$ROOT_DIR"
 fi
 
-cp "$DYLIB_OUT" "$DIST_DIR/WhiteNeedle.dylib"
-log "→ dist/WhiteNeedle.dylib"
+cp -R "$FW_OUT" "$DIST_DIR/WhiteNeedle.framework"
+log "→ dist/WhiteNeedle.framework/"
 
 # ============================================================================
 # Step 2: Build & Package VS Code Extension (.vsix)
-#   The extension bundles typings/whiteneedle.d.ts and auto-configures
-#   jsconfig.json on activation — no manual type setup needed.
 # ============================================================================
 if [[ "$SKIP_VSIX" != true ]]; then
     step 2 "Build VS Code extension"
@@ -181,8 +177,9 @@ if [[ -f "$INSERT_SRC" ]]; then
     log "Compiled insert_dylib, removed source"
 fi
 
-# Place the freshly-built dylib into the resign skill's payload
-cp "$DIST_DIR/WhiteNeedle.dylib" "$RESIGN_SKILL/payload/WhiteNeedle.dylib"
+# Place the freshly-built framework into the resign skill's payload
+rm -rf "$RESIGN_SKILL/payload/WhiteNeedle.framework"
+cp -R "$DIST_DIR/WhiteNeedle.framework" "$RESIGN_SKILL/payload/"
 log "→ dist/skills/"
 
 # ============================================================================
@@ -193,8 +190,73 @@ step 5 "Prepare CocoaPods private pod"
 POD_DIR="$DIST_DIR/cocoapods/WhiteNeedle"
 mkdir -p "$POD_DIR"
 
-cp -R "$DYLIB_SRC/WhiteNeedle/Sources" "$POD_DIR/Sources"
-cp "$ROOT_DIR/cocoapods-dist/WhiteNeedle/WhiteNeedle.podspec" "$POD_DIR/WhiteNeedle.podspec"
+# Copy framework and podspec
+cp -R "$DIST_DIR/WhiteNeedle.framework" "$POD_DIR/WhiteNeedle.framework"
+
+cat > "$POD_DIR/WhiteNeedle.podspec" <<'PODSPEC'
+Pod::Spec.new do |s|
+  s.name             = 'WhiteNeedle'
+  s.version          = '2.0.0'
+  s.summary          = 'WhiteNeedle JavaScriptCore engine, TCP/Bonjour bridge, and hook utilities for iOS.'
+  s.description      = <<-DESC
+    WhiteNeedle is an iOS dynamic scripting engine built on JavaScriptCore.
+    This pod distributes a pre-built framework — no source compilation needed.
+  DESC
+  s.homepage         = 'https://github.com/user/WhiteNeedle'
+  s.license          = { :type => 'MIT' }
+  s.author           = { 'WhiteNeedle Team' => 'whiteneedle@example.com' }
+
+  # ── Source Configuration ──────────────────────────────────────────────
+  # Option A: Private git repo
+  #   s.source = { :git => 'git@your-server.com:ios/WhiteNeedle.git', :tag => s.version.to_s }
+  #
+  # Option B: Local path
+  #   pod 'WhiteNeedle', :path => '/path/to/dist/cocoapods/WhiteNeedle'
+  # ─────────────────────────────────────────────────────────────────────
+  s.source           = { :git => 'REPLACE_WITH_YOUR_GIT_URL', :tag => s.version.to_s }
+
+  s.platform         = :ios, '15.0'
+  s.requires_arc     = true
+
+  # ── Binary distribution ─────────────────────────────────────────────
+  s.vendored_frameworks = 'WhiteNeedle.framework'
+
+  s.frameworks       = 'Foundation', 'UIKit', 'JavaScriptCore', 'Security', 'WebKit'
+  s.libraries        = 'c++', 'sqlite3'
+
+  # ── Auto-inject Bonjour / Local Network permissions into host App Info.plist ──
+  s.script_phase = {
+    :name => '[WhiteNeedle] Inject Network Permissions',
+    :script => <<-'SCRIPT',
+      PLIST="${BUILT_PRODUCTS_DIR}/${INFOPLIST_PATH}"
+      if [ ! -f "$PLIST" ]; then
+        PLIST="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
+      fi
+      if [ ! -f "$PLIST" ]; then
+        echo "warning: [WhiteNeedle] Info.plist not found, skipping permission injection."
+        exit 0
+      fi
+
+      BUDDY=/usr/libexec/PlistBuddy
+
+      # NSBonjourServices — array containing _whiteneedle._tcp
+      if ! $BUDDY -c "Print :NSBonjourServices" "$PLIST" 2>/dev/null | grep -q "_whiteneedle._tcp"; then
+        $BUDDY -c "Add :NSBonjourServices array" "$PLIST" 2>/dev/null || true
+        $BUDDY -c "Add :NSBonjourServices: string _whiteneedle._tcp" "$PLIST"
+        echo "note: [WhiteNeedle] Added NSBonjourServices → _whiteneedle._tcp"
+      fi
+
+      # NSLocalNetworkUsageDescription
+      if ! $BUDDY -c "Print :NSLocalNetworkUsageDescription" "$PLIST" 2>/dev/null >/dev/null; then
+        $BUDDY -c "Add :NSLocalNetworkUsageDescription string 'WhiteNeedle uses the local network for remote debugging.'" "$PLIST"
+        echo "note: [WhiteNeedle] Added NSLocalNetworkUsageDescription"
+      fi
+    SCRIPT
+    :execution_position => :after_compile,
+    :shell_path => '/bin/sh'
+  }
+end
+PODSPEC
 
 log "→ dist/cocoapods/WhiteNeedle/"
 

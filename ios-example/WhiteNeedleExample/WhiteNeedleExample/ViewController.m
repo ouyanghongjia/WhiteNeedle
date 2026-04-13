@@ -38,6 +38,12 @@ static NSString *const kNetworkCellID = @"NetworkCell";
     [self loadScriptList];
     [self setupNetworkTests];
     [self buildUI];
+    
+    NSDictionary *dic = @{NSHTTPCookieName:@"testName",
+                          NSHTTPCookiePath:@"/",
+                          NSHTTPCookieValue:@"cookie.name"};
+    NSHTTPCookie *cookie = [NSHTTPCookie cookieWithProperties:dic];
+    [[NSHTTPCookieStorage sharedHTTPCookieStorage] setCookie:cookie];
 }
 
 #pragma mark - Engine

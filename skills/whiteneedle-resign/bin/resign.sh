@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ============================================================================
 # WhiteNeedle IPA Re-signing Tool
-# Injects WhiteNeedle.dylib into an IPA and re-signs it.
+# Injects WhiteNeedle.framework into an IPA and re-signs it.
 # ============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,7 +21,7 @@ Required:
 
 Optional:
   -o, --output <path>         Output IPA path (default: <input>_whiteneedle.ipa)
-  -d, --dylib-dir <path>      Directory containing WhiteNeedle.dylib
+  -d, --payload-dir <path>    Directory containing WhiteNeedle.framework
                                (default: script's payload/ dir)
   -b, --bundle-id <id>        Override CFBundleIdentifier (required if profile AppID
                                differs from the IPA's original bundle ID)
@@ -66,7 +66,7 @@ INPUT_IPA=""
 SIGN_IDENTITY=""
 PROVISION_PROFILE=""
 OUTPUT_IPA=""
-DYLIB_DIR="$SKILL_ROOT/payload"
+PAYLOAD_DIR="$SKILL_ROOT/payload"
 KEEP_EXTENSIONS=false
 EXT_PROFILE=""
 EXT_PROFILE_DIR=""
@@ -78,7 +78,7 @@ while [[ $# -gt 0 ]]; do
         -c|--cert)            SIGN_IDENTITY="$2"; shift 2 ;;
         -p|--profile)         PROVISION_PROFILE="$2"; shift 2 ;;
         -o|--output)          OUTPUT_IPA="$2"; shift 2 ;;
-        -d|--dylib-dir)       DYLIB_DIR="$2"; shift 2 ;;
+        -d|--payload-dir) PAYLOAD_DIR="$2"; shift 2 ;;
         -b|--bundle-id)       BUNDLE_ID_OVERRIDE="$2"; shift 2 ;;
         -e|--keep-extensions) KEEP_EXTENSIONS=true; shift ;;
         --ext-profile)        EXT_PROFILE="$2"; shift 2 ;;
@@ -106,9 +106,10 @@ if [[ -n "$EXT_PROFILE_DIR" && ! -d "$EXT_PROFILE_DIR" ]]; then
     err "Extension profile directory not found: $EXT_PROFILE_DIR"
 fi
 
-WN_DYLIB="$DYLIB_DIR/WhiteNeedle.dylib"
+WN_FRAMEWORK="$PAYLOAD_DIR/WhiteNeedle.framework"
 
-[[ -f "$WN_DYLIB" ]] || err "WhiteNeedle.dylib not found in: $DYLIB_DIR"
+[[ -d "$WN_FRAMEWORK" && -f "$WN_FRAMEWORK/WhiteNeedle" ]] || \
+    err "WhiteNeedle.framework not found in: $PAYLOAD_DIR"
 
 # --- Check for insert_dylib ---
 INSERT_DYLIB=""
@@ -165,9 +166,9 @@ resign_bundle() {
 
     cp "$profile" "$bundle_path/embedded.mobileprovision"
 
-    # Sign frameworks/dylibs inside this bundle
+    # Sign frameworks inside this bundle
     if [[ -d "$bundle_path/Frameworks" ]]; then
-        find "$bundle_path/Frameworks" -maxdepth 1 \( -name "*.dylib" -o -name "*.framework" \) 2>/dev/null | while read -r item; do
+        find "$bundle_path/Frameworks" -maxdepth 1 -name "*.framework" 2>/dev/null | while read -r item; do
             codesign --force --sign "$identity" "$item"
         done
     fi
@@ -190,16 +191,17 @@ APP_BINARY="$APP_PATH/$APP_NAME"
 [[ -f "$APP_BINARY" ]] || APP_BINARY=$(plutil -extract CFBundleExecutable raw "$APP_PATH/Info.plist" 2>/dev/null | xargs -I{} echo "$APP_PATH/{}")
 [[ -f "$APP_BINARY" ]] || err "Cannot find app binary"
 
-# --- Step 2: Copy dylibs ---
+# --- Step 2: Copy WhiteNeedle.framework ---
 FRAMEWORKS_DIR="$APP_PATH/Frameworks"
 mkdir -p "$FRAMEWORKS_DIR"
 
-log "Copying WhiteNeedle.dylib ..."
-cp "$WN_DYLIB" "$FRAMEWORKS_DIR/"
+log "Copying WhiteNeedle.framework ..."
+cp -R "$WN_FRAMEWORK" "$FRAMEWORKS_DIR/"
+LOAD_PATH="@rpath/WhiteNeedle.framework/WhiteNeedle"
 
 # --- Step 3: Inject load command ---
-log "Injecting load command into $APP_NAME ..."
-"$INSERT_DYLIB" "@rpath/WhiteNeedle.dylib" "$APP_BINARY" --inplace
+log "Injecting load command ($LOAD_PATH) into $APP_NAME ..."
+"$INSERT_DYLIB" "$LOAD_PATH" "$APP_BINARY" --inplace
 
 # --- Step 3.5: Override Bundle ID if requested ---
 if [[ -n "$BUNDLE_ID_OVERRIDE" ]]; then
@@ -273,12 +275,12 @@ log "Embedding provisioning profile ..."
 cp "$PROVISION_PROFILE" "$APP_PATH/embedded.mobileprovision"
 
 # --- Step 7: Re-sign main app ---
-log "Signing dylibs and frameworks ..."
-find "$FRAMEWORKS_DIR" -maxdepth 1 \( -name "*.dylib" -o -name "*.framework" \) | while read -r item; do
+log "Signing embedded frameworks ..."
+find "$FRAMEWORKS_DIR" -maxdepth 1 -name "*.framework" | while read -r item; do
     codesign --force --sign "$SIGN_IDENTITY" "$item"
 done
 
-find "$FRAMEWORKS_DIR" -mindepth 2 \( -name "*.framework" -o -name "*.dylib" \) 2>/dev/null | while read -r item; do
+find "$FRAMEWORKS_DIR" -mindepth 2 -name "*.framework" 2>/dev/null | while read -r item; do
     codesign --force --sign "$SIGN_IDENTITY" "$item"
 done
 

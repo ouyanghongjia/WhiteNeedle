@@ -19,6 +19,7 @@ NS_ASSUME_NONNULL_BEGIN
  *   UIDebug.highlightView(address)     → add colored border on device
  *   UIDebug.clearHighlight()           → remove all highlights
  *   UIDebug.searchViews(className)     → find views by class name
+ *   UIDebug.searchViewsByText(text)    → find views whose text/title/placeholder contains the query
  */
 @interface WNUIDebugBridge : NSObject
 
@@ -32,6 +33,7 @@ NS_ASSUME_NONNULL_BEGIN
 + (BOOL)highlightView:(NSString *)addr;
 + (void)clearHighlight;
 + (NSArray *)searchViewsByClassName:(NSString *)className;
++ (NSArray *)searchViewsByText:(NSString *)text;
 + (NSString *)screenshotBase64;
 
 @end

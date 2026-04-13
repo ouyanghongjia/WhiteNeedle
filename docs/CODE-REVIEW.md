@@ -9,7 +9,7 @@
 
 WhiteNeedle 是一个基于 **JavaScriptCore** 的 iOS 动态脚本引擎，配合 VS Code 扩展和 MCP Server，构建了一套完整的 **iOS 应用运行时调试工具链**。
 
-其核心价值主张是：**不依赖 JIT/RWX 内存（即不需要越狱），通过注入 dylib 的方式在非越狱设备上实现类 Frida 的 ObjC Runtime 操控能力。**
+其核心价值主张是：**不依赖 JIT/RWX 内存（即不需要越狱），通过注入 Framework 的方式在非越狱设备上实现类 Frida 的 ObjC Runtime 操控能力。**
 
 ### 1.1 引擎层能力矩阵（`ios-dylib/`）
 
@@ -133,7 +133,7 @@ WhiteNeedle 试图将多个独立工具的能力整合到 VS Code 中：
 
 没有 `.github/workflows/` 或任何 CI 配置。意味着：
 - 代码提交没有自动化质量门禁
-- dylib 构建没有自动化验证
+- Framework 构建没有自动化验证
 - 扩展编译没有回归检查
 
 **4.2.3 TCP 连接无自动重连**

@@ -467,6 +467,12 @@ static void WNSocketCallback(CFSocketRef socket, CFSocketCallBackType type,
         return @{@"views": [WNUIDebugBridge searchViewsByClassName:className]};
     }
 
+    if ([method isEqualToString:@"searchViewsByText"]) {
+        NSString *text = params[@"text"];
+        if (!text) return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Missing text"}];
+        return @{@"views": [WNUIDebugBridge searchViewsByText:text]};
+    }
+
     if ([method isEqualToString:@"getScreenshot"]) {
         NSString *b64 = [WNUIDebugBridge screenshotBase64];
         return @{@"base64": b64 ?: [NSNull null]};

@@ -14,7 +14,7 @@ description: WhiteNeedle iOS 上 JavaScript 调试运行时 API（ObjC、Interce
 
 **不要**依赖其它仓库路径下的 `docs/`；单独分发本 skill 时只需保留 `SKILL.md` 与 `references/` 目录。
 
-若某台设备上引擎行为与文档不符，以**当前运行的 dylib** 为准。
+若某台设备上引擎行为与文档不符，以**当前运行的 WhiteNeedle 版本**为准。
 
 ## 快速索引
 

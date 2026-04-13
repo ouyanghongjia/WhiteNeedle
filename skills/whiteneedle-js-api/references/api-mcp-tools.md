@@ -59,6 +59,7 @@ MCP Server（`mcp-server`，stdio）通过 TCP 调用设备上的 `WNRemoteServe
 | `highlight_view` | `highlightView` | `address` | `{ success }` |
 | `clear_highlight` | `clearHighlight` | — | `{ success }` |
 | `search_views` | `searchViews` | `className` | `{ views }` |
+| `search_views_by_text` | `searchViewsByText` | `text` | `{ views }` — 按文本内容搜索（UILabel.text、UIButton.title、UITextField.text/placeholder、UITextView.text、UISegmentedControl segment title），大小写不敏感 |
 | `get_screenshot` | `getScreenshot` | — | `{ base64 }` |
 
 ## HTTP Mock
@@ -74,8 +75,23 @@ MCP Server（`mcp-server`，stdio）通过 TCP 调用设备上的 `WNRemoteServe
 | `disable_mock_interceptor` | `disableMockInterceptor` | — | `{ success, installed }` |
 | `get_mock_interceptor_status` | `getMockInterceptorStatus` | — | `{ installed, ruleCount }` |
 
+## Context 与模块
+
+| MCP 工具 | RPC 方法 | 参数 | 返回要点 |
+|----------|----------|------|----------|
+| `reset_context` | `resetContext` | — | `{ success }` — 重置 JSContext（清理所有 Hook、变量、模块缓存、FPS 监控） |
+| `list_installed_modules` | `listInstalledJsModules` | — | `{ modules: [{ name, size }] }` — 设备端 `Documents/wn_installed_modules/` 中已安装的 JS 模块列表 |
+
+## 沙盒文件操作
+
+| MCP 工具 | RPC 方法 | 参数 | 返回要点 |
+|----------|----------|------|----------|
+| `write_file` | `writeFile` | `path`（Documents/ 下相对路径）, `content` | `{ success }` — 自动创建中间目录 |
+| `mkdir` | `mkdir` | `path`（Documents/ 下相对路径） | `{ success }` |
+| `remove_dir` | `removeDir` | `path`（Documents/ 下相对路径） | `{ success }` — 删除文件或目录 |
+
 ## 编写设备端 JS 时的注意点
 
 - **`evaluate` 的返回值**：始终按 `{ value: string }` 解析；不要用已废弃的单一 `methods` 字段理解 `getMethods`。
 - **堆搜索**：使用 **`ObjC.choose(className, { onMatch, onComplete })`**；运行时无 `ObjC.chooseSync`。
-- 完整 JS API 见本 skill 内同目录下的其余 `api-*.md`（见 `README.md` 索引）。
+- 完整 JS API：仓库内见 `docs/api-*.md`；**独立分发的** Cursor skill 使用自带副本 `skills/whiteneedle-js-api/references/api-*.md`（不依赖本仓库 `docs/`）。

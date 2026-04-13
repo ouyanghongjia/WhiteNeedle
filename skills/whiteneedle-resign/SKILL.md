@@ -1,10 +1,10 @@
 # WhiteNeedle IPA Resign Skill
 
-将 WhiteNeedle.dylib 注入 IPA 并重签名，使其可以安装到 iOS 设备上进行调试。本 skill 自包含——所有工具、配置和产物均按子目录归类。
+将 WhiteNeedle 注入 IPA 并重签名，使其可以安装到 iOS 设备上进行调试。本 skill 自包含——所有工具、配置和产物均按子目录归类。
 
-Use when the user asks to resign an IPA, inject WhiteNeedle dylib, re-sign an app, prepare an IPA for debugging, deploy WhiteNeedle to an app, or install a debug-enabled IPA.
+Use when the user asks to resign an IPA, inject WhiteNeedle, re-sign an app, prepare an IPA for debugging, deploy WhiteNeedle to an app, or install a debug-enabled IPA.
 
-Trigger phrases: "resign IPA", "re-sign", "inject dylib", "重签名", "注入 dylib", "签名 IPA", "resign app", "deploy IPA", "install WhiteNeedle", "prepare IPA", "打包调试", "安装到设备".
+Trigger phrases: "resign IPA", "re-sign", "inject WhiteNeedle", "重签名", "注入 WhiteNeedle", "签名 IPA", "resign app", "deploy IPA", "install WhiteNeedle", "prepare IPA", "打包调试", "安装到设备".
 
 ## Setup
 
@@ -20,7 +20,7 @@ All tools are bundled alongside this SKILL.md. Determine this skill's directory 
 ├── config/                     # User configuration
 │   └── deploy.conf             #   Signing cert, profile, device, etc.
 └── payload/                    # Bundled artifacts
-    └── WhiteNeedle.dylib       #   Pre-built dylib
+    └── WhiteNeedle.framework/  #   Pre-built framework
 ```
 
 Where `<SKILL_DIR>` is the directory containing this SKILL.md.
@@ -29,7 +29,7 @@ Where `<SKILL_DIR>` is the directory containing this SKILL.md.
 - macOS with Xcode Command Line Tools installed (`xcode-select --install`)
 - A valid Apple developer certificate (Development or Enterprise)
 - A matching provisioning profile (.mobileprovision) containing the target device UDID
-- WhiteNeedle.dylib (pre-built)
+- WhiteNeedle.framework (pre-built)
 - Optional: `ios-deploy` or `ideviceinstaller` for device installation
 
 ## Workflow
@@ -131,7 +131,7 @@ After validation, present a summary table to the user showing what was loaded vs
   描述文件:    ✓ MyApp Dev Profile (expires 2026-12-01)
   设备 ID:     ✓ 已连接: abc123...
   IPA 路径:    ✗ 未配置 — 请提供
-  Dylib 路径:  ✓ 自动使用编译产物
+  Framework:   ✓ 自动使用编译产物
 ```
 
 Only use AskQuestion or direct conversation to collect the **missing** parameters. Do NOT re-ask for parameters that are already configured and valid.
@@ -195,7 +195,7 @@ rm -rf "$TMPDIR_CHECK"
 Error messages:
 - "❌ IPA 文件不存在: `<path>`，请检查路径是否正确。"
 - "❌ 文件不是有效的 IPA 格式，请确认提供的是 .ipa 文件而非 .app 或 .xcarchive。"
-- "⚠️ 该 IPA 已包含 WhiteNeedle.dylib，重复注入可能导致问题。是否仍然继续？"
+- "⚠️ 该 IPA 已包含 WhiteNeedle，重复注入可能导致问题。是否仍然继续？"
 
 #### Signing certificate validation
 
@@ -308,14 +308,14 @@ if [ ! -x "$SKILL_DIR/bin/insert_dylib" ]; then
 fi
 ```
 
-### Step 2: Prepare Dylib Directory
+### Step 2: Prepare Payload Directory
 
-The resign.sh script expects WhiteNeedle.dylib in a directory. Create a temp payload directory and copy the dylib:
+The resign.sh script expects WhiteNeedle.framework/ in a directory. Create a temp payload directory and copy:
 
 ```bash
 PAYLOAD_DIR=$(mktemp -d)/payload
 mkdir -p "$PAYLOAD_DIR"
-cp "<DYLIB_PATH>" "$PAYLOAD_DIR/WhiteNeedle.dylib"
+cp -R "<FRAMEWORK_PATH>" "$PAYLOAD_DIR/WhiteNeedle.framework"
 ```
 
 ### Step 3: Execute Resign
@@ -547,8 +547,8 @@ rm -rf "$TMPDIR"
 
 ## Troubleshooting
 
-**Q: "WhiteNeedle.dylib not found"**
-确认提供的 dylib 路径正确，且文件存在。
+**Q: "WhiteNeedle.framework not found"**
+确认 payload 目录中存在 WhiteNeedle.framework/，且内部包含 WhiteNeedle 可执行文件。
 
 **Q: "insert_dylib not found"**
 运行 Step 1 编译 insert_dylib。如果编译失败，确认已安装 Xcode Command Line Tools：
@@ -594,5 +594,5 @@ whiteneedle-resign/
 ├── config/                     # User configuration
 │   └── deploy.conf             #   Signing cert, profile, device, etc.
 └── payload/                    # Bundled artifacts
-    └── WhiteNeedle.dylib       #   Pre-built dylib
+    └── WhiteNeedle.framework/  #   Pre-built framework
 ```

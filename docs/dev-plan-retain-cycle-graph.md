@@ -75,7 +75,7 @@
 
 ## 三、新增文件清单
 
-### iOS Dylib 端 (`ios-dylib/WhiteNeedle/Sources/`)
+### iOS Framework 端 (`ios-dylib/WhiteNeedle/Sources/`)
 
 | 文件 | 职责 | 依赖 |
 |------|------|------|
@@ -694,7 +694,7 @@ private async checkAvailability(): Promise<boolean> {
 
 不可用时显示提示：
 > "RefGraph module is not available on the connected device. 
->  Rebuild WhiteNeedle.dylib with WN_REFGRAPH=1 to enable this feature."
+>  Rebuild WhiteNeedle.framework with WN_REFGRAPH=1 to enable this feature."
 
 ### 完全摘除
 

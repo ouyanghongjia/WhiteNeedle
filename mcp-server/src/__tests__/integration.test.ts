@@ -118,7 +118,7 @@ function defaultHandler(method: string, params: Record<string, unknown>, state: 
         case 'listModules':
             return {
                 modules: [
-                    { name: 'WhiteNeedle.dylib', base: '0x100000000', size: 1048576 },
+                    { name: 'WhiteNeedle', base: '0x100000000', size: 1048576 },
                     { name: 'UIKitCore', base: '0x180000000', size: 20971520 },
                     { name: 'Foundation', base: '0x190000000', size: 8388608 },
                     { name: 'libSystem.B.dylib', base: '0x1a0000000', size: 4194304 },

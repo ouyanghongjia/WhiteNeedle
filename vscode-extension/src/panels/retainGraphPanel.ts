@@ -87,7 +87,7 @@ export class RetainGraphPanel {
             if (result !== true && result !== 'true') {
                 this.postMessage({
                     command: 'error',
-                    text: 'RefGraph module is not available. Rebuild WhiteNeedle.dylib with WN_REFGRAPH=1.',
+                    text: 'RefGraph module is not available. Rebuild WhiteNeedle.framework with WN_REFGRAPH=1.',
                 });
             }
         } catch {

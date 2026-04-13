@@ -1,6 +1,6 @@
 /**
  * JSON-RPC protocol definitions for direct TCP communication between
- * VSCode extension and WhiteNeedle.dylib on the iOS device.
+ * VSCode extension and WhiteNeedle on the iOS device.
  *
  * Extension -> Device (Requests):
  *   loadScript     { code: string, name: string }

@@ -979,7 +979,7 @@ console.log("[WhiteNeedle] URL open monitor active");`,
         name: 'List Loaded Frameworks',
         category: 'utility',
         description: 'List all loaded dynamic libraries and frameworks, separated by app vs system',
-        tags: ['modules', 'dylib', 'framework', 'loaded', 'libraries'],
+        tags: ['modules', 'framework', 'loaded', 'libraries'],
         code: `var mods = Module.enumerateModules();
 var appMods = [];
 var sysMods = 0;

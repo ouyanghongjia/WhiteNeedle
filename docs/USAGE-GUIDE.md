@@ -8,7 +8,7 @@
 
 1. [前置准备](#1-前置准备)
 2. [安装扩展](#2-安装扩展)
-3. [集成 dylib 到 App](#3-集成-dylib-到-app)
+3. [集成 WhiteNeedle 到 App](#3-集成-whiteneedle-到-app)
 4. [连接设备](#4-连接设备)
 5. [编写与推送脚本](#5-编写与推送脚本)
 6. [脚本执行模式（Single / Project）](#6-脚本执行模式single--project)
@@ -30,7 +30,8 @@
 22. [API Documentation 内置文档](#22-api-documentation-内置文档)
 23. [Structured Logs 结构化日志](#23-structured-logs-结构化日志)
 24. [DAP 断点调试](#24-dap-断点调试)
-25. [常见问题与排查](#25-常见问题与排查)
+25. [MCP Server（AI Agent 集成）](#25-mcp-serverai-agent-集成)
+26. [常见问题与排查](#26-常见问题与排查)
 
 ---
 
@@ -90,9 +91,9 @@ WhiteNeedle 的工作方式是：你的 **Mac**（运行 VS Code/Cursor）通过
 
 ---
 
-## 3. 集成 dylib 到 App
+## 3. 集成 WhiteNeedle 到 App
 
-WhiteNeedle 的核心是一个动态库（`WhiteNeedle.dylib`），需要加载到你想调试的 iOS App 中。有两种方式：
+WhiteNeedle 的核心是一个动态 Framework（`WhiteNeedle.framework`），需要加载到你想调试的 iOS App 中。有两种方式：
 
 ### 方式 A：重签名注入（推荐新手）
 
@@ -135,7 +136,7 @@ ios-deploy --bundle ~/Desktop/MyApp_whiteneedle.ipa
 
 ### 方式一：Bonjour 自动发现（推荐）
 
-如果 App 的 `Info.plist` 正确配置了 Bonjour（重签名方式会自动配置），设备会自动出现在列表中。
+如果 App 的 `Info.plist` 正确配置了 Bonjour（重签名和 CocoaPods 集成均会自动配置），设备会自动出现在列表中。
 
 **操作步骤：**
 
@@ -677,7 +678,7 @@ iPhone App 发出请求
      目标服务器
 ```
 
-![代理工作流程](guide-images/24-proxy-workflow-diagram.png)
+<!-- 图片待补充：代理工作流程示意图 -->
 
 ### 完整操作步骤
 
@@ -711,7 +712,7 @@ iPhone App 发出请求
    - **鉴权**：关闭
 7. 点击右上角 **存储**
 
-![iPhone 代理设置](guide-images/23-iphone-wifi-proxy-settings.png)
+<!-- 图片待补充：iPhone 设置 → Wi-Fi → HTTP 代理 → 手动配置界面截图 -->
 
 #### 第四步：配置域名映射规则
 
@@ -776,7 +777,7 @@ iPhone App 发出请求
 
 1. 在项目根目录下创建 `.whiteneedle/team-snippets.json`
 2. 将该文件提交到 Git 仓库
-3. 团队成员 pull 代码后，通过面板菜单 → **Sync Team Script Snippets** 同步
+3. 团队成员 pull 代码后，通过面板 → **Sync teams** 按钮同步
 
 ![Team Snippets](guide-images/26-team-snippets-sync.png)
 
@@ -882,7 +883,7 @@ brew install libimobiledevice
 }
 ```
 
-![launch.json 配置](guide-images/29-dap-launch-json.png)
+<!-- 图片待补充：.vscode/launch.json 中 WhiteNeedle Debug 配置截图 -->
 
 ### 调试步骤
 
@@ -893,13 +894,122 @@ brew install libimobiledevice
 5. 按 `F5` 启动调试或点击 Debug 面板的绿色三角
 6. 当断点命中时，可以查看变量、调用栈，使用 Debug Console 执行表达式
 
-![断点命中](guide-images/30-dap-breakpoint-hit.png)
+<!-- 图片待补充：断点命中时的调试界面截图 -->
 
 > **注意：** DAP 调试需要 USB 连接，而普通的脚本推送可以通过 Wi-Fi 完成。这是两个独立的通信通道。
 
 ---
 
-## 25. 常见问题与排查
+## 25. MCP Server（AI Agent 集成）
+
+WhiteNeedle 提供了一个 MCP（Model Context Protocol）Server，让 Cursor、Claude Code 等 AI Agent 能够直接与 iOS 设备交互——浏览类、执行脚本、管理 Hook、监控网络、操作视图等——无需手动操作 VS Code 面板。
+
+### 工作原理
+
+```
+┌─────────────────┐   stdio    ┌─────────────────┐   TCP 27042   ┌──────────────┐
+│  Cursor / Claude │ ◄────────► │  MCP Server     │ ◄───────────► │  iPhone App  │
+│  (AI Agent)      │            │  (Node.js)      │               │  (WhiteNeedle│
+└─────────────────┘            └─────────────────┘               │   framework) │
+                                                                  └──────────────┘
+```
+
+AI Agent 通过 MCP 协议调用工具（如 `evaluate`、`list_classes`），MCP Server 将请求转换为 JSON-RPC 发送到设备端 `WNRemoteServer`，再将结果返回给 Agent。
+
+### 配置步骤
+
+#### 第一步：确认 Node.js 已安装
+
+```bash
+node --version  # 需要 18.0+
+```
+
+#### 第二步：构建 MCP Server
+
+```bash
+cd mcp-server
+npm install
+npm run build
+```
+
+构建产物为 `mcp-server/dist/index.js`。
+
+#### 第三步：在 Cursor 中配置 MCP
+
+在项目根目录创建 `.cursor/mcp.json`（或在全局 `~/.cursor/mcp.json` 中配置）：
+
+```json
+{
+    "mcpServers": {
+        "whiteneedle": {
+            "command": "node",
+            "args": ["/path/to/mcp-server/dist/index.js"],
+            "env": {
+                "WN_HOST": "192.168.1.100",
+                "WN_PORT": "27042"
+            }
+        }
+    }
+}
+```
+
+> **环境变量说明：**
+> - `WN_HOST`：iPhone 的 IP 地址。如果不设置，默认 `127.0.0.1`（适用于 USB 端口转发场景）
+> - `WN_PORT`：WhiteNeedle 端口，默认 `27042`
+>
+> 你也可以不设置环境变量，让 Agent 使用 `connect` 工具动态连接到指定设备。
+
+#### 第四步：验证
+
+在 Cursor 的 AI 对话中输入类似的请求：
+
+```
+连接到我的 iPhone（192.168.1.100），列出所有包含 ViewController 的类
+```
+
+Agent 会自动调用 `connect` → `list_classes` 工具完成操作。
+
+### 可用工具一览
+
+MCP Server 提供了 **38 个工具**，覆盖 WhiteNeedle 的全部核心能力：
+
+| 分类 | 工具 | 说明 |
+|------|------|------|
+| **连接** | `connect` / `disconnect` | 连接/断开 iOS 设备 |
+| **脚本** | `evaluate` / `load_script` / `unload_script` / `list_scripts` | 执行 JS、管理命名脚本 |
+| **ObjC 探索** | `list_classes` / `get_methods` / `list_modules` | 浏览运行时类、方法、动态库 |
+| **Hook** | `list_hooks` / `list_hooks_detailed` / `pause_hook` / `resume_hook` | 查看和控制活跃的 Hook |
+| **高级探索** | `trace_method` / `rpc_call` / `inspect_object` / `heap_search` | 方法追踪、堆搜索、对象检查 |
+| **网络** | `list_network_requests` / `get_network_request` / `clear_network_requests` / `set_network_capture` | HTTP 请求监控 |
+| **UI 调试** | `get_view_hierarchy` / `get_view_controllers` / `get_vc_detail` / `get_view_detail` / `set_view_property` / `highlight_view` / `clear_highlight` / `search_views` / `search_views_by_text` / `get_screenshot` | 视图层级、属性修改、按类名/文本搜索视图、截图 |
+| **HTTP Mock** | `list_mock_rules` / `add_mock_rule` / `update_mock_rule` / `remove_mock_rule` / `remove_all_mock_rules` / `enable_mock_interceptor` / `disable_mock_interceptor` / `get_mock_interceptor_status` | 接口模拟 |
+| **Context** | `reset_context` / `list_installed_modules` | 重置 JS 环境、查看已安装模块 |
+| **沙盒文件** | `write_file` / `mkdir` / `remove_dir` | 读写设备沙盒文件 |
+
+> **完整的工具参数和 RPC 对照表** 见 `docs/api-mcp-tools.md`。
+
+### 典型 Agent 使用场景
+
+| 场景 | Agent 会调用的工具 |
+|------|-------------------|
+| 「帮我看看当前页面是哪个 ViewController」 | `get_view_controllers` → `get_vc_detail` |
+| 「Hook 一下登录接口，打印请求参数」 | `list_classes` → `get_methods` → `evaluate`（注入 Hook 代码） |
+| 「分析网络请求，看哪个接口最慢」 | `list_network_requests` → `get_network_request` |
+| 「Mock 掉支付接口，返回成功」 | `enable_mock_interceptor` → `add_mock_rule` |
+| 「重置环境，然后运行测试脚本」 | `reset_context` → `load_script` |
+| 「找到显示'登录'的按钮，改成'Sign In'」 | `search_views_by_text`（搜索"登录"）→ `set_view_property`（修改 text） |
+
+### 与 VS Code 扩展的关系
+
+MCP Server 和 VS Code 扩展**共享同一个设备端引擎**（`WNRemoteServer`），可以同时使用：
+
+- 用 VS Code 面板做可视化操作
+- 用 AI Agent 做自动化批量操作
+- 两者的操作互相可见（如 Agent 添加的 Hook 在 VS Code Hook Manager 中也能看到）
+
+---
+
+## 26. 常见问题与排查
 
 ### 设备列表空白 / 找不到设备
 
@@ -907,7 +1017,7 @@ brew install libimobiledevice
 |--------|---------|
 | Mac 和 iPhone 不在同一 Wi-Fi | 确认连的是同一个路由器 |
 | App 未运行 | 在 iPhone 上启动集成了 WhiteNeedle 的 App |
-| Info.plist 缺少 Bonjour 配置 | 使用重签名方式会自动注入；CocoaPods 需手动添加 |
+| Info.plist 缺少 Bonjour 配置 | 重签名和 CocoaPods 集成均会自动注入；如仍缺失请检查 Build Phases 中是否存在 `[WhiteNeedle] Inject Network Permissions` 脚本 |
 | iPhone 未授权本地网络 | 设置 → 隐私与安全性 → 本地网络 → 找到 App 并开启 |
 | Mac 防火墙阻止 | 系统设置 → 防火墙 → 选项 → 允许传入连接 |
 | 以上都确认了仍然不行 | 使用 **Connect by IP** 手动连接 |
@@ -988,14 +1098,14 @@ brew install libimobiledevice
 | `20-mock-rules.png` | Mock Rules 面板：规则列表和编辑界面 |
 | `21-host-mapping.png` | Host Mapping 面板：域名映射规则列表 |
 | `22-proxy-toggle-vscode.png` | 命令面板中 Toggle Proxy 命令 + Output 显示 Proxy started |
-| `23-iphone-wifi-proxy-settings.png` | iPhone 设置 → Wi-Fi → HTTP 代理 → 手动配置的截图 |
-| `24-proxy-workflow-diagram.png` | 代理工作流程示意图（可用绘图工具制作） |
+| `23-iphone-wifi-proxy-settings.png` | ⏳ **待补充** — iPhone 设置 → Wi-Fi → HTTP 代理 → 手动配置的截图 |
+| `24-proxy-workflow-diagram.png` | ⏳ **待补充** — 代理工作流程示意图（可用绘图工具制作） |
 | `25-snippet-library.png` | Script Snippets 面板：分类和代码片段列表 |
 | `26-team-snippets-sync.png` | Sync Team Snippets 命令执行或面板提示 |
 | `27-api-docs-panel.png` | API Documentation 面板：模块列表和 API 详情 |
 | `28-structured-logs.png` | Structured Logs 面板：日志等级过滤和列表 |
-| `29-dap-launch-json.png` | .vscode/launch.json 中 WhiteNeedle Debug 配置 |
-| `30-dap-breakpoint-hit.png` | 断点命中时的调试界面（变量面板、调用栈、Debug Console） |
+| `29-dap-launch-json.png` | ⏳ **待补充** — .vscode/launch.json 中 WhiteNeedle Debug 配置 |
+| `30-dap-breakpoint-hit.png` | ⏳ **待补充** — 断点命中时的调试界面（变量面板、调用栈、Debug Console） |
 | `31-panels-menu.png` | Devices 面板标题栏展开的面板菜单（Panels 子菜单） |
 | `32-script-mode-setting.png` | VS Code 设置中 `whiteneedle.scriptMode` 的下拉选择（single / project） |
 | `33-module-tree-view.png` | 侧边栏 Installed Modules 面板中已安装模块列表 |

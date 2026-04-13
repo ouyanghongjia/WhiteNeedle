@@ -66,7 +66,7 @@ function defaultHandler(method: string, params: Record<string, unknown>): unknow
         }
         case 'listScripts': return { scripts: [] };
         case 'listHooks': return { hooks: [] };
-        case 'listModules': return { modules: [{ name: 'WhiteNeedle.dylib', base: '0x1', size: 1024 }] };
+        case 'listModules': return { modules: [{ name: 'WhiteNeedle', base: '0x1', size: 1024 }] };
         case 'rpcCall': {
             if (params['method'] === 'echo') return params['args'];
             throw { code: -32001, message: `Unknown RPC '${params['method']}'` };

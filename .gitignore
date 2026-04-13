@@ -25,9 +25,8 @@ log.txt
 # Release artifacts (use GitHub Releases instead; vsix is large)
 *.vsix
 
-# Pre-built dylib binaries — only dist/ (via build-dist.sh) should contain them
-ios-dylib/WhiteNeedle.dylib
-skills/whiteneedle-resign/payload/WhiteNeedle.dylib
+# Pre-built binaries — build from source, don't commit
+skills/whiteneedle-resign/payload/WhiteNeedle.framework/
 
 # Secrets & signing (never commit)
 .env

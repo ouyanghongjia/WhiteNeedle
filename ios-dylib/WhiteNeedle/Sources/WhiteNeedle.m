@@ -11,7 +11,7 @@
  * Static linker + CocoaPods: `-ObjC` only pulls .o files from libWhiteNeedle.a that define an
  * Objective-C class or category. This file had only a `static` constructor → the whole
  * WhiteNeedle.o could be omitted, so `WhiteNeedleInit` never ran. A tiny @implementation
- * forces the unit to link. (Injected .dylib loads the whole image; constructor still runs.)
+ * forces the unit to link. (Injected framework loads the whole image; constructor still runs.)
  */
 @interface WNWhiteNeedleEntry : NSObject
 @end

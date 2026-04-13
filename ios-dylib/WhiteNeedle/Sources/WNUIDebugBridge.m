@@ -128,6 +128,12 @@ static void wn_runOnMain(void (^block)(void)) {
         return [JSValue valueWithObject:result inContext:ctx];
     };
 
+    ns[@"searchViewsByText"] = ^JSValue *(NSString *text) {
+        JSContext *ctx = [JSContext currentContext];
+        NSArray *result = [self searchViewsByText:text];
+        return [JSValue valueWithObject:result inContext:ctx];
+    };
+
     context[@"UIDebug"] = ns;
     NSLog(@"%@ UIDebug bridge registered", kLogPrefix);
 }
@@ -294,6 +300,16 @@ static void wn_runOnMain(void (^block)(void)) {
     return results;
 }
 
++ (NSArray *)searchViewsByText:(NSString *)text {
+    if (!text || text.length == 0) return @[];
+    __block NSMutableArray *results = [NSMutableArray new];
+    wn_runOnMain(^{
+        UIWindow *win = [self findKeyWindow];
+        if (win) [self searchViewByText:win query:text results:results];
+    });
+    return results;
+}
+
 + (NSString *)screenshotBase64 {
     __block NSString *base64 = nil;
     wn_runOnMain(^{
@@ -349,15 +365,62 @@ static void wn_runOnMain(void (^block)(void)) {
 }
 
 + (UIColor *)colorFromString:(NSString *)str {
-    if (!str) return nil;
+    if (!str || str.length == 0) return nil;
+
+    // #RRGGBB or #RRGGBBAA
     if ([str hasPrefix:@"#"] && str.length >= 7) {
         unsigned int hex = 0;
         [[NSScanner scannerWithString:[str substringFromIndex:1]] scanHexInt:&hex];
+        if (str.length >= 9) {
+            CGFloat r = ((hex >> 24) & 0xFF) / 255.0;
+            CGFloat g = ((hex >> 16) & 0xFF) / 255.0;
+            CGFloat b = ((hex >> 8) & 0xFF) / 255.0;
+            CGFloat a = (hex & 0xFF) / 255.0;
+            return [UIColor colorWithRed:r green:g blue:b alpha:a];
+        }
         CGFloat r = ((hex >> 16) & 0xFF) / 255.0;
         CGFloat g = ((hex >> 8) & 0xFF) / 255.0;
         CGFloat b = (hex & 0xFF) / 255.0;
         return [UIColor colorWithRed:r green:g blue:b alpha:1.0];
     }
+
+    // rgba(R,G,B,A) or rgb(R,G,B) — values 0-255 for RGB, 0-1 for A
+    NSString *lower = [str stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if ([lower hasPrefix:@"rgba("] || [lower hasPrefix:@"rgb("]) {
+        NSRange open = [lower rangeOfString:@"("];
+        NSRange close = [lower rangeOfString:@")" options:NSBackwardsSearch];
+        if (open.location == NSNotFound || close.location == NSNotFound) return nil;
+        NSString *inner = [lower substringWithRange:NSMakeRange(open.location + 1, close.location - open.location - 1)];
+        NSArray *parts = [inner componentsSeparatedByString:@","];
+        if (parts.count < 3) return nil;
+        CGFloat r = [[parts[0] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] doubleValue] / 255.0;
+        CGFloat g = [[parts[1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] doubleValue] / 255.0;
+        CGFloat b = [[parts[2] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] doubleValue] / 255.0;
+        CGFloat a = (parts.count >= 4) ? [[parts[3] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] doubleValue] : 1.0;
+        return [UIColor colorWithRed:r green:g blue:b alpha:a];
+    }
+
+    // Named colors
+    static NSDictionary *named = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        named = @{
+            @"red":    [UIColor redColor],
+            @"green":  [UIColor greenColor],
+            @"blue":   [UIColor blueColor],
+            @"white":  [UIColor whiteColor],
+            @"black":  [UIColor blackColor],
+            @"yellow": [UIColor yellowColor],
+            @"orange": [UIColor orangeColor],
+            @"purple": [UIColor purpleColor],
+            @"cyan":   [UIColor cyanColor],
+            @"clear":  [UIColor clearColor],
+            @"gray":   [UIColor grayColor],
+        };
+    });
+    UIColor *color = named[lower.lowercaseString];
+    if (color) return color;
+
     return nil;
 }
 
@@ -386,6 +449,65 @@ static void wn_runOnMain(void (^block)(void)) {
     }
     for (UIView *sub in view.subviews) {
         [self searchView:sub className:className results:results];
+    }
+}
+
++ (void)searchViewByText:(UIView *)view query:(NSString *)query results:(NSMutableArray *)results {
+    NSString *matchedText = nil;
+    NSString *matchedField = nil;
+
+    if ([view isKindOfClass:[UILabel class]]) {
+        NSString *t = ((UILabel *)view).text;
+        if (t && [t localizedCaseInsensitiveContainsString:query]) {
+            matchedText = t;
+            matchedField = @"text";
+        }
+    } else if ([view isKindOfClass:[UIButton class]]) {
+        NSString *t = [((UIButton *)view) titleForState:UIControlStateNormal];
+        if (t && [t localizedCaseInsensitiveContainsString:query]) {
+            matchedText = t;
+            matchedField = @"title";
+        }
+    } else if ([view isKindOfClass:[UITextField class]]) {
+        UITextField *tf = (UITextField *)view;
+        if (tf.text && [tf.text localizedCaseInsensitiveContainsString:query]) {
+            matchedText = tf.text;
+            matchedField = @"text";
+        } else if (tf.placeholder && [tf.placeholder localizedCaseInsensitiveContainsString:query]) {
+            matchedText = tf.placeholder;
+            matchedField = @"placeholder";
+        }
+    } else if ([view isKindOfClass:[UITextView class]]) {
+        NSString *t = ((UITextView *)view).text;
+        if (t && [t localizedCaseInsensitiveContainsString:query]) {
+            matchedText = t;
+            matchedField = @"text";
+        }
+    } else if ([view isKindOfClass:NSClassFromString(@"UISegmentedControl")]) {
+        UISegmentedControl *seg = (UISegmentedControl *)view;
+        for (NSInteger i = 0; i < seg.numberOfSegments; i++) {
+            NSString *t = [seg titleForSegmentAtIndex:i];
+            if (t && [t localizedCaseInsensitiveContainsString:query]) {
+                matchedText = t;
+                matchedField = [NSString stringWithFormat:@"segment[%ld]", (long)i];
+                break;
+            }
+        }
+    }
+
+    if (matchedText) {
+        NSMutableDictionary *d = [NSMutableDictionary new];
+        d[@"class"]      = NSStringFromClass([view class]);
+        d[@"address"]    = [NSString stringWithFormat:@"%p", view];
+        d[@"frame"]      = NSStringFromCGRect(view.frame);
+        d[@"hidden"]     = @(view.isHidden);
+        d[@"matchField"] = matchedField;
+        d[@"matchText"]  = matchedText;
+        [results addObject:d];
+    }
+
+    for (UIView *sub in view.subviews) {
+        [self searchViewByText:sub query:query results:results];
     }
 }
 

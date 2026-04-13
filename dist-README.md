@@ -7,14 +7,14 @@
 ```
 dist/
 ├── WhiteNeedle.vsix                # VS Code / Cursor 扩展（含 JS API 类型声明，安装即可获得补全）
-├── WhiteNeedle.dylib               # 预编译的 iOS 动态库 (arm64, iOS 15+)
+├── WhiteNeedle.framework/          # 预编译的 iOS Framework (arm64, iOS 15+)
 ├── mcp-server/                     # MCP Server（AI Agent 工具链）
 ├── skills/                         # Cursor Agent Skills
 │   ├── whiteneedle-js-api/         #   JS API 文档与参考
 │   └── whiteneedle-resign/         #   重签名工作流（bin/ + config/ + payload/）
-├── cocoapods/WhiteNeedle/          # CocoaPods 私有库（源码集成方式）
+├── cocoapods/WhiteNeedle/          # CocoaPods 私有库（Framework 二进制分发）
 │   ├── WhiteNeedle.podspec
-│   └── Sources/
+│   └── WhiteNeedle.framework/
 ├── sample-scripts/                 # 用户示例脚本（API 用法参考）
 └── docs/                           # 完整文档
 ```
@@ -23,7 +23,7 @@ dist/
 
 在按照下面步骤操作之前，请先完成以下配置，否则对应功能无法正常工作：
 
-- [ ] **CocoaPods 私有库 Git 地址**（仅使用 CocoaPods 集成时需要）：打开 `cocoapods/WhiteNeedle/WhiteNeedle.podspec`，将 `REPLACE_WITH_YOUR_GIT_URL` 替换为你们团队的内部 Git 仓库地址。
+- [ ] **CocoaPods 私有库 Git 地址**（仅使用 CocoaPods 集成时需要）：打开 `cocoapods/WhiteNeedle/WhiteNeedle.podspec`，将 `REPLACE_WITH_YOUR_GIT_URL` 替换为你们团队的内部 Git 仓库地址。Pod 以预编译 Framework 方式分发，无需源码编译。
 - [ ] **MCP Server 设备 IP**：在 Cursor MCP 配置中将 `WN_HOST` 设为目标 iPhone 的局域网 IP（不是 Mac 的 IP）。
 
 ---
@@ -65,9 +65,9 @@ cursor --install-extension WhiteNeedle.vsix
 
 有两种集成方式，选择其一即可。
 
-> **⚠️ 设备发现前置要求（两种方式均需要）**
+> **ℹ️ 设备发现权限（自动配置）**
 >
-> 无论选择哪种集成方式，宿主 App 的 `Info.plist` 都需要添加以下条目才能被 VS Code / Cursor 通过局域网自动发现：
+> WhiteNeedle 需要以下 Info.plist 条目才能被 VS Code / Cursor 通过局域网自动发现：
 >
 > ```xml
 > <key>NSBonjourServices</key>
@@ -75,17 +75,17 @@ cursor --install-extension WhiteNeedle.vsix
 >   <string>_whiteneedle._tcp</string>
 > </array>
 > <key>NSLocalNetworkUsageDescription</key>
-> <string>WhiteNeedle debugging</string>
+> <string>WhiteNeedle uses the local network for remote debugging.</string>
 > ```
 >
-> - **重签名方式**：`resign.sh` 会自动注入这些条目，通常无需手动添加。
-> - **CocoaPods 方式**：需要你手动在宿主工程的 `Info.plist` 中添加。
+> - **重签名方式**：`resign.sh` 会自动注入这些条目。
+> - **CocoaPods 方式**：podspec 中内置了 Build Phase 脚本，编译时会自动检测并注入缺失的条目，无需手动修改。
 >
-> 如果未添加，设备不会出现在 Devices 列表中，但仍然可以通过 **Connect by IP**（`192.168.x.x:27042`）手动连接。
+> 如果上述权限缺失，设备不会出现在 Devices 列表中，但仍然可以通过 **Connect by IP**（`192.168.x.x:27042`）手动连接。
 
 #### 方式 A：重签名注入（推荐快速验证）
 
-无需修改工程，将 dylib 注入到已有 IPA 中。
+无需修改工程，将 WhiteNeedle 注入到已有 IPA 中。
 
 **Cursor 用户推荐：通过 Skill 自动完成**
 
@@ -95,7 +95,7 @@ cursor --install-extension WhiteNeedle.vsix
 重签名这个 IPA: ~/Downloads/YourApp.ipa
 ```
 
-Skill 会自动处理证书选择、描述文件验证、dylib 注入、设备安装等全部流程。首次使用时会引导你配置签名参数，后续自动复用。
+Skill 会自动处理证书选择、描述文件验证、注入、设备安装等全部流程。首次使用时会引导你配置签名参数，后续自动复用。
 
 **手动命令行方式：**
 
@@ -118,9 +118,9 @@ brew install ios-deploy  # 如未安装
 ios-deploy --bundle YourApp_whiteneedle.ipa
 ```
 
-#### 方式 B：CocoaPods 源码集成（推荐长期使用）
+#### 方式 B：CocoaPods Framework 集成（推荐长期使用）
 
-适合团队内正式集成，支持源码级调试。需要手动在宿主工程 `Info.plist` 中添加上述 Bonjour 设备发现条目。
+适合团队内正式集成，以预编译 Framework 方式分发，无需源码编译。Bonjour 设备发现所需的 Info.plist 条目会在编译时由内置 Build Phase 自动注入。
 
 **本地路径引用（快速体验）：**
 
@@ -162,7 +162,7 @@ pod 'WhiteNeedle', '~> 2.0'
 
 4. 执行 `pod install`。
 
-> CocoaPods 以源码编译，宿主 App 需满足 iOS 15+，C++17。
+> CocoaPods 以预编译 Framework 方式集成，宿主 App 需满足 iOS 15+。
 
 ### 3. 连接设备
 
@@ -171,8 +171,8 @@ pod 'WhiteNeedle', '~> 2.0'
 3. 打开 VS Code / Cursor 侧边栏 **WhiteNeedle** 面板
 4. 在 **Devices** 列表选择设备（需要 Bonjour 发现配置），或 **Connect by IP**（格式 `192.168.x.x:27042`）
 
-> WhiteNeedle dylib 在 App 启动后会在设备端监听 TCP **27042** 端口。
-> 该端口是 dylib 内置的默认值，VS Code 扩展和 MCP Server 均默认连接此端口。
+> WhiteNeedle 在 App 启动后会在设备端监听 TCP **27042** 端口。
+> 该端口是内置的默认值，VS Code 扩展和 MCP Server 均默认连接此端口。
 
 ### 4. 推送脚本
 
@@ -226,7 +226,7 @@ npm install --production
 | 变量 | 含义 | 默认值 | 说明 |
 |------|------|--------|------|
 | `WN_HOST` | iOS 设备的 IP 地址 | `127.0.0.1` | 运行 WhiteNeedle App 的 iPhone/iPad 在局域网中的 IP。可在 **设置 → Wi-Fi → 当前网络 → IP 地址** 查看。与 VS Code 扩展中 Connect by IP 填写的是同一个地址。 |
-| `WN_PORT` | WhiteNeedle 引擎监听端口 | `27042` | dylib 在设备端启动时默认监听 27042。除非你修改了 dylib 源码中的端口配置，否则保持默认值即可。此端口与 VS Code 扩展连接设备使用的端口一致。 |
+| `WN_PORT` | WhiteNeedle 引擎监听端口 | `27042` | 设备端启动时默认监听 27042。除非你修改了源码中的端口配置，否则保持默认值即可。此端口与 VS Code 扩展连接设备使用的端口一致。 |
 
 > **提示**：`WN_HOST` 和 `WN_PORT` 也可以不在 `env` 中配置。MCP Server 提供了 `connect` 工具，Agent 可以在对话中动态连接到指定设备，例如通过扩展的 Devices 面板看到设备 IP 后，让 Agent 执行 `connect` 命令连接。
 
@@ -247,7 +247,7 @@ cp -R skills/whiteneedle-resign ~/.cursor/skills/
 | Skill | 功能 | 触发方式 |
 |-------|------|----------|
 | `whiteneedle-js-api` | 提供完整的 JS API 文档，Agent 编写脚本时自动参考 | 编写 WhiteNeedle 脚本时自动激活 |
-| `whiteneedle-resign` | 自动化 IPA 重签名：证书选择、描述文件验证、dylib 注入、设备安装 | 对话中说「重签名 IPA」「resign」「注入 dylib」等 |
+| `whiteneedle-resign` | 自动化 IPA 重签名：证书选择、描述文件验证、注入、设备安装 | 对话中说「重签名 IPA」「resign」「注入 WhiteNeedle」等 |
 
 `whiteneedle-resign` 首次使用会引导配置签名证书和描述文件，之后自动复用，实现「给一个 IPA 路径就能一键完成」的体验。
 
@@ -265,7 +265,7 @@ cp -R skills/whiteneedle-resign ~/.cursor/skills/
 检查描述文件是否包含设备 UDID、证书是否有效。
 
 **Q: CocoaPods 集成编译报错？**
-确认 Xcode Command Line Tools 已安装，项目最低部署版本 ≥ iOS 15.0，C++ 标准设为 C++17。
+确认 Xcode Command Line Tools 已安装，项目最低部署版本 ≥ iOS 15.0。
 
 **Q: 脚本推送报 "Not connected"？**
 先在 Devices 面板连接设备。WhiteNeedle 引擎默认监听 TCP 27042 端口。
@@ -293,8 +293,8 @@ cp -R skills/whiteneedle-resign ~/.cursor/skills/
 
 ## 版本
 
-- **WhiteNeedle.dylib**: 2.0.0 (arm64, iOS 15+)
+- **WhiteNeedle.framework**: 2.0.0 (arm64, iOS 15+)
 - **VS Code Extension**: 0.1.0
 - **MCP Server**: 0.2.0
 
-> **dylib 版本对齐**：分发包内的 `WhiteNeedle.dylib`、`cocoapods/WhiteNeedle/Sources/`、以及 `skills/whiteneedle-resign/payload/WhiteNeedle.dylib` 均由 `build-dist.sh` 统一从源码构建产出，版本始终一致。请勿手动替换单个 dylib 文件。
+> **版本对齐**：分发包内的 `WhiteNeedle.framework`、`cocoapods/WhiteNeedle/WhiteNeedle.framework`、以及 `skills/whiteneedle-resign/payload/WhiteNeedle.framework` 均由 `build-dist.sh` 统一从源码构建产出，版本始终一致。请勿手动替换单个二进制文件。

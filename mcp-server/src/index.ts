@@ -234,7 +234,7 @@ server.tool(
 // ---- Modules ----
 server.tool(
     'list_modules',
-    'List loaded dylibs / modules',
+    'List loaded frameworks / modules',
     {},
     async () => {
         return safeRpc('listModules', {}, (raw) => {
@@ -454,6 +454,13 @@ server.tool(
 );
 
 server.tool(
+    'search_views_by_text',
+    'Find views whose visible text/title/placeholder contains the query (case-insensitive). Searches UILabel.text, UIButton.title, UITextField.text/placeholder, UITextView.text, UISegmentedControl titles.',
+    { text: z.string().describe('Text substring to search for, e.g. "登录" or "Submit"') },
+    async ({ text }) => safeRpc('searchViewsByText', { text }),
+);
+
+server.tool(
     'get_screenshot',
     'Take window screenshot as base64 PNG (large payload)',
     {},
@@ -542,6 +549,58 @@ server.tool(
     async () => safeRpc('getMockInterceptorStatus'),
 );
 
+// ---- JSContext reset ----
+server.tool(
+    'reset_context',
+    'Reset the device JSContext (clears all hooks, variables, module cache, FPS monitors)',
+    {},
+    async () => safeRpc('resetContext'),
+);
+
+// ---- Installed JS modules ----
+server.tool(
+    'list_installed_modules',
+    'List user-installed JS modules in Documents/wn_installed_modules/',
+    {},
+    async () => {
+        return safeRpc('listInstalledJsModules', {}, (raw) => {
+            const modules = (raw as { modules?: Array<{ name: string; size: number }> }).modules ?? [];
+            if (modules.length === 0) return 'No installed modules';
+            const lines = modules.map((m) => `${m.name} (${m.size} bytes)`);
+            return `Installed modules (${modules.length}):\n${lines.join('\n')}`;
+        });
+    },
+);
+
+// ---- Sandbox file operations ----
+server.tool(
+    'write_file',
+    'Write a text file to the app sandbox (Documents/ relative path)',
+    {
+        path: z.string().describe('Relative path under Documents/, e.g. wn_installed_modules/utils.js'),
+        content: z.string().describe('File content (UTF-8 text)'),
+    },
+    async ({ path, content }) => safeRpc('writeFile', { path, content }),
+);
+
+server.tool(
+    'mkdir',
+    'Create a directory in the app sandbox (Documents/ relative path)',
+    {
+        path: z.string().describe('Relative path under Documents/'),
+    },
+    async ({ path }) => safeRpc('mkdir', { path }),
+);
+
+server.tool(
+    'remove_dir',
+    'Remove a file or directory in the app sandbox (Documents/ relative path)',
+    {
+        path: z.string().describe('Relative path under Documents/'),
+    },
+    async ({ path }) => safeRpc('removeDir', { path }),
+);
+
 // ---------------------------------------------------------------------------
 // Resources
 // ---------------------------------------------------------------------------
@@ -576,9 +635,13 @@ Runtime exploration: connect, list_classes, get_methods, evaluate, load_script, 
 
 Network: list_network_requests, get_network_request, clear_network_requests, set_network_capture.
 
-UI: get_view_hierarchy, get_view_controllers, get_vc_detail, get_view_detail, set_view_property, highlight_view, clear_highlight, search_views, get_screenshot.
+UI: get_view_hierarchy, get_view_controllers, get_vc_detail, get_view_detail, set_view_property, highlight_view, clear_highlight, search_views, search_views_by_text, get_screenshot.
 
 Mock HTTP: list_mock_rules, add_mock_rule, update_mock_rule, remove_mock_rule, remove_all_mock_rules, enable_mock_interceptor, disable_mock_interceptor, get_mock_interceptor_status.
+
+Context & Modules: reset_context, list_installed_modules.
+
+Sandbox Files: write_file, mkdir, remove_dir.
 
 Skill bundle: \`references/api-mcp-tools.md\`; monorepo mirror: \`docs/api-mcp-tools.md\`.
 `;
