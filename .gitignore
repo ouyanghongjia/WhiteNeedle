@@ -40,6 +40,7 @@ deploy.conf.local
 # Editor / tooling
 .ruby-lsp/
 .idea/
+jsconfig.json
 
 # Optional: local Cursor rules with machine paths (uncomment if needed)
 # .cursor/
