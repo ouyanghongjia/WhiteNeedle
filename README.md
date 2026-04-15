@@ -58,6 +58,40 @@ npm install
 npm run build
 ```
 
+## Build the distribution package
+
+`build-dist.sh` assembles all deliverables into a self-contained `dist/` directory:
+
+```
+dist/
+├── WhiteNeedle.vsix                # VS Code / Cursor extension
+├── WhiteNeedle.framework/          # pre-built iOS framework (arm64, iOS 15+)
+├── mcp-server/                     # compiled MCP server
+├── skills/                         # Cursor agent skills
+├── cocoapods/WhiteNeedle/          # CocoaPods private pod (framework distribution)
+├── sample-scripts/                 # example scripts for users
+├── docs/                           # API & usage documentation
+└── README.md                       # distribution guide (from dist-README.md)
+```
+
+Full build (compile framework → package VSIX → build MCP → copy assets):
+
+```bash
+./build-dist.sh
+```
+
+Common options:
+
+```bash
+./build-dist.sh --skip-build    # skip framework compilation; reuse existing build
+./build-dist.sh --vsix-only     # only produce dist/WhiteNeedle.vsix (fast path)
+./build-dist.sh --skip-vsix     # full dist without packaging the .vsix
+```
+
+The script requires the same toolchain listed in [Requirements](#requirements) plus `vsce` (or it will fall back to `npx @vscode/vsce`). On completion it prints a size summary of every artifact in `dist/`.
+
+See **[dist-README.md](dist-README.md)** for the end-user guide included in the distribution package.
+
 ## License
 
 [MIT](LICENSE)
