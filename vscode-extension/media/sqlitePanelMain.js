@@ -24,6 +24,138 @@
     var detailEl = document.getElementById('detail');
     var toastEl = document.getElementById('toast');
 
+    /* --- Split-panel resizer, collapse, close & maximize logic --- */
+    var sidebarPanel = document.getElementById('sidebarPanel');
+    var detailPanel = document.getElementById('detailPanel');
+    var resizer = document.getElementById('resizer');
+    var splitContainer = document.getElementById('splitContainer');
+    var collapseIcon = document.getElementById('collapseIcon');
+    var sidebarCollapseBtn = document.getElementById('sidebarCollapseBtn');
+    var sidebarHeader = document.getElementById('sidebarHeader');
+    var detailMaxBtn = document.getElementById('detailMaxBtn');
+    var detailCloseBtn = document.getElementById('detailCloseBtn');
+    var detailTitle = document.getElementById('detailTitle');
+    var dbCountBadge = document.getElementById('dbCount');
+    var sidebarCollapsed = false;
+    var detailClosed = true;
+
+    function syncLayout() {
+        if (detailClosed) {
+            detailPanel.classList.add('hidden');
+            resizer.classList.add('hidden');
+            sidebarPanel.classList.add('detail-closed');
+            sidebarPanel.style.height = '';
+            sidebarPanel.style.flex = '';
+        } else {
+            detailPanel.classList.remove('hidden');
+            resizer.classList.remove('hidden');
+            sidebarPanel.classList.remove('detail-closed');
+        }
+    }
+
+    function openDetailPanel() {
+        if (!detailClosed) return;
+        detailClosed = false;
+        if (sidebarCollapsed) {
+            sidebarCollapsed = false;
+            sidebarPanel.classList.remove('collapsed');
+            collapseIcon.classList.remove('collapsed');
+        }
+        syncLayout();
+    }
+
+    function closeDetailPanel() {
+        detailClosed = true;
+        sidebarPanel.style.height = '';
+        sidebarPanel.style.flex = '';
+        syncLayout();
+    }
+
+    function toggleSidebarCollapse() {
+        sidebarCollapsed = !sidebarCollapsed;
+        if (sidebarCollapsed) {
+            sidebarPanel.classList.add('collapsed');
+            collapseIcon.classList.add('collapsed');
+            sidebarPanel.style.height = '';
+            sidebarPanel.style.flex = '';
+        } else {
+            sidebarPanel.classList.remove('collapsed');
+            collapseIcon.classList.remove('collapsed');
+        }
+    }
+
+    function toggleDetailMaximize() {
+        if (detailClosed) return;
+        if (!sidebarCollapsed) {
+            toggleSidebarCollapse();
+            detailMaxBtn.innerHTML = '&#9645;';
+            detailMaxBtn.title = 'Restore layout';
+        } else {
+            toggleSidebarCollapse();
+            detailMaxBtn.innerHTML = '&#9633;';
+            detailMaxBtn.title = 'Maximize data view';
+        }
+    }
+
+    if (sidebarCollapseBtn) {
+        sidebarCollapseBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            toggleSidebarCollapse();
+        });
+    }
+    if (sidebarHeader) {
+        sidebarHeader.addEventListener('click', function(e) {
+            if (e.target === sidebarCollapseBtn || sidebarCollapseBtn.contains(e.target)) return;
+            if (sidebarCollapsed) toggleSidebarCollapse();
+        });
+    }
+    if (detailMaxBtn) {
+        detailMaxBtn.addEventListener('click', toggleDetailMaximize);
+    }
+    if (detailCloseBtn) {
+        detailCloseBtn.addEventListener('click', function() {
+            closeDetailPanel();
+        });
+    }
+
+    syncLayout();
+
+    /* --- Resizer drag logic --- */
+    if (resizer && sidebarPanel && splitContainer) {
+        var isResizing = false;
+        var startY = 0;
+        var startSidebarH = 0;
+
+        resizer.addEventListener('mousedown', function(e) {
+            if (detailClosed) return;
+            e.preventDefault();
+            isResizing = true;
+            startY = e.clientY;
+            startSidebarH = sidebarPanel.getBoundingClientRect().height;
+            document.body.classList.add('resizing');
+            resizer.classList.add('active');
+        });
+
+        document.addEventListener('mousemove', function(e) {
+            if (!isResizing) return;
+            e.preventDefault();
+            var dy = e.clientY - startY;
+            var newH = Math.max(60, startSidebarH + dy);
+            var containerH = splitContainer.getBoundingClientRect().height;
+            var maxH = containerH - 160;
+            if (newH > maxH) newH = maxH;
+            sidebarPanel.style.height = newH + 'px';
+            sidebarPanel.style.flex = 'none';
+        });
+
+        document.addEventListener('mouseup', function() {
+            if (!isResizing) return;
+            isResizing = false;
+            document.body.classList.remove('resizing');
+            resizer.classList.remove('active');
+        });
+    }
+
     var SQLKW = ['SELECT','FROM','WHERE','AND','OR','NOT','IN','LIKE','BETWEEN','IS','NULL','ORDER','BY','ASC','DESC','LIMIT','OFFSET','JOIN','LEFT','RIGHT','INNER','OUTER','CROSS','ON','GROUP','HAVING','AS','DISTINCT','COUNT','SUM','AVG','MIN','MAX','CASE','WHEN','THEN','ELSE','END','INSERT','INTO','VALUES','UPDATE','SET','DELETE','CREATE','TABLE','INDEX','IF','EXISTS','DROP','ALTER','ADD','COLUMN','PRIMARY','KEY','AUTOINCREMENT','UNIQUE','CHECK','DEFAULT','FOREIGN','REFERENCES','CASCADE','PRAGMA','BEGIN','COMMIT','ROLLBACK','TRANSACTION','WITH','RECURSIVE','UNION','ALL','EXCEPT','INTERSECT','VIRTUAL','REPLACE','TRIGGER','VIEW','ROWID','WITHOUT','VACUUM','ANALYZE','REINDEX','ATTACH','DETACH','EXPLAIN','ABORT','FAIL','IGNORE'];
 
     var suggestItems = [];
@@ -115,6 +247,9 @@
     }
 
     function renderSidebar() {
+        if (dbCountBadge) {
+            dbCountBadge.textContent = databases.length > 0 ? databases.length : '';
+        }
         if (databases.length === 0) {
             sidebarEl.innerHTML = '<div class="empty">Click "Discover Databases" to scan sandbox</div>';
             return;
@@ -178,6 +313,7 @@
     function selectTable(dbPath, tableName) {
         selectedDb = dbPath;
         selectedTable = tableName;
+        openDetailPanel();
         renderSidebar();
         renderDetail();
         var key = dbPath + '::' + tableName;
@@ -193,13 +329,19 @@
         persistSqlInput();
         if (!selectedDb || !selectedTable) {
             detailEl.innerHTML = '<div class="empty">Select a table from the sidebar</div>';
+            if (detailTitle) detailTitle.textContent = 'Data View';
             return;
         }
 
         var key = selectedDb + '::' + selectedTable;
         var activeTab = (detailEl._activeTab && detailEl._activeTab[key]) || 'data';
 
-        var html = '<h3 style="margin-bottom:8px">' + esc(selectedTable) + ' <span class="size-label">in ' + esc(selectedDb) + '</span></h3>';
+        if (detailTitle) {
+            detailTitle.textContent = selectedTable;
+            detailTitle.title = selectedTable + ' in ' + selectedDb;
+        }
+
+        var html = '';
         html += '<div class="tab-bar">';
         html += '<div class="tab' + (activeTab === 'data' ? ' active' : '') + '" data-tab="data">Data</div>';
         html += '<div class="tab' + (activeTab === 'schema' ? ' active' : '') + '" data-tab="schema">Schema</div>';
@@ -412,7 +554,20 @@
         return html;
     }
 
-    window.__WN_SQLITE_MAIN_MSG = function(e) {
+    window.__WN_SQLITE_MAIN_MSG = handleMainMsg;
+
+    var pending = window.__WN_SQLITE_PENDING_MSGS;
+    if (pending && pending.length) {
+        wnDbg('webview: replaying ' + pending.length + ' queued messages');
+        for (var pi = 0; pi < pending.length; pi++) {
+            try { handleMainMsg(pending[pi]); } catch (pe) {
+                wnDbg('webview: replay error: ' + (pe && pe.message ? pe.message : String(pe)));
+            }
+        }
+    }
+    window.__WN_SQLITE_PENDING_MSGS = [];
+
+    function handleMainMsg(e) {
         var msg = e.data;
         switch (msg.command) {
             case 'databasesLoaded':

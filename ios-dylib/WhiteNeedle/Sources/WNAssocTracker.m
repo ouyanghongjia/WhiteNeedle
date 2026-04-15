@@ -24,12 +24,17 @@ static void (*orig_removeAssocObjs)(id object);
 
 #pragma mark - Hook replacements
 
+static _Thread_local BOOL sReentrant = NO;
+
 static void wn_setAssocObj(id object, const void *key, id value, objc_AssociationPolicy policy) {
     orig_setAssocObj(object, key, value, policy);
+
+    if (!sAssocMap || sReentrant || object_isClass(object)) return;
 
     BOOL isStrong = (policy == OBJC_ASSOCIATION_RETAIN ||
                      policy == OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
+    sReentrant = YES;
     pthread_mutex_lock(&sAssocMutex);
     @try {
         NSMutableArray<NSValue *> *entries = [sAssocMap objectForKey:object];
@@ -69,14 +74,19 @@ static void wn_setAssocObj(id object, const void *key, id value, objc_Associatio
         NSLog(@"%@ Exception in hook: %@", kLogPrefix, e);
     }
     pthread_mutex_unlock(&sAssocMutex);
+    sReentrant = NO;
 }
 
 static void wn_removeAssocObjs(id object) {
     orig_removeAssocObjs(object);
 
+    if (!sAssocMap || sReentrant || object_isClass(object)) return;
+
+    sReentrant = YES;
     pthread_mutex_lock(&sAssocMutex);
     [sAssocMap removeObjectForKey:object];
     pthread_mutex_unlock(&sAssocMutex);
+    sReentrant = NO;
 }
 
 #pragma mark - Implementation

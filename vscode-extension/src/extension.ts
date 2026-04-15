@@ -26,7 +26,7 @@ import {
     WhiteNeedleConfigurationProvider,
     WhiteNeedleDebugAdapterFactory,
 } from './debugging/debugAdapterFactory';
-import { ensureTypingsForWorkspace, getBundledTypingsPath } from './typings/typingsManager';
+import { ensureTypingsForWorkspace, getBundledTypingsPath, removeTypingsFromWorkspace } from './typings/typingsManager';
 import { HookCodeRegistry } from './panels/hookCodeRegistry';
 import { showPanelsMenu } from './views/panelsMenu';
 import { ModuleManager } from './modules/moduleManager';
@@ -696,6 +696,7 @@ function activateImpl(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
+    removeTypingsFromWorkspace();
     proxyServer?.stop();
     discovery?.stop();
     deviceManager?.disconnect();

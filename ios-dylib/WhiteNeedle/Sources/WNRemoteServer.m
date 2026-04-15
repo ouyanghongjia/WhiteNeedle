@@ -531,7 +531,7 @@ static void WNSocketCallback(CFSocketRef socket, CFSocketCallBackType type,
         return @{@"success": @YES};
     }
 
-    // --- File System Operations (sandboxed to Documents/) ---
+    // --- File System Operations (sandboxed to Library/) ---
 
     if ([method isEqualToString:@"writeFile"]) {
         NSString *relativePath = params[@"path"];
@@ -539,8 +539,8 @@ static void WNSocketCallback(CFSocketRef socket, CFSocketCallBackType type,
         if (!relativePath || !content) {
             return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Missing path or content"}];
         }
-        NSString *docPath = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
-        NSString *fullPath = [docPath stringByAppendingPathComponent:relativePath];
+        NSString *libPath = NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES).firstObject;
+        NSString *fullPath = [libPath stringByAppendingPathComponent:relativePath];
 
         NSString *dir = [fullPath stringByDeletingLastPathComponent];
         NSFileManager *fm = [NSFileManager defaultManager];
@@ -561,8 +561,8 @@ static void WNSocketCallback(CFSocketRef socket, CFSocketCallBackType type,
         if (!relativePath) {
             return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Missing path"}];
         }
-        NSString *docPath = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
-        NSString *fullPath = [docPath stringByAppendingPathComponent:relativePath];
+        NSString *libPath = NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES).firstObject;
+        NSString *fullPath = [libPath stringByAppendingPathComponent:relativePath];
         NSError *err;
         [[NSFileManager defaultManager] createDirectoryAtPath:fullPath withIntermediateDirectories:YES attributes:nil error:&err];
         if (err) {
@@ -576,8 +576,8 @@ static void WNSocketCallback(CFSocketRef socket, CFSocketCallBackType type,
         if (!relativePath) {
             return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Missing path"}];
         }
-        NSString *docPath = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
-        NSString *fullPath = [docPath stringByAppendingPathComponent:relativePath];
+        NSString *libPath = NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES).firstObject;
+        NSString *fullPath = [libPath stringByAppendingPathComponent:relativePath];
         NSFileManager *fm = [NSFileManager defaultManager];
         if ([fm fileExistsAtPath:fullPath]) {
             NSError *err;
@@ -590,8 +590,8 @@ static void WNSocketCallback(CFSocketRef socket, CFSocketCallBackType type,
     }
 
     if ([method isEqualToString:@"listInstalledJsModules"]) {
-        NSString *docPath = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
-        NSString *modulesDir = [docPath stringByAppendingPathComponent:@"wn_installed_modules"];
+        NSString *libPath = NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES).firstObject;
+        NSString *modulesDir = [libPath stringByAppendingPathComponent:@"wn_installed_modules"];
         NSFileManager *fm = [NSFileManager defaultManager];
         NSMutableArray *modules = [NSMutableArray array];
         if ([fm fileExistsAtPath:modulesDir]) {

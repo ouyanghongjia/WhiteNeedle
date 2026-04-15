@@ -31,11 +31,11 @@ static NSMutableDictionary<NSString *, NSString *> *g_builtinModules;
 + (void)buildDefaultSearchPaths {
     [g_searchPaths removeAllObjects];
 
-    NSString *docPath = NSSearchPathForDirectoriesInDomains(
-        NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
-    if (docPath) {
-        [g_searchPaths addObject:[docPath stringByAppendingPathComponent:@"wn_modules"]];
-        [g_searchPaths addObject:[docPath stringByAppendingPathComponent:@"wn_installed_modules"]];
+    NSString *libPath = NSSearchPathForDirectoriesInDomains(
+        NSLibraryDirectory, NSUserDomainMask, YES).firstObject;
+    if (libPath) {
+        [g_searchPaths addObject:[libPath stringByAppendingPathComponent:@"wn_modules"]];
+        [g_searchPaths addObject:[libPath stringByAppendingPathComponent:@"wn_installed_modules"]];
     }
 
     NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
@@ -186,9 +186,9 @@ static NSMutableDictionary<NSString *, NSString *> *g_builtinModules;
         if (!path) return;
         NSString *resolved = path;
         if (![path hasPrefix:@"/"]) {
-            NSString *docPath = NSSearchPathForDirectoriesInDomains(
-                NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
-            resolved = [docPath stringByAppendingPathComponent:path];
+            NSString *libPath = NSSearchPathForDirectoriesInDomains(
+                NSLibraryDirectory, NSUserDomainMask, YES).firstObject;
+            resolved = [libPath stringByAppendingPathComponent:path];
         }
         if (![g_searchPaths containsObject:resolved]) {
             [g_searchPaths addObject:resolved];

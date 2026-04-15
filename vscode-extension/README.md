@@ -137,7 +137,7 @@ WhiteNeedle 支持通过 Debug Adapter Protocol 进行断点调试。
 
 扩展内置了完整的 WhiteNeedle JS API 类型声明文件。安装扩展后：
 
-- 工作区的 `jsconfig.json` 会自动配置（如不存在则自动创建）
+- 类型声明文件会自动复制到 `.vscode/whiteneedle.d.ts`（不污染项目根目录）
 - 通过 `New WhiteNeedle Script` 创建的脚本自动包含 `/// <reference>` 指令
 - `ObjC.use()`、`Interceptor.attach()`、`rpc.exports` 等 API 均有完整的参数提示和文档注释
 

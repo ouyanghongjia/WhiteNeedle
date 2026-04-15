@@ -25,7 +25,8 @@ Pod::Spec.new do |s|
   s.libraries        = 'c++', 'sqlite3'
   s.xcconfig         = { 'CLANG_CXX_LANGUAGE_STANDARD' => 'c++17' }
   s.pod_target_xcconfig = {
-    'HEADER_SEARCH_PATHS' => '"${PODS_TARGET_SRCROOT}/Sources/libffi/include" "${PODS_TARGET_SRCROOT}/Sources/libffi/src"'
+    'HEADER_SEARCH_PATHS' => '"${PODS_TARGET_SRCROOT}/Sources/libffi/include" "${PODS_TARGET_SRCROOT}/Sources/libffi/src"',
+    'GCC_PREPROCESSOR_DEFINITIONS' => '$(inherited) WN_ENABLE_REFGRAPH=1'
   }
 
   # ── Bonjour / Local Network permissions ──────────────────────────────

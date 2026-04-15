@@ -560,7 +560,7 @@ server.tool(
 // ---- Installed JS modules ----
 server.tool(
     'list_installed_modules',
-    'List user-installed JS modules in Documents/wn_installed_modules/',
+    'List user-installed JS modules in Library/wn_installed_modules/',
     {},
     async () => {
         return safeRpc('listInstalledJsModules', {}, (raw) => {
@@ -575,9 +575,9 @@ server.tool(
 // ---- Sandbox file operations ----
 server.tool(
     'write_file',
-    'Write a text file to the app sandbox (Documents/ relative path)',
+    'Write a text file to the app sandbox (Library/ relative path)',
     {
-        path: z.string().describe('Relative path under Documents/, e.g. wn_installed_modules/utils.js'),
+        path: z.string().describe('Relative path under Library/, e.g. wn_installed_modules/utils.js'),
         content: z.string().describe('File content (UTF-8 text)'),
     },
     async ({ path, content }) => safeRpc('writeFile', { path, content }),
@@ -585,18 +585,18 @@ server.tool(
 
 server.tool(
     'mkdir',
-    'Create a directory in the app sandbox (Documents/ relative path)',
+    'Create a directory in the app sandbox (Library/ relative path)',
     {
-        path: z.string().describe('Relative path under Documents/'),
+        path: z.string().describe('Relative path under Library/'),
     },
     async ({ path }) => safeRpc('mkdir', { path }),
 );
 
 server.tool(
     'remove_dir',
-    'Remove a file or directory in the app sandbox (Documents/ relative path)',
+    'Remove a file or directory in the app sandbox (Library/ relative path)',
     {
-        path: z.string().describe('Relative path under Documents/'),
+        path: z.string().describe('Relative path under Library/'),
     },
     async ({ path }) => safeRpc('removeDir', { path }),
 );

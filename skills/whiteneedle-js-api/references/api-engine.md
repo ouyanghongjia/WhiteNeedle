@@ -152,8 +152,9 @@ emitter.emit("data", "hello");
 模块按以下顺序搜索：
 
 1. 内置模块（`events`、`util`）
-2. `Documents/wn_modules/` 目录
-3. `App.bundle/wn_modules/` 目录
+2. `Library/wn_modules/` 目录
+3. `Library/wn_installed_modules/` 目录
+4. `App.bundle/wn_modules/` 目录
 
 搜索时自动尝试以下后缀：无后缀 → `.js` → `.json` → `/index.js`
 

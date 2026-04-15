@@ -81,10 +81,11 @@ export class RetainGraphPanel {
 
     private async checkAvailability(): Promise<void> {
         try {
-            const result = await this.deviceManager.evaluate(
+            const raw = await this.deviceManager.evaluate(
                 'typeof RefGraph !== "undefined" && RefGraph.isAvailable()'
             );
-            if (result !== true && result !== 'true') {
+            const val = this.unwrapValue(raw);
+            if (val !== true && val !== 'true') {
                 this.postMessage({
                     command: 'error',
                     text: 'RefGraph module is not available. Rebuild WhiteNeedle.framework with WN_REFGRAPH=1.',
@@ -93,6 +94,27 @@ export class RetainGraphPanel {
         } catch {
             // Device not connected yet; overlay will show
         }
+    }
+
+    /** Unwrap the { value: ... } wrapper returned by deviceManager.evaluate. */
+    private unwrapValue(raw: unknown): any {
+        if (raw === null || raw === undefined) { return raw; }
+        if (typeof raw === 'string') { return raw; }
+        if (typeof raw === 'boolean') { return raw; }
+        if (typeof raw === 'object' && 'value' in (raw as object)) {
+            return (raw as any).value;
+        }
+        return raw;
+    }
+
+    /** Parse a JSON-string evaluate result into a JS object. */
+    private parseEvalJson(raw: unknown): any {
+        const payload = this.unwrapValue(raw);
+        if (payload === null || payload === undefined) {
+            throw new Error('Empty result from device');
+        }
+        const str = typeof payload === 'string' ? payload : JSON.stringify(payload);
+        return JSON.parse(str);
     }
 
     private async evalJS(code: string): Promise<any> {
@@ -110,26 +132,26 @@ export class RetainGraphPanel {
 
     private async buildGraph(address: string, maxNodes: number = 200, maxDepth: number = 15): Promise<void> {
         const escaped = address.replace(/"/g, '\\"');
-        const result = await this.evalJS(
+        const raw = await this.evalJS(
             `JSON.stringify(RefGraph.buildGraph("${escaped}", ${maxNodes}, ${maxDepth}))`
         );
-        if (!result) { return; }
+        if (raw === null) { return; }
         try {
-            const parsed = typeof result === 'string' ? JSON.parse(result) : result;
+            const parsed = this.parseEvalJson(raw);
             this.postMessage({ command: 'graphData', data: parsed });
-        } catch {
-            this.postMessage({ command: 'error', text: 'Failed to parse graph data' });
+        } catch (err: any) {
+            this.postMessage({ command: 'error', text: `Failed to parse graph data: ${err.message}` });
         }
     }
 
     private async expandNode(address: string): Promise<void> {
         const escaped = address.replace(/"/g, '\\"');
-        const result = await this.evalJS(
+        const raw = await this.evalJS(
             `JSON.stringify(RefGraph.expandNode("${escaped}"))`
         );
-        if (!result) { return; }
+        if (raw === null) { return; }
         try {
-            const parsed = typeof result === 'string' ? JSON.parse(result) : result;
+            const parsed = this.parseEvalJson(raw);
             this.postMessage({ command: 'nodeExpanded', address, refs: parsed });
         } catch {
             this.postMessage({ command: 'nodeExpanded', address, refs: [] });
@@ -138,12 +160,12 @@ export class RetainGraphPanel {
 
     private async getNodeDetail(address: string): Promise<void> {
         const escaped = address.replace(/"/g, '\\"');
-        const result = await this.evalJS(
+        const raw = await this.evalJS(
             `JSON.stringify(RefGraph.getNodeDetail("${escaped}"))`
         );
-        if (!result) { return; }
+        if (raw === null) { return; }
         try {
-            const parsed = typeof result === 'string' ? JSON.parse(result) : result;
+            const parsed = this.parseEvalJson(raw);
             this.postMessage({ command: 'nodeDetail', data: parsed });
         } catch {
             this.postMessage({ command: 'nodeDetail', data: {} });

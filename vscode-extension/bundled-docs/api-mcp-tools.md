@@ -80,15 +80,15 @@ MCP Server（`mcp-server`，stdio）通过 TCP 调用设备上的 `WNRemoteServe
 | MCP 工具 | RPC 方法 | 参数 | 返回要点 |
 |----------|----------|------|----------|
 | `reset_context` | `resetContext` | — | `{ success }` — 重置 JSContext（清理所有 Hook、变量、模块缓存、FPS 监控） |
-| `list_installed_modules` | `listInstalledJsModules` | — | `{ modules: [{ name, size }] }` — 设备端 `Documents/wn_installed_modules/` 中已安装的 JS 模块列表 |
+| `list_installed_modules` | `listInstalledJsModules` | — | `{ modules: [{ name, size }] }` — 设备端 `Library/wn_installed_modules/` 中已安装的 JS 模块列表 |
 
 ## 沙盒文件操作
 
 | MCP 工具 | RPC 方法 | 参数 | 返回要点 |
 |----------|----------|------|----------|
-| `write_file` | `writeFile` | `path`（Documents/ 下相对路径）, `content` | `{ success }` — 自动创建中间目录 |
-| `mkdir` | `mkdir` | `path`（Documents/ 下相对路径） | `{ success }` |
-| `remove_dir` | `removeDir` | `path`（Documents/ 下相对路径） | `{ success }` — 删除文件或目录 |
+| `write_file` | `writeFile` | `path`（Library/ 下相对路径）, `content` | `{ success }` — 自动创建中间目录 |
+| `mkdir` | `mkdir` | `path`（Library/ 下相对路径） | `{ success }` |
+| `remove_dir` | `removeDir` | `path`（Library/ 下相对路径） | `{ success }` — 删除文件或目录 |
 
 ## 编写设备端 JS 时的注意点
 

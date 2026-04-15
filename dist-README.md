@@ -1,6 +1,6 @@
 # WhiteNeedle 分发包
 
-基于 **JavaScriptCore** 的 iOS 远程调试工具套件 — 通过 VS Code / Cursor 实现局域网设备发现、脚本推送、JS 断点调试、ObjC 运行时浏览，以及设备端 JS 模块管理。
+基于 **JavaScriptCore** 的 iOS 远程动态调试与逆向分析工具套件，**无需越狱**即可在真机上运行。通过 VS Code / Cursor 局域网连接设备，提供：脚本推送与 DAP 断点调试、ObjC Runtime 浏览与方法 Hook、View Hierarchy 视图层级检查、内存泄漏检测与 Retain Graph 循环引用可视化、Network Monitor 网络抓包与 HTTP Mock / Host Mapping / Proxy 代理、Sandbox 文件浏览与 SQLite Browser、Cookies 与 UserDefaults 查看编辑、Script Snippets 团队共享片段库、JS 模块管理、Structured Logs 结构化日志，以及 MCP Server 支持 AI Agent 直接与设备交互。
 
 ## 分发包内容
 
@@ -58,7 +58,7 @@ cursor --install-extension WhiteNeedle.vsix
 ```
 
 > **类型补全自动生效**：扩展内置了 WhiteNeedle JS API 的完整类型声明（`whiteneedle.d.ts`）。
-> 安装扩展后，打开任意工作区会自动配置 `jsconfig.json`，新建脚本（`Cmd+Shift+P` → `WhiteNeedle: New Script`）自带 `/// <reference>` 指令，
+> 安装扩展后，类型声明会自动复制到 `.vscode/whiteneedle.d.ts`，新建脚本（`Cmd+Shift+P` → `WhiteNeedle: New Script`）自带 `/// <reference>` 指令，
 > 编写脚本时即可获得 `ObjC.use()`、`Interceptor.attach()` 等全部 API 的代码补全与类型提示。
 
 ### 2. 集成 WhiteNeedle 到你的 App
@@ -281,7 +281,7 @@ cp -R skills/whiteneedle-resign ~/.cursor/skills/
 确保同一 Wi-Fi。宿主 App 的 Info.plist 需要 `NSBonjourServices`（含 `_whiteneedle._tcp`）和 `NSLocalNetworkUsageDescription`。首次运行须在 iPhone 上允许「本地网络」权限。Mac 端在 **系统设置 → 隐私与安全性 → 本地网络** 为 Cursor / VS Code 开启权限。如果 Bonjour 不可用，可以用 **Connect by IP** 手动连接。
 
 **Q: 没有代码补全？**
-扩展会在首次打开工作区时自动创建或更新 `jsconfig.json`。如果仍然没有补全，手动新建脚本（`WhiteNeedle: New Script` 命令）或重新加载窗口（`Cmd+Shift+P` → `Reload Window`）。
+扩展会在首次打开工作区时自动将类型声明复制到 `.vscode/whiteneedle.d.ts`。如果仍然没有补全，手动新建脚本（`WhiteNeedle: New Script` 命令）或重新加载窗口（`Cmd+Shift+P` → `Reload Window`）。
 
 **Q: 重签名安装失败？**
 检查描述文件是否包含设备 UDID、证书是否有效。

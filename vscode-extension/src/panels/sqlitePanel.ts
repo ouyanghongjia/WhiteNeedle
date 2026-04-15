@@ -332,11 +332,12 @@ export class SQLitePanel {
         --error-fg: var(--vscode-errorForeground, #f44);
         --success: #4caf50;
         --warning: #ff9800;
+        --section-header-bg: var(--vscode-sideBarSectionHeader-background, rgba(128,128,128,0.15));
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size, 13px); color: var(--fg); background: var(--bg); padding: 12px; }
-    /* Above wn-offline-overlay (z-index 9999) so Discover still posts to extension when offline; user then gets a clear "not connected" message. */
-    .toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; position: relative; z-index: 10001; background: var(--bg); padding-bottom: 2px; }
+    html, body { height: 100%; overflow: hidden; }
+    body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size, 13px); color: var(--fg); background: var(--bg); display: flex; flex-direction: column; }
+    .toolbar { display: flex; gap: 8px; padding: 8px 12px; align-items: center; position: relative; z-index: 10001; background: var(--bg); border-bottom: 1px solid var(--border); flex-shrink: 0; }
     button { padding: 5px 12px; background: var(--btn-bg); color: var(--btn-fg); border: none; border-radius: 3px; cursor: pointer; font-size: 12px; }
     button:hover { background: var(--btn-hover); }
     button:disabled { opacity: 0.5; cursor: default; }
@@ -345,7 +346,7 @@ export class SQLitePanel {
     button.warning { background: var(--warning); color: #000; }
     button.danger { background: var(--error-fg); }
     table { width: 100%; border-collapse: collapse; font-size: 12px; }
-    th { text-align: left; padding: 6px 8px; border-bottom: 2px solid var(--border); font-weight: 600; position: sticky; top: 0; background: var(--bg); }
+    th { text-align: left; padding: 6px 8px; border-bottom: 2px solid var(--border); font-weight: 600; position: sticky; top: 0; background: var(--bg); z-index: 1; }
     td { padding: 4px 8px; border-bottom: 1px solid var(--border); max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; }
     td.null-val { opacity: 0.4; font-style: italic; }
     tr:hover td { background: var(--list-hover); }
@@ -353,15 +354,55 @@ export class SQLitePanel {
     .badge.green { background: var(--success); color: #fff; }
     .badge.orange { background: var(--warning); color: #000; }
     .empty { text-align: center; padding: 40px; opacity: 0.5; }
-    .db-section { margin-bottom: 4px; }
-    .db-header { display: flex; align-items: center; gap: 8px; padding: 8px 4px; cursor: pointer; border-bottom: 1px solid var(--border); user-select: none; }
+
+    /* Split container */
+    .split-container { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+
+    /* Sidebar panel (database list) */
+    .sidebar-panel { display: flex; flex-direction: column; min-height: 80px; overflow: hidden; border: 1px solid var(--border); margin: 8px 12px 0; border-radius: 4px; }
+    .sidebar-panel.collapsed { min-height: auto; }
+    .sidebar-panel.collapsed .sidebar-body { display: none; }
+    .sidebar-panel.detail-closed { flex: 1; }
+    .section-header { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--section-header-bg); border-bottom: 1px solid var(--border); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; user-select: none; flex-shrink: 0; }
+    .section-header:hover { opacity: 0.85; }
+    .section-header .collapse-icon { font-size: 10px; transition: transform 0.15s; }
+    .section-header .collapse-icon.collapsed { transform: rotate(-90deg); }
+    .section-header .section-actions { margin-left: auto; display: flex; gap: 4px; }
+    .section-header .section-actions button { padding: 1px 6px; font-size: 10px; background: transparent; color: var(--fg); border: 1px solid var(--border); opacity: 0.7; }
+    .section-header .section-actions button:hover { opacity: 1; background: var(--list-hover); }
+    .sidebar-body { overflow-y: auto; flex: 1; min-height: 0; }
+
+    .db-section { margin-bottom: 0; }
+    .db-header { display: flex; align-items: center; gap: 8px; padding: 8px 10px; cursor: pointer; border-bottom: 1px solid var(--border); user-select: none; }
     .db-header:hover { background: var(--list-hover); }
-    .table-item { display: flex; align-items: center; gap: 8px; padding: 6px 4px 6px 24px; cursor: pointer; border-bottom: 1px solid var(--border); user-select: none; }
+    .table-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 28px; cursor: pointer; border-bottom: 1px solid var(--border); user-select: none; }
     .table-item:hover { background: var(--list-hover); }
     .table-item.active { background: var(--list-hover); font-weight: 600; }
     .arrow { transition: transform 0.15s; display: inline-block; }
     .arrow.open { transform: rotate(90deg); }
-    .detail-area { margin-top: 12px; }
+
+    /* Resizer handle */
+    .resizer { flex-shrink: 0; height: 8px; margin: 0 12px; cursor: ns-resize; display: flex; align-items: center; justify-content: center; position: relative; z-index: 10; }
+    .resizer::before { content: ''; position: absolute; top: -2px; left: 0; right: 0; bottom: -2px; }
+    .resizer::after { content: ''; display: block; width: 48px; height: 3px; border-radius: 2px; background: var(--border); transition: background 0.15s, width 0.15s, height 0.15s; }
+    .resizer:hover::after, .resizer.active::after { background: var(--btn-bg); width: 64px; height: 4px; }
+    .resizer.hidden { display: none; }
+    body.resizing { cursor: ns-resize !important; user-select: none !important; }
+    body.resizing * { cursor: ns-resize !important; user-select: none !important; }
+    body.resizing iframe { pointer-events: none !important; }
+
+    /* Detail panel (data view) */
+    .detail-panel { display: flex; flex-direction: column; flex: 1; min-height: 120px; overflow: hidden; border: 1px solid var(--border); margin: 0 12px 8px; border-radius: 4px; }
+    .detail-panel.hidden { display: none; }
+    .detail-panel.maximized { flex: 1; }
+    .detail-header { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--section-header-bg); border-bottom: 1px solid var(--border); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; flex-shrink: 0; }
+    .detail-header .detail-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .detail-header .detail-actions { margin-left: auto; display: flex; gap: 4px; }
+    .detail-header .detail-actions button { padding: 1px 6px; font-size: 10px; background: transparent; color: var(--fg); border: 1px solid var(--border); opacity: 0.7; line-height: 1.4; }
+    .detail-header .detail-actions button:hover { opacity: 1; background: var(--list-hover); }
+    .detail-header .detail-actions button.close-btn:hover { background: rgba(244,67,54,0.25); color: var(--error-fg); }
+    .detail-body { flex: 1; overflow-y: auto; padding: 8px 10px; min-height: 0; }
+
     .tab-bar { display: flex; gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 8px; }
     .tab { padding: 6px 14px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; font-size: 12px; }
     .tab:hover { background: var(--list-hover); }
@@ -378,7 +419,7 @@ export class SQLitePanel {
     .sg-opt.active { background: var(--vscode-editorSuggestWidget-selectedBackground, var(--vscode-list-activeSelectionBackground, #094771)); color: var(--vscode-editorSuggestWidget-selectedForeground, var(--vscode-list-activeSelectionForeground, #fff)); }
     .sg-opt b { font-weight: 700; }
     .query-toolbar { display: flex; gap: 8px; margin-top: 4px; align-items: center; }
-    .data-scroll { max-height: 400px; overflow: auto; border: 1px solid var(--border); border-radius: 3px; }
+    .data-scroll { overflow: auto; border: 1px solid var(--border); border-radius: 3px; }
     .diff-section { margin-top: 8px; }
     .diff-added { background: rgba(76, 175, 80, 0.15); }
     .diff-removed { background: rgba(244, 67, 54, 0.15); text-decoration: line-through; }
@@ -398,8 +439,30 @@ ${OVERLAY_HTML}
     <button id="discoverBtn">Discover Databases</button>
     <span id="status"></span>
 </div>
-<div id="sidebar"></div>
-<div id="detail" class="detail-area"></div>
+<div class="split-container" id="splitContainer">
+    <div class="sidebar-panel" id="sidebarPanel">
+        <div class="section-header" id="sidebarHeader">
+            <span class="collapse-icon" id="collapseIcon">&#9660;</span>
+            <span>Databases</span>
+            <span id="dbCount" class="badge" style="font-size:10px"></span>
+            <div class="section-actions">
+                <button id="sidebarCollapseBtn" title="Collapse database list">&#9472;</button>
+            </div>
+        </div>
+        <div class="sidebar-body" id="sidebar"></div>
+    </div>
+    <div class="resizer" id="resizer" title="Drag to resize"></div>
+    <div class="detail-panel hidden" id="detailPanel">
+        <div class="detail-header">
+            <span class="detail-title" id="detailTitle">Data View</span>
+            <div class="detail-actions">
+                <button id="detailMaxBtn" title="Maximize / restore">&#9633;</button>
+                <button id="detailCloseBtn" class="close-btn" title="Close detail panel">&#10005;</button>
+            </div>
+        </div>
+        <div class="detail-body" id="detail"></div>
+    </div>
+</div>
 <div class="toast" id="toast"></div>
 
 <script nonce="${nonce}">
@@ -415,6 +478,7 @@ ${OVERLAY_JS}
         } catch (e) {}
     }
     window.__WN_SQLITE_WNDBG = wnDbg;
+    window.__WN_SQLITE_PENDING_MSGS = [];
     wnDbg('webview: script boot (shell)');
     window.addEventListener('message', function(ev) {
         var d = ev.data;
@@ -441,13 +505,8 @@ ${OVERLAY_JS}
             }
             return;
         }
-        if (d.command === 'databasesLoaded' || d.command === 'error') {
-            var rb2 = document.getElementById('discoverBtn');
-            var rs2 = document.getElementById('status');
-            if (rb2) rb2.disabled = false;
-            if (rs2) rs2.textContent = '';
-            wnDbg('webview: discover reset (fallback, main script not ready)');
-        }
+        wnDbg('webview: queuing message (main not ready): ' + d.command);
+        window.__WN_SQLITE_PENDING_MSGS.push(ev);
     });
     var discoverShell = document.getElementById('discoverBtn');
     var statusShell = document.getElementById('status');

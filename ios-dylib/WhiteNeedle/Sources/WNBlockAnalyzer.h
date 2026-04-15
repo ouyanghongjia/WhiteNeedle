@@ -9,7 +9,7 @@ NS_ASSUME_NONNULL_BEGIN
  * (borrowed from FBRetainCycleDetector) to determine which captured slots are
  * retained by the block's copy/dispose helpers.
  *
- * ⚠️  This file MUST be compiled with -fno-objc-arc (MRR).
+ * ARC-compatible — uses runtime-created sentinel classes instead of manual retain/release.
  */
 @interface WNBlockAnalyzer : NSObject
 

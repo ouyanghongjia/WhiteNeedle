@@ -9,7 +9,7 @@ EXTERNAL SOURCES:
     :path: "../../ios-dylib/WhiteNeedle"
 
 SPEC CHECKSUMS:
-  WhiteNeedle: da08371a00e1b265323e085907fbc7dee4cf8cf2
+  WhiteNeedle: 4165cbb0f1457a5c190b83a3af472108a9245e12
 
 PODFILE CHECKSUM: 666624ac54cfd08abf9814e26df851e6ebd9a3e0
 
