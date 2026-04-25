@@ -467,8 +467,211 @@ launch.json 中按需开启：
 
 ---
 
+## 11. UIAlertController 无法正常 dismiss（遮罩残留、UI 无响应）
+
+**文件**: `wn-auto.js`  
+**严重程度**: 高  
+**表现**: 通过脚本触发 Alert 后，调用 `dismissViewControllerAnimated:completion:` 视觉上 Alert 消失了，但遮罩层残留、底层视图无法滚动，直到脚本执行完毕才恢复。
+
+### 根因
+
+`UIAlertController` 内部的 dismiss 流程不仅仅是简单的 `dismissViewControllerAnimated:completion:`。UIKit 需要通过内部机制：
+
+1. 调用 action 的 handler 回调
+2. 移除 presentation transition 的遮罩视图
+3. 通知 presenting VC 恢复交互
+
+直接调用 `dismissViewControllerAnimated:completion:` 只完成了第 3 步，绕过了 UIKit 内部的 `UIPresentationController` 清理流程，导致 `_UIOverlayPresentationDimmingView` 等遮罩视图残留。
+
+### 修复
+
+使用 UIAlertController 的私有 API `_dismissAnimated:triggeringAction:` 代替通用的 dismiss 方法：
+
+```javascript
+// tapButton — 找到 action 后触发 UIKit 内部的完整 dismiss 流程
+alertVC.invoke('_dismissAnimated:triggeringAction:', [true, action]);
+
+// dismiss — 不带 action 直接关闭
+alertVC.invoke('_dismissAnimated:triggeringAction:', [true, null]);
+```
+
+该私有 API 是 UIKit 内部点击 Alert 按钮时走的完整路径，会正确地：
+- 触发 action handler
+- 移除所有 presentation 相关的遮罩视图
+- 恢复 presenting VC 的用户交互
+
+### 经验教训
+
+- **UIAlertController 不能用通用的 dismissViewController 关闭** — 它有特殊的 presentation 机制（`_UIAlertControllerActionView` + `UIPresentationController`），需要走内部路径。
+- **遮罩残留 + UI 无响应是 presentation 清理不完整的典型信号** — 不仅仅是视图层级问题，还涉及 UIKit 内部的交互恢复逻辑。
+- **原生测试验证很重要** — 用原生 ObjC 代码验证 `_dismissAnimated:triggeringAction:` 在 `dispatch_after` 中可以正常工作，确认是 API 调用方式的问题而非 API 本身。
+
+---
+
+## 12. NSValue 包装的 struct 传参导致 setContentOffset:animated: 无效
+
+**文件**: `WNObjCBridge.m`, `WNTypeConversion.m`  
+**严重程度**: 高  
+**表现**: `WNAuto.scroll(sv, { y: 800 })` 无效果，UIScrollView 不滚动。其他 UI 操作（tap、type）正常。
+
+### 根因
+
+JavaScript 端 `_makeCGPoint(x, y)` 返回一个 `WNProxy` 对象，内部包装的是 `NSValue`（包含 `CGPoint` 结构体）。调用 `setContentOffset:animated:` 时：
+
+1. ObjC bridge 的 `invokeSelector:` 收到参数 `jsArg` 是 `WNObjCProxy` 实例
+2. 方法签名指示第一个参数类型是 `{CGPoint=dd}`（struct）
+3. 旧逻辑直接将 `WNObjCProxy.target`（即 `NSValue *`）的**对象指针**写入 `NSInvocation` 的参数 buffer
+4. `setContentOffset:animated:` 期望的是 `CGPoint` 的**原始字节**（16 字节 double × 2），而不是一个 8 字节的对象指针
+5. 方法拿到的 CGPoint 值是垃圾数据，行为未定义
+
+```
+期望: [invocation setArgument:&(CGPoint){0, 800} atIndex:2]  // 16 字节的 struct
+实际: [invocation setArgument:&nsValuePtr atIndex:2]           // 8 字节的对象指针
+```
+
+### 修复
+
+**`WNObjCBridge.m`**: 当方法参数类型是 struct（`argType[0] == '{'`）且 JS 传入的是 `WNObjCProxy` 或 `WNBoxing` 时，委托 `WNTypeConversion` 统一处理：
+
+```objc
+if (argType[0] == '{' && ([jsArg isKindOfClass:[WNObjCProxy class]] ||
+                            [jsArg isKindOfClass:[WNBoxing class]])) {
+    JSValue *jsValue = [JSValue valueWithObject:jsArg inContext:context];
+    [WNTypeConversion convertJSValue:jsValue toTypeEncoding:argType buffer:argBuf inContext:context];
+    [invocation setArgument:argBuf atIndex:i + 2];
+    free(argBuf);
+    continue;
+}
+```
+
+**`WNTypeConversion.m`**: 在 `convertJSValue:toStruct:buffer:inContext:` 开头新增 NSValue 检测——如果 JSValue 内部包装的是 NSValue（通过 WNBoxing 或 WNObjCProxy），直接用 `[nsValue getValue:buffer]` 提取原始 struct 字节：
+
+```objc
+if ([value isObject]) {
+    id rawObj = [value toObject];
+    NSValue *nsValue = nil;
+    if ([rawObj isKindOfClass:[WNBoxing class]]) {
+        id u = [(WNBoxing *)rawObj unbox];
+        if ([u isKindOfClass:[NSValue class]] && ![u isKindOfClass:[NSNumber class]]) nsValue = u;
+    } else if ([rawObj isKindOfClass:[WNObjCProxy class]]) {
+        id t = [(WNObjCProxy *)rawObj target];
+        if ([t isKindOfClass:[NSValue class]] && ![t isKindOfClass:[NSNumber class]]) nsValue = t;
+    }
+    if (nsValue) {
+        NSUInteger expectedSize = 0, valueSize = 0;
+        NSGetSizeAndAlignment(typeEncoding, &expectedSize, NULL);
+        NSGetSizeAndAlignment(nsValue.objCType, &valueSize, NULL);
+        if (valueSize <= expectedSize) {
+            [nsValue getValue:buffer];
+            return;
+        }
+    }
+}
+```
+
+### 经验教训
+
+- **ObjC 方法的 struct 参数是按值传递的** — `NSInvocation` 的参数 buffer 需要的是 struct 的原始字节，不是包含该 struct 的 NSValue 对象指针。
+- **NSValue 是 struct 的"盒子"** — 在 ObjC 中 `[NSValue valueWithCGPoint:]` 把 struct 装箱为对象，调用时需要 `getValue:` 拆箱还原为原始字节。
+- **类型转换逻辑应集中在一处** — `WNObjCBridge` 检测到需要 struct 转换时委托 `WNTypeConversion`，避免在多处重复编写拆箱逻辑。
+- **方案必须通用** — 不仅 `CGPoint`，`CGRect`、`CGSize`、`UIEdgeInsets` 等所有 struct 都可能通过 NSValue 传入，`getValue:` + size 检查是通用解法。
+
+---
+
+## 13. invoke('class') 返回字符串而非 WNObjCProxy
+
+**文件**: `WNObjCBridge.m`, `WNTypeConversion.m`  
+**严重程度**: 高  
+**表现**: `topVC.invoke('class').invoke('description')` 报错 `invoke is not a function`。`invoke('class')` 返回的是一个普通 JS 字符串（类名），无法继续链式调用 `invoke`。
+
+### 根因
+
+ObjC 的 `class` 方法返回类型是 `Class`，其 type encoding 为 `#`。在 `WNObjCBridge.m` 的返回值处理中：
+
+```objc
+const char *retType = sig.methodReturnType;
+if (retType[0] == '@') {            // 只处理 '@' (对象)
+    return [self createInstanceProxy:retObj inContext:context];
+}
+// '#' (Class) 走通用转换路径 →
+JSValue *result = [WNTypeConversion convertToJSValue:retBuf typeEncoding:retType inContext:context];
+```
+
+而 `WNTypeConversion` 对 `#` 类型的处理是：
+
+```objc
+case '#': {
+    Class cls = (__bridge Class)(*(void **)buffer);
+    return [JSValue valueWithObject:NSStringFromClass(cls) inContext:context];
+}
+```
+
+直接返回了类名字符串。但在 ObjC 中 Class 本身就是对象（`id` 兼容），完全支持消息发送（`description`、`alloc`、`respondsToSelector:` 等），应该和普通实例一样被代理。
+
+### 修复
+
+在 `WNObjCBridge.m` 的返回值处理中，在通用 `convertToJSValue` 之前增加 `#` 类型的拦截，将 Class 包装为 `WNObjCProxy`：
+
+```objc
+if (retType[0] == '#') {
+    Class cls = (__bridge Class)(*(void **)retBuf);
+    free(retBuf);
+    if (!cls) return [JSValue valueWithNullInContext:context];
+    return [self createInstanceProxy:(id)cls inContext:context];
+}
+```
+
+修复后 `invoke('class')` 返回的是一个完整的 `WNObjCProxy`，支持继续调用 `invoke('description')`、`invoke('alloc')` 等任意类方法。
+
+### 经验教训
+
+- **ObjC 的 Class 是一等对象** — `Class` 和 `id` 在 runtime 层面是兼容的，可以接收消息。桥接层不应将其降级为字符串。
+- **type encoding `#` 和 `@` 应同等对待** — 两者都是指向 ObjC 对象的指针，区别仅在于 `#` 指向的是类的元对象。
+- **遵循框架设计原则** — WhiteNeedle 的设计目标是支持任意 ObjC 方法调用，对返回值做特殊简化（如转字符串）会破坏这一承诺。
+
+---
+
+## 14. 脚本等待机制必须使用 NSRunLoop
+
+**文件**: `wn-auto.js`  
+**严重程度**: 高  
+**表现**: 使用 `NSThread.sleepForTimeInterval:` 或 JS `while(Date.now() < end) {}` 做等待时，动画不流畅、Alert dismiss 后遮罩残留、UI 无响应。改用 `NSRunLoop.runUntilDate:` 后一切正常。
+
+### 根因
+
+WhiteNeedle 的 JS 脚本通过 `evaluateJavaScript` 执行，在 JavaScriptCore 内部线程运行。当脚本调用 `dispatch.main` 执行 UI 操作时，会同步切到主线程。等待机制的选择直接影响主线程的事件处理能力：
+
+| 等待方式 | 主线程影响 | 效果 |
+|---------|-----------|------|
+| `NSThread.sleepForTimeInterval:` | 如果在主线程调用，会阻塞 RunLoop | 动画卡死、遮罩残留 |
+| `while(Date.now() < end) {}` | CPU 空转，不处理任何事件 | 同上 |
+| `NSRunLoop.runUntilDate:` | 继续处理 UI 事件、动画、Timer | 动画流畅、dismiss 完整 |
+
+UIKit 的很多操作（动画完成回调、presentation 清理、手势识别等）依赖 RunLoop 来调度。如果等待期间 RunLoop 不转，这些操作会被延迟到等待结束后才集中执行。
+
+### 修复
+
+```javascript
+function sleep(ms) {
+    var runLoop = ObjC.use('NSRunLoop').invoke('currentRunLoop');
+    var date = ObjC.use('NSDate').invoke('dateWithTimeIntervalSinceNow:', [ms / 1000.0]);
+    runLoop.invoke('runUntilDate:', [date]);
+}
+```
+
+### 经验教训
+
+- **在 iOS 上做"等待"必须让 RunLoop 继续转** — 这是 UIKit 事件驱动模型的基本要求。任何阻塞 RunLoop 的等待方式都会导致 UI 问题。
+- **动画和 dismiss 不是同步完成的** — 即使代码调用了 dismiss，UIKit 内部仍需要若干个 RunLoop 周期来完成遮罩移除、交互恢复等清理工作。
+- **`NSRunLoop.runUntilDate:` 是最佳的定时等待方式** — 既能精确控制等待时长，又能保证 UI 事件正常处理。
+
+---
+
 ## 通用经验（补充）
 
 6. **iOS WebKit Inspector Protocol 不等于 Chrome DevTools Protocol** — 虽然结构相似，但存在 Target multiplexing、accessor property 表示、特殊数值编码等差异，不能直接复用 Chrome 调试器的假设。
 7. **协议能力检测优于版本号判断** — 先尝试标准路径，根据错误响应动态切换策略，比判断 iOS 版本号更可靠。
 8. **调试器的变量展示需要处理所有 RemoteObject 变体** — 包括无 type 的宿主对象、value 为 null 的特殊数值、只有 getter 的访问器属性等边界情况。
+9. **ObjC type encoding 是桥接层的生命线** — `@`（对象）、`#`（Class）、`{`（struct）、`@?`（block）、`:`（SEL）每种都需要独立的转换路径，遗漏任何一种都会导致特定方法调用失败。
+10. **遵循框架的设计原则** — WhiteNeedle 的核心承诺是"支持任意 ObjC 方法调用"，在桥接层对返回值或参数做简化处理（如 Class→字符串、NSValue→直传）会破坏这一承诺，应始终返回可交互的代理对象。
+11. **iOS UI 操作必须与 RunLoop 协作** — UIKit 是事件驱动的，动画、transition、手势识别都依赖 RunLoop 调度。任何等待或延迟机制都必须让 RunLoop 继续处理事件。

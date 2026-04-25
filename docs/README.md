@@ -31,6 +31,8 @@ WhiteNeedle 是一个基于 JavaScriptCore 的 iOS 动态化引擎，提供 ObjC
 | [UI 调试](api-uidebug.md) | `UIDebug.viewHierarchy()`、`UIDebug.screenshot()`、`UIDebug.viewControllers()` — 视图检查 |
 | [SQLite](api-sqlite.md) | 沙盒内 SQLite 打开、执行、查询 |
 | [MCP 工具与 JSON-RPC](api-mcp-tools.md) | Cursor MCP 工具名与设备端 RPC 方法对照 |
+| [测试框架 WNTest](api-test-framework.md) | `WNTest.create()`、describe/it 结构化测试、断言库、异步测试、JSON 结果输出 |
+| [UI 自动化 WNAuto](api-ui-automation.md) | `WNAuto.tap()`、`WNAuto.type()`、`WNAuto.scroll()` — 基于直接方法调用的 UI 自动化 |
 
 ## Cursor Skill（独立分发）
 

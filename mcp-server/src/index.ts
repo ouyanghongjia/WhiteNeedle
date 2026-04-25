@@ -4,8 +4,11 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { TcpClient } from './tcpClient.js';
+import { WdaClient } from './wdaClient.js';
+import { Coordinator } from './coordinator.js';
 
 const client = new TcpClient();
+const coordinator = new Coordinator();
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -557,6 +560,377 @@ server.tool(
     async () => safeRpc('resetContext'),
 );
 
+// =========================================================================
+// WDA (WebDriverAgent) — system-level UI automation
+// =========================================================================
+
+// ---- WDA connect / disconnect ----
+server.tool(
+    'wda_connect',
+    'Connect to WebDriverAgent (system-level UI automation). Creates a WDA session.',
+    {
+        host: z.string().default('127.0.0.1').describe('WDA host (localhost if iproxy running)'),
+        port: z.number().default(8100).describe('WDA HTTP port'),
+        bundleId: z.string().optional().describe('Optional: app bundle ID to activate'),
+    },
+    async ({ host, port, bundleId }) => {
+        try {
+            const wda = coordinator.wda;
+            // Reconfigure if non-default
+            if (host !== '127.0.0.1' || port !== 8100) {
+                Object.assign(coordinator, { wda: new WdaClient(host, port) });
+            }
+            const sessionId = await coordinator.connectWDA();
+            if (bundleId) {
+                await coordinator.wda.activateApp(bundleId);
+            }
+            return { content: [{ type: 'text', text: `WDA connected (session: ${sessionId})${bundleId ? `, activated ${bundleId}` : ''}` }] };
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [{ type: 'text', text: `WDA connection failed: ${msg}` }], isError: true };
+        }
+    },
+);
+
+server.tool(
+    'wda_disconnect',
+    'Close the WDA session',
+    {},
+    async () => {
+        try {
+            await coordinator.wda.deleteSession();
+            return { content: [{ type: 'text', text: 'WDA session closed' }] };
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [{ type: 'text', text: `WDA disconnect failed: ${msg}` }], isError: true };
+        }
+    },
+);
+
+server.tool(
+    'wda_status',
+    'Check WDA server status and readiness',
+    {},
+    async () => {
+        try {
+            const status = await coordinator.wda.status();
+            return { content: [{ type: 'text', text: JSON.stringify(status, null, 2) }] };
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [{ type: 'text', text: `WDA not reachable: ${msg}` }], isError: true };
+        }
+    },
+);
+
+// ---- WDA Element interaction ----
+server.tool(
+    'wda_find_element',
+    'Find a UI element on screen via WDA (Accessibility). Strategies: "accessibility id", "class name", "xpath", "predicate string", "class chain".',
+    {
+        using: z.enum(['accessibility id', 'class name', 'xpath', 'predicate string', 'class chain']),
+        value: z.string().describe('Search value matching the strategy'),
+    },
+    async ({ using, value }) => {
+        try {
+            const el = await coordinator.wda.findElement(using, value);
+            return { content: [{ type: 'text', text: JSON.stringify(el) }] };
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [{ type: 'text', text: `Element not found: ${msg}` }], isError: true };
+        }
+    },
+);
+
+server.tool(
+    'wda_find_elements',
+    'Find multiple UI elements via WDA',
+    {
+        using: z.enum(['accessibility id', 'class name', 'xpath', 'predicate string', 'class chain']),
+        value: z.string(),
+    },
+    async ({ using, value }) => {
+        try {
+            const els = await coordinator.wda.findElements(using, value);
+            return { content: [{ type: 'text', text: `Found ${els.length} elements:\n${JSON.stringify(els, null, 2)}` }] };
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [{ type: 'text', text: `Find elements failed: ${msg}` }], isError: true };
+        }
+    },
+);
+
+server.tool(
+    'wda_tap',
+    'Tap a UI element by accessibility label, text, or coordinates via WDA (system-level). Use this for system alerts, cross-app elements, or anything outside the target app.',
+    {
+        label: z.string().optional().describe('Accessibility label / visible text to tap'),
+        x: z.number().optional().describe('Screen X coordinate (use with y)'),
+        y: z.number().optional().describe('Screen Y coordinate (use with x)'),
+        xpath: z.string().optional().describe('XPath selector'),
+    },
+    async ({ label, x, y, xpath }) => {
+        try {
+            if (label) {
+                await coordinator.wda.tapByText(label);
+            } else if (xpath) {
+                await coordinator.wda.tapByXPath(xpath);
+            } else if (x !== undefined && y !== undefined) {
+                await coordinator.wda.tap(x, y);
+            } else {
+                return { content: [{ type: 'text', text: 'Provide label, xpath, or x+y coordinates' }], isError: true };
+            }
+            return { content: [{ type: 'text', text: `Tapped${label ? ` "${label}"` : xpath ? ` xpath` : ` (${x},${y})`} via WDA` }] };
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [{ type: 'text', text: `WDA tap failed: ${msg}` }], isError: true };
+        }
+    },
+);
+
+server.tool(
+    'wda_type',
+    'Type text using WDA keyboard (system-level)',
+    {
+        text: z.string().describe('Text to type'),
+    },
+    async ({ text }) => {
+        try {
+            await coordinator.wda.typeText(text);
+            return { content: [{ type: 'text', text: `Typed "${text}" via WDA` }] };
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [{ type: 'text', text: `WDA type failed: ${msg}` }], isError: true };
+        }
+    },
+);
+
+server.tool(
+    'wda_swipe',
+    'Swipe gesture via WDA',
+    {
+        fromX: z.number(), fromY: z.number(),
+        toX: z.number(), toY: z.number(),
+        duration: z.number().default(0.5).describe('Swipe duration in seconds'),
+    },
+    async ({ fromX, fromY, toX, toY, duration }) => {
+        try {
+            await coordinator.wda.swipe(fromX, fromY, toX, toY, duration);
+            return { content: [{ type: 'text', text: `Swiped (${fromX},${fromY}) → (${toX},${toY})` }] };
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [{ type: 'text', text: `WDA swipe failed: ${msg}` }], isError: true };
+        }
+    },
+);
+
+// ---- WDA Alerts ----
+server.tool(
+    'wda_accept_alert',
+    'Accept (tap OK/Allow) on a system alert/dialog via WDA',
+    {},
+    async () => {
+        try {
+            await coordinator.wda.acceptAlert();
+            return { content: [{ type: 'text', text: 'Alert accepted' }] };
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [{ type: 'text', text: `No alert or accept failed: ${msg}` }], isError: true };
+        }
+    },
+);
+
+server.tool(
+    'wda_dismiss_alert',
+    'Dismiss (tap Cancel/Deny) on a system alert via WDA',
+    {},
+    async () => {
+        try {
+            await coordinator.wda.dismissAlert();
+            return { content: [{ type: 'text', text: 'Alert dismissed' }] };
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [{ type: 'text', text: `No alert or dismiss failed: ${msg}` }], isError: true };
+        }
+    },
+);
+
+server.tool(
+    'wda_get_alert_text',
+    'Read the text of the currently visible system alert',
+    {},
+    async () => {
+        try {
+            const text = await coordinator.wda.getAlertText();
+            return { content: [{ type: 'text', text }] };
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [{ type: 'text', text: `No alert visible: ${msg}` }], isError: true };
+        }
+    },
+);
+
+// ---- WDA App lifecycle ----
+server.tool(
+    'wda_launch_app',
+    'Launch (cold start) an app by bundle ID via WDA',
+    { bundleId: z.string().describe('e.g. com.apple.Preferences') },
+    async ({ bundleId }) => {
+        try {
+            await coordinator.wda.launchApp(bundleId);
+            return { content: [{ type: 'text', text: `Launched ${bundleId}` }] };
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [{ type: 'text', text: `Launch failed: ${msg}` }], isError: true };
+        }
+    },
+);
+
+server.tool(
+    'wda_activate_app',
+    'Bring an app to foreground via WDA',
+    { bundleId: z.string() },
+    async ({ bundleId }) => {
+        try {
+            await coordinator.wda.activateApp(bundleId);
+            return { content: [{ type: 'text', text: `Activated ${bundleId}` }] };
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [{ type: 'text', text: `Activate failed: ${msg}` }], isError: true };
+        }
+    },
+);
+
+server.tool(
+    'wda_terminate_app',
+    'Force-terminate an app via WDA',
+    { bundleId: z.string() },
+    async ({ bundleId }) => {
+        try {
+            await coordinator.wda.terminateApp(bundleId);
+            return { content: [{ type: 'text', text: `Terminated ${bundleId}` }] };
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [{ type: 'text', text: `Terminate failed: ${msg}` }], isError: true };
+        }
+    },
+);
+
+server.tool(
+    'wda_press_home',
+    'Press the Home button via WDA (return to SpringBoard)',
+    {},
+    async () => {
+        try {
+            await coordinator.wda.pressHome();
+            return { content: [{ type: 'text', text: 'Home pressed' }] };
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [{ type: 'text', text: `Press home failed: ${msg}` }], isError: true };
+        }
+    },
+);
+
+// ---- WDA Screen ----
+server.tool(
+    'wda_screenshot',
+    'Take a full-screen screenshot via WDA (returns base64 PNG)',
+    {},
+    async () => {
+        try {
+            const b64 = await coordinator.wda.getScreenshot();
+            return { content: [{ type: 'text', text: `Screenshot captured (${b64.length} chars base64).\nData: ${b64.slice(0, 200)}...` }] };
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [{ type: 'text', text: `Screenshot failed: ${msg}` }], isError: true };
+        }
+    },
+);
+
+server.tool(
+    'wda_page_source',
+    'Get the full Accessibility tree XML of the current screen via WDA',
+    {},
+    async () => {
+        try {
+            const source = await coordinator.wda.getPageSource();
+            return { content: [{ type: 'text', text: source }] };
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [{ type: 'text', text: `Page source failed: ${msg}` }], isError: true };
+        }
+    },
+);
+
+server.tool(
+    'wda_device_info',
+    'Get device info (model, OS version, etc.) from WDA',
+    {},
+    async () => {
+        try {
+            const info = await coordinator.wda.getDeviceInfo();
+            return { content: [{ type: 'text', text: JSON.stringify(info, null, 2) }] };
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [{ type: 'text', text: `Device info failed: ${msg}` }], isError: true };
+        }
+    },
+);
+
+// =========================================================================
+// Coordinator — dual-engine tools
+// =========================================================================
+
+server.tool(
+    'auto_status',
+    'Show connection status of both engines (WhiteNeedle in-app + WDA system-level)',
+    {},
+    async () => {
+        try {
+            const s = await coordinator.status();
+            return { content: [{ type: 'text', text: JSON.stringify(s, null, 2) }] };
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [{ type: 'text', text: `Status check failed: ${msg}` }], isError: true };
+        }
+    },
+);
+
+server.tool(
+    'auto_connect_all',
+    'Connect to both WhiteNeedle and WDA simultaneously',
+    {},
+    async () => {
+        try {
+            const results = await coordinator.connectAll();
+            const parts: string[] = [];
+            parts.push(`WhiteNeedle: ${results.wn ? '✓ connected' : '✗ not available'}`);
+            parts.push(`WDA: ${results.wda ? '✓ connected' : '✗ not available'}`);
+            return { content: [{ type: 'text', text: parts.join('\n') }] };
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [{ type: 'text', text: `Connect all failed: ${msg}` }], isError: true };
+        }
+    },
+);
+
+server.tool(
+    'auto_tap',
+    'Smart tap: routes to WhiteNeedle (in-app, fast) or WDA (system-level) automatically. Specify engine to force one.',
+    {
+        selector: z.string().describe('Text label / accessibility ID of the element to tap'),
+        engine: z.enum(['auto', 'wn', 'wda']).default('auto').describe('Which engine: auto (smart pick), wn (in-app), wda (system)'),
+    },
+    async ({ selector, engine }) => {
+        try {
+            const result = await coordinator.tap(selector, { engine });
+            return { content: [{ type: 'text', text: `Tapped "${selector}" via ${result.engine}${result.detail ? `: ${result.detail}` : ''}` }] };
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [{ type: 'text', text: `auto_tap failed: ${msg}` }], isError: true };
+        }
+    },
+);
+
 // ---- Installed JS modules ----
 server.tool(
     'list_installed_modules',
@@ -630,7 +1004,7 @@ For full API docs use the **whiteneedle-js-api** Cursor skill: bundled copies li
 - \`Interceptor.attach('-[C m:]', { onEnter, onLeave })\`
 - \`Interceptor.replace\`, \`Interceptor.rebindSymbol\`, C hooks via native bridge
 
-## Host MCP tools (device JSON-RPC)
+## Host MCP tools — WhiteNeedle (in-app engine)
 Runtime exploration: connect, list_classes, get_methods, evaluate, load_script, unload_script, list_scripts, list_hooks, list_hooks_detailed, pause_hook, resume_hook, list_modules, trace_method, rpc_call, inspect_object, heap_search.
 
 Network: list_network_requests, get_network_request, clear_network_requests, set_network_capture.
@@ -642,6 +1016,22 @@ Mock HTTP: list_mock_rules, add_mock_rule, update_mock_rule, remove_mock_rule, r
 Context & Modules: reset_context, list_installed_modules.
 
 Sandbox Files: write_file, mkdir, remove_dir.
+
+## Host MCP tools — WDA (system-level engine)
+Connection: wda_connect, wda_disconnect, wda_status.
+
+Element interaction: wda_find_element, wda_find_elements, wda_tap, wda_type, wda_swipe.
+
+System alerts: wda_accept_alert, wda_dismiss_alert, wda_get_alert_text.
+
+App lifecycle: wda_launch_app, wda_activate_app, wda_terminate_app, wda_press_home.
+
+Screen: wda_screenshot, wda_page_source, wda_device_info.
+
+## Coordinator (dual-engine)
+auto_status — show both engines' connection status.
+auto_connect_all — connect to WhiteNeedle + WDA simultaneously.
+auto_tap — smart tap that routes to the best engine automatically.
 
 Skill bundle: \`references/api-mcp-tools.md\`; monorepo mirror: \`docs/api-mcp-tools.md\`.
 `;

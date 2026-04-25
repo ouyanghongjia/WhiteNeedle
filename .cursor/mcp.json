@@ -1,0 +1,14 @@
+{
+    "mcpServers": {
+      "whiteneedle": {
+        "command": "node",
+        "args": ["/Users/ouyanghongjia/Desktop/WhiteNeedle/dist/mcp-server/dist/index.js"],
+        "env": {
+          "WN_HOST": "192.168.3.3",
+          "WN_PORT": "27042",
+          "WDA_HOST": "127.0.0.1",
+          "WDA_PORT": "8100"
+        }
+      }
+    }
+  }

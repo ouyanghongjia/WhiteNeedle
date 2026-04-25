@@ -2,6 +2,7 @@
 #import "WNBoxing.h"
 #import "WNBlockBridge.h"
 #import "WNBlockSignatureParser.h"
+#import "WNObjCProxy.h"
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
@@ -250,6 +251,9 @@
     if ([obj isKindOfClass:[WNBoxing class]]) {
         return [(WNBoxing *)obj unbox];
     }
+    if ([obj isKindOfClass:[WNObjCProxy class]]) {
+        return [(WNObjCProxy *)obj target];
+    }
     return obj;
 }
 
@@ -462,6 +466,31 @@
                toStruct:(const char *)typeEncoding
                  buffer:(void *)buffer
               inContext:(JSContext *)context {
+    // If the JSValue wraps an NSValue (via WNBoxing, WNObjCProxy, or directly),
+    // extract the raw struct bytes instead of reading individual properties.
+    if ([value isObject]) {
+        id rawObj = [value toObject];
+        NSValue *nsValue = nil;
+        if ([rawObj isKindOfClass:[WNBoxing class]]) {
+            id u = [(WNBoxing *)rawObj unbox];
+            if ([u isKindOfClass:[NSValue class]] && ![u isKindOfClass:[NSNumber class]]) nsValue = u;
+        } else if ([rawObj isKindOfClass:[WNObjCProxy class]]) {
+            id t = [(WNObjCProxy *)rawObj target];
+            if ([t isKindOfClass:[NSValue class]] && ![t isKindOfClass:[NSNumber class]]) nsValue = t;
+        } else if ([rawObj isKindOfClass:[NSValue class]] && ![rawObj isKindOfClass:[NSNumber class]]) {
+            nsValue = rawObj;
+        }
+        if (nsValue) {
+            NSUInteger expectedSize = 0, valueSize = 0;
+            NSGetSizeAndAlignment(typeEncoding, &expectedSize, NULL);
+            NSGetSizeAndAlignment(nsValue.objCType, &valueSize, NULL);
+            if (valueSize <= expectedSize) {
+                [nsValue getValue:buffer];
+                return;
+            }
+        }
+    }
+
     NSString *typeStr = @(typeEncoding);
 
     if ([typeStr hasPrefix:@"{CGRect="]) {

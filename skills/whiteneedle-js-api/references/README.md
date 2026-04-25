@@ -22,6 +22,8 @@
 | [api-uidebug.md](api-uidebug.md) | `UIDebug` |
 | [api-sqlite.md](api-sqlite.md) | SQLite |
 | [api-mcp-tools.md](api-mcp-tools.md) | MCP 工具名与设备 JSON-RPC 对照 |
+| [api-test-framework.md](api-test-framework.md) | `WNTest` 测试框架 — describe/it、断言、异步、JSON 结果 |
+| [api-ui-automation.md](api-ui-automation.md) | `WNAuto` UI 自动化 — 直接方法调用的 tap/type/scroll |
 
 ## 与真实运行时不一致时
 

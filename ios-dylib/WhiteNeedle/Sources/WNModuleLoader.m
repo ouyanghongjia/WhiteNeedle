@@ -214,38 +214,66 @@ static NSMutableDictionary<NSString *, NSString *> *g_builtinModules;
 #pragma mark - Builtin Modules
 
 + (void)installBuiltinModules:(JSContext *)context {
-    [self registerBuiltinModule:@"events" source:
-     @"function EventEmitter() { this._events = {}; }\n"
-     @"EventEmitter.prototype.on = function(event, fn) {\n"
-     @"  if (!this._events[event]) this._events[event] = [];\n"
-     @"  this._events[event].push(fn);\n"
-     @"  return this;\n"
-     @"};\n"
-     @"EventEmitter.prototype.emit = function(event) {\n"
-     @"  var args = Array.prototype.slice.call(arguments, 1);\n"
-     @"  var fns = this._events[event] || [];\n"
-     @"  for (var i = 0; i < fns.length; i++) fns[i].apply(this, args);\n"
-     @"  return fns.length > 0;\n"
-     @"};\n"
-     @"EventEmitter.prototype.off = function(event, fn) {\n"
-     @"  if (!fn) { delete this._events[event]; return this; }\n"
-     @"  var fns = this._events[event] || [];\n"
-     @"  this._events[event] = fns.filter(function(f) { return f !== fn; });\n"
-     @"  return this;\n"
-     @"};\n"
-     @"module.exports = { EventEmitter: EventEmitter };\n"
+    [self installBundledModules];
+}
+
++ (void)installBundledModules {
+    static NSDictionary<NSString *, NSString *> *bundledModules = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        bundledModules = @{
+            @"events":  @"events",
+            @"util":    @"util",
+            @"wn-test": @"wn-test",
+            @"wn-auto": @"wn-auto",
+        };
+    });
+
+    NSBundle *resourceBundle = [self builtinsBundle];
+    if (!resourceBundle) {
+        NSLog(@"%@ WhiteNeedleBuiltins resource bundle not found, "
+               "falling back to main bundle for builtin JS modules", kLogPrefix);
+        resourceBundle = [NSBundle mainBundle];
+    }
+
+    [bundledModules enumerateKeysAndObjectsUsingBlock:^(NSString *moduleName, NSString *fileName, BOOL *stop) {
+        if (g_builtinModules[moduleName]) return;
+
+        NSString *path = [resourceBundle pathForResource:fileName ofType:@"js"];
+        if (!path) {
+            NSLog(@"%@ Bundled module not found: %@.js", kLogPrefix, fileName);
+            return;
+        }
+
+        NSError *error;
+        NSString *source = [NSString stringWithContentsOfFile:path
+                                                     encoding:NSUTF8StringEncoding
+                                                        error:&error];
+        if (source) {
+            g_builtinModules[moduleName] = source;
+            NSLog(@"%@ Registered bundled builtin: %@", kLogPrefix, moduleName);
+        } else {
+            NSLog(@"%@ Failed to read %@: %@", kLogPrefix, path, error.localizedDescription);
+        }
+    }];
+}
+
++ (nullable NSBundle *)builtinsBundle {
+    NSString *bundleName = @"WhiteNeedleBuiltins";
+    NSArray<NSBundle *> *candidates = @[
+        [NSBundle bundleForClass:[self class]],
+        [NSBundle mainBundle],
     ];
 
-    [self registerBuiltinModule:@"util" source:
-     @"module.exports = {\n"
-     @"  format: function() {\n"
-     @"    var args = Array.prototype.slice.call(arguments);\n"
-     @"    var fmt = args.shift() || '';\n"
-     @"    return fmt.replace(/%[sd]/g, function() { return args.length ? String(args.shift()) : ''; });\n"
-     @"  },\n"
-     @"  inspect: function(obj) { return JSON.stringify(obj, null, 2); }\n"
-     @"};\n"
-    ];
+    for (NSBundle *parent in candidates) {
+        NSString *path = [parent pathForResource:bundleName ofType:@"bundle"];
+        if (path) {
+            NSBundle *b = [NSBundle bundleWithPath:path];
+            if (b) return b;
+        }
+    }
+
+    return nil;
 }
 
 @end

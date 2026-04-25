@@ -3,6 +3,7 @@
 #import "WNTypeConversion.h"
 #import "WNBlockSignatureParser.h"
 #import "WNHeapScanner.h"
+#import "WNObjCProxy.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <malloc/malloc.h>
@@ -97,23 +98,6 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
     if (!WNObjCPointerPassesBasicSafetyChecks(p)) return nil;
     return (__bridge id)(void *)p;
 }
-
-#pragma mark - WNObjCProxy: Wraps an ObjC class or instance for JS access
-
-@interface WNObjCProxy : NSObject
-@property (nonatomic, strong, nullable) id target;
-@property (nonatomic, assign, nullable) Class targetClass;
-@property (nonatomic, assign) BOOL isClassProxy;
-@end
-
-@implementation WNObjCProxy
-- (NSString *)description {
-    if (self.isClassProxy) {
-        return [NSString stringWithFormat:@"<WNObjCProxy: Class %@>", NSStringFromClass(self.targetClass)];
-    }
-    return [NSString stringWithFormat:@"<WNObjCProxy: %@>", self.target];
-}
-@end
 
 #pragma mark - WNObjCBridge
 
@@ -276,7 +260,7 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
         NSLog(@"%@ Selector not found: %@ on %@", kLogPrefix, selectorString, target);
         return [JSValue valueWithUndefinedInContext:context];
     }
-
+    
     NSMethodSignature *sig = [target methodSignatureForSelector:selector];
 
     if (!sig) {
@@ -288,6 +272,10 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
     [invocation setTarget:target];
     [invocation setSelector:selector];
     [invocation retainArguments];
+    
+    if ([selectorString isEqualToString:@"setContentOffset:animated:"]) {
+        NSLog(@"");
+    }
 
     for (NSUInteger i = 0; i < jsArgs.count && (i + 2) < sig.numberOfArguments; i++) {
         const char *argType = [sig getArgumentTypeAtIndex:i + 2];
@@ -297,6 +285,18 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
         void *argBuf = calloc(1, argSize);
 
         id jsArg = jsArgs[i];
+
+        // When the method expects a struct and JS passed NSValue (via
+        // WNObjCProxy or WNBoxing), delegate to WNTypeConversion which
+        // knows how to extract raw struct bytes from the NSValue.
+        if (argType[0] == '{' && ([jsArg isKindOfClass:[WNObjCProxy class]] ||
+                                   [jsArg isKindOfClass:[WNBoxing class]])) {
+            JSValue *jsValue = [JSValue valueWithObject:jsArg inContext:context];
+            [WNTypeConversion convertJSValue:jsValue toTypeEncoding:argType buffer:argBuf inContext:context];
+            [invocation setArgument:argBuf atIndex:i + 2];
+            free(argBuf);
+            continue;
+        }
 
         if ([jsArg isKindOfClass:[WNBoxing class]]) {
             WNBoxing *box = (WNBoxing *)jsArg;
@@ -357,6 +357,14 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
             return [self createInstanceProxy:retObj inContext:context];
         }
         return [WNTypeConversion objcObjectToJSValue:retObj inContext:context];
+    }
+
+    // Class is also an ObjC object — wrap it as a proxy so it supports invoke()
+    if (retType[0] == '#') {
+        Class cls = (__bridge Class)(*(void **)retBuf);
+        free(retBuf);
+        if (!cls) return [JSValue valueWithNullInContext:context];
+        return [self createInstanceProxy:(id)cls inContext:context];
     }
 
     JSValue *result = [WNTypeConversion convertToJSValue:retBuf typeEncoding:retType inContext:context];

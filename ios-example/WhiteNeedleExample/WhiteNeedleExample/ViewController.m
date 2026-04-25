@@ -2,6 +2,7 @@
 #import "WNLeakExamples.h"
 #import "WNSQLiteDemo.h"
 #import "WNWebViewTestViewController.h"
+#import "WNAutoTestViewController.h"
 #import <WhiteNeedle/WNJSEngine.h>
 #import <WhiteNeedle/WNHookEngine.h>
 #import <WhiteNeedle/WNNativeBridge.h>
@@ -44,6 +45,23 @@ static NSString *const kNetworkCellID = @"NetworkCell";
                           NSHTTPCookieValue:@"cookie.name"};
     NSHTTPCookie *cookie = [NSHTTPCookie cookieWithProperties:dic];
     [[NSHTTPCookieStorage sharedHTTPCookieStorage] setCookie:cookie];
+    
+    
+    
+//    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"" message:@"" preferredStyle:UIAlertControllerStyleAlert];
+//    UIAlertAction *acton = [UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleCancel handler:^(UIAlertAction * _Nonnull action) {
+//        
+//    }];
+//    [alert addAction:acton];
+//    BOOL isResponse = [alert respondsToSelector:NSSelectorFromString(@"_dismissAnimated:triggeringAction:")];
+//    
+//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//        [self presentViewController:alert animated:YES completion:nil];
+//        
+//        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//            [alert performSelector:NSSelectorFromString(@"_dismissAnimated:triggeringAction:") withObject:@(YES) withObject:acton];
+//        });
+//    });
 }
 
 #pragma mark - Engine
@@ -339,13 +357,17 @@ static NSString *const kNetworkCellID = @"NetworkCell";
 
     UIStackView *webStack = [[UIStackView alloc] init];
     webStack.axis = UILayoutConstraintAxisHorizontal;
-    webStack.distribution = UIStackViewDistributionFill;
+    webStack.distribution = UIStackViewDistributionFillEqually;
     webStack.spacing = 12;
     webStack.translatesAutoresizingMaskIntoConstraints = NO;
-    UIButton *wkBtn = [self makeButton:@"🌐 WKWebView 调试页"
+    UIButton *wkBtn = [self makeButton:@"🌐 WKWebView"
                                  color:UIColor.systemPurpleColor
                                 action:@selector(openWebViewTest)];
+    UIButton *autoBtn = [self makeButton:@"🤖 Auto Test"
+                                   color:UIColor.systemCyanColor
+                                  action:@selector(openAutoTestPage)];
     [webStack addArrangedSubview:wkBtn];
+    [webStack addArrangedSubview:autoBtn];
 
     [self.view addSubview:self.segmentControl];
     [self.view addSubview:self.tableView];
@@ -403,6 +425,13 @@ static NSString *const kNetworkCellID = @"NetworkCell";
 
 - (void)openWebViewTest {
     WNWebViewTestViewController *vc = [[WNWebViewTestViewController alloc] init];
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:vc];
+    nav.modalPresentationStyle = UIModalPresentationFullScreen;
+    [self presentViewController:nav animated:YES completion:nil];
+}
+
+- (void)openAutoTestPage {
+    WNAutoTestViewController *vc = [[WNAutoTestViewController alloc] init];
     UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:vc];
     nav.modalPresentationStyle = UIModalPresentationFullScreen;
     [self presentViewController:nav animated:YES completion:nil];

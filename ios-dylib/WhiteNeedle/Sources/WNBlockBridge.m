@@ -1612,15 +1612,29 @@ static void *jsValueToRawReturn(JSValue *result, char retType) {
     NSMethodSignature *sig = nil;
 
     if (typeEncoding && typeEncoding.length > 0) {
-        sig = [NSMethodSignature signatureWithObjCTypes:[typeEncoding UTF8String]];
+        @try {
+            sig = [NSMethodSignature signatureWithObjCTypes:[typeEncoding UTF8String]];
+        } @catch (NSException *e) {
+            // Provided encoding is invalid — fall through to auto-detect
+        }
     }
 
-    // Try to get signature from block itself
+    if (!sig) {
+        const char *blockEnc = wn_blockTypeEncoding(block);
+        if (blockEnc) {
+            @try {
+                sig = [NSMethodSignature signatureWithObjCTypes:blockEnc];
+            } @catch (NSException *e) {
+                // block encoding also invalid
+            }
+        }
+    }
+
     if (!sig) {
         @try {
             sig = [NSMethodSignature signatureWithObjCTypes:"v@?"];
         } @catch (NSException *e) {
-            // fallback
+            // last resort fallback
         }
     }
 

@@ -21,6 +21,10 @@ Pod::Spec.new do |s|
                        'Sources/libffi/src/raw_api.c'
   s.public_header_files = 'Sources/*.h'
 
+  s.resource_bundles = {
+    'WhiteNeedleBuiltins' => ['BuiltinModules/*.js']
+  }
+
   s.frameworks       = 'Foundation', 'UIKit', 'JavaScriptCore', 'Security', 'WebKit'
   s.libraries        = 'c++', 'sqlite3'
   s.xcconfig         = { 'CLANG_CXX_LANGUAGE_STANDARD' => 'c++17' }

@@ -37,6 +37,9 @@ skills/whiteneedle-resign/payload/WhiteNeedle.framework/
 AuthKey_*.p8
 deploy.conf.local
 
+# WebDriverAgent (auto-setup via tools/setup-wda.sh)
+.wda/
+
 # Editor / tooling
 .ruby-lsp/
 .idea/

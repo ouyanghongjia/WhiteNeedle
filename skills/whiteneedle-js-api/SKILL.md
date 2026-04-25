@@ -33,6 +33,8 @@ description: WhiteNeedle iOS 上 JavaScript 调试运行时 API（ObjC、Interce
 | Block | `references/api-block-bridge.md` |
 | 性能 API | `references/api-performance.md` |
 | MCP 工具 ↔ JSON-RPC | `references/api-mcp-tools.md` |
+| 测试框架 WNTest | `references/api-test-framework.md` |
+| UI 自动化 WNAuto | `references/api-ui-automation.md` |
 
 ## 易错点（设备与 MCP）
 
