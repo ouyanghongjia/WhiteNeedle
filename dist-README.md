@@ -8,12 +8,15 @@
 dist/
 ├── WhiteNeedle.vsix                # VS Code / Cursor 扩展（含 JS API 类型声明，安装即可获得补全）
 ├── WhiteNeedle.framework/          # 预编译的 iOS Framework (arm64, iOS 15+)
+├── builtin-js/                     # 内置 JS 模块源码（events / util / wn-test / wn-auto；与 Framework 内 WhiteNeedleBuiltins 同源）
 ├── mcp-server/                     # MCP Server（AI Agent 工具链）
 ├── skills/                         # Cursor Agent Skills
 │   ├── whiteneedle-js-api/         #   JS API 文档与参考
 │   └── whiteneedle-resign/         #   重签名工作流（bin/ + config/ + payload/）
-├── cocoapods/WhiteNeedle/          # CocoaPods 私有库（Framework 二进制分发）
+├── cocoapods/WhiteNeedle/          # CocoaPods 私有库（Framework 二进制 + BuiltinModules → WhiteNeedleBuiltins.bundle）
 │   ├── WhiteNeedle.podspec
+│   ├── BuiltinModules/             #   内置 JS 源（pod install 后打进宿主 App）
+│   ├── Scripts/
 │   └── WhiteNeedle.framework/
 ├── sample-scripts/                 # 用户示例脚本（API 用法参考）
 └── docs/                           # 完整文档
@@ -23,7 +26,7 @@ dist/
 
 在按照下面步骤操作之前，请先完成以下配置，否则对应功能无法正常工作：
 
-- [ ] **CocoaPods 私有库 Git 地址**（仅使用 CocoaPods 集成时需要）：打开 `cocoapods/WhiteNeedle/WhiteNeedle.podspec`，将 `REPLACE_WITH_YOUR_GIT_URL` 替换为你们团队的内部 Git 仓库地址。Pod 以预编译 Framework 方式分发，无需源码编译。
+- [ ] **CocoaPods 私有库 Git 地址**（仅使用 CocoaPods 集成时需要）：打开 `cocoapods/WhiteNeedle/WhiteNeedle.podspec`，将 `REPLACE_WITH_YOUR_GIT_URL` 替换为你们团队的内部 Git 仓库地址。Pod 以预编译 Framework 分发；同包内的 `BuiltinModules` 会随 `resource_bundles` 打入 **WhiteNeedleBuiltins**（可 `require('wn-test')` 等），无需再单独拷 JS。
 - [ ] **MCP Server 设备 IP**：在 Cursor MCP 配置中将 `WN_HOST` 设为目标 iPhone 的局域网 IP（不是 Mac 的 IP）。
 
 ---
@@ -319,4 +322,4 @@ cp -R skills/whiteneedle-resign ~/.cursor/skills/
 - **VS Code Extension**: 0.1.0
 - **MCP Server**: 0.2.0
 
-> **版本对齐**：分发包内的 `WhiteNeedle.framework`、`cocoapods/WhiteNeedle/WhiteNeedle.framework`、以及 `skills/whiteneedle-resign/payload/WhiteNeedle.framework` 均由 `build-dist.sh` 统一从源码构建产出，版本始终一致。请勿手动替换单个二进制文件。
+> **版本对齐**：分发包内的 `WhiteNeedle.framework`、`cocoapods/WhiteNeedle/WhiteNeedle.framework`、`cocoapods/WhiteNeedle/BuiltinModules/`、`builtin-js/`、以及 `skills/whiteneedle-resign/payload/WhiteNeedle.framework` 均由 `build-dist.sh` 从同一源码树产出，版本一致。请勿手动替换单个二进制或内置 JS。

@@ -16,8 +16,12 @@
 #import "WNRefGraphDetector.h"
 #endif
 #import <objc/runtime.h>
+#import <CoreFoundation/CoreFoundation.h>
+#import <stdatomic.h>
 
 static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
+
+static _Atomic int s_wnJSThreadExternalWaitCount = 0;
 
 #pragma mark - Timer handle for setTimeout/setInterval
 
@@ -39,6 +43,13 @@ static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
 @property (nonatomic, assign) NSUInteger nextTimerId;
 @property (nonatomic, assign) BOOL isReady;
 @property (nonatomic, strong) NSHashTable<id<WNJSEngineDelegate>> *observers;
+@property (nonatomic, strong, nullable) NSThread *jsThread;
+@property (nonatomic, strong, nullable) NSPort *jsKeepAlivePort;
+@property (nonatomic, assign) BOOL jsThreadReady;
+/// Captured on the JS thread in `jsThreadMain` for CFRunLoopWakeUp from other threads.
+@property (atomic, assign) CFRunLoopRef jsRunLoopRef;
+/// Signaled from `jsThreadMain` when the run loop and invoke defaults are ready (replaces busy-wait in -ensureJSThread).
+@property (nonatomic, strong) dispatch_semaphore_t jsThreadStartSemaphore;
 @end
 
 @implementation WNJSEngine
@@ -60,6 +71,7 @@ static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
         _nextTimerId = 1;
         _isReady = NO;
         _observers = [NSHashTable weakObjectsHashTable];
+        _jsThreadReady = NO;
     }
     return self;
 }
@@ -79,47 +91,75 @@ static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
 #pragma mark - Lifecycle
 
 - (void)setup {
-    if (self.isReady) return;
+    @synchronized (self) {
+        if (self.isReady) return;
+        // JVM/JSContext must be created and all registerInContext: calls must run on the same
+        // thread that evaluateScript: uses (dedicated JS execution thread).
+        [self ensureJSThread];
+        [self performOnJSThread:^{
+            if (self.isReady) return;
 
-    self.vm = [[JSVirtualMachine alloc] init];
-    self.context = [[JSContext alloc] initWithVirtualMachine:self.vm];
+            self.vm = [[JSVirtualMachine alloc] init];
+            self.context = [[JSContext alloc] initWithVirtualMachine:self.vm];
 
-    [self registerConsoleAPI];
-    [self registerTimerAPI];
-    [self registerUtilityAPI];
-    [self installExceptionHandler];
-    [WNObjCBridge registerInContext:self.context];
-    [WNHookEngine registerInContext:self.context];
-    [WNBlockBridge registerInContext:self.context];
-    [WNNativeBridge registerInContext:self.context];
-    [WNModuleLoader registerInContext:self.context];
-    [WNDebugSupport enableInspectorForContext:self.context];
-    [WNDebugSupport registerInContext:self.context];
-    [WNCookieBridge registerInContext:self.context];
-    [WNUserDefaultsBridge registerInContext:self.context];
-    [WNFileSystemBridge registerInContext:self.context];
-    [WNPerformanceBridge registerInContext:self.context];
-    [WNUIDebugBridge registerInContext:self.context];
-    [WNSQLiteBridge registerInContext:self.context];
-    [WNLeakDetector registerInContext:self.context];
+            [self registerConsoleAPI];
+            [self registerTimerAPI];
+            [self registerUtilityAPI];
+            [self installExceptionHandler];
+            [WNObjCBridge registerInContext:self.context];
+            [WNHookEngine registerInContext:self.context];
+            [WNBlockBridge registerInContext:self.context];
+            [WNNativeBridge registerInContext:self.context];
+            [WNModuleLoader registerInContext:self.context];
+            [WNDebugSupport enableInspectorForContext:self.context];
+            [WNDebugSupport registerInContext:self.context];
+            [WNCookieBridge registerInContext:self.context];
+            [WNUserDefaultsBridge registerInContext:self.context];
+            [WNFileSystemBridge registerInContext:self.context];
+            [WNPerformanceBridge registerInContext:self.context];
+            [WNUIDebugBridge registerInContext:self.context];
+            [WNSQLiteBridge registerInContext:self.context];
+            [WNLeakDetector registerInContext:self.context];
 #if WN_ENABLE_REFGRAPH
-    [WNRefGraphDetector registerInContext:self.context];
+            [WNRefGraphDetector registerInContext:self.context];
 #endif
 
-    self.isReady = YES;
-    NSLog(@"%@ Engine initialized (JavaScriptCore)", kWNLogPrefix);
+            self.isReady = YES;
+            NSLog(@"%@ Engine initialized (JavaScriptCore)", kWNLogPrefix);
+        } waitUntilDone:YES];
+    }
 }
 
 - (void)teardown {
-    for (WNTimerHandle *handle in self.timers.allValues) {
-        [handle.timer invalidate];
-    }
-    [self.timers removeAllObjects];
-    [self.loadedScripts removeAllObjects];
+    @synchronized (self) {
+        if (self.timers.count > 0) {
+            void (^invalidateTimers)(void) = ^{
+                for (WNTimerHandle *handle in self.timers.allValues) {
+                    [handle.timer invalidate];
+                }
+                [self.timers removeAllObjects];
+            };
+            if ([NSThread isMainThread]) {
+                invalidateTimers();
+            } else {
+                dispatch_sync(dispatch_get_main_queue(), invalidateTimers);
+            }
+        }
 
-    self.context = nil;
-    self.vm = nil;
-    self.isReady = NO;
+        if (self.isReady) {
+            [self ensureJSThread];
+            [self performOnJSThread:^{
+                [self.loadedScripts removeAllObjects];
+                self.context = nil;
+                self.vm = nil;
+                self.isReady = NO;
+            } waitUntilDone:YES];
+        } else {
+            [self.loadedScripts removeAllObjects];
+        }
+
+        [self stopJSThread];
+    }
     NSLog(@"%@ Engine torn down", kWNLogPrefix);
 }
 
@@ -134,6 +174,111 @@ static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
     NSLog(@"%@ JSContext reset complete", kWNLogPrefix);
 }
 
+#pragma mark - JS execution thread
+
+- (void)ensureJSThread {
+    if (self.jsThread && !self.jsThread.isFinished) {
+        return;
+    }
+
+    self.jsThreadReady = NO;
+    self.jsThreadStartSemaphore = dispatch_semaphore_create(0);
+    self.jsThread = [[NSThread alloc] initWithTarget:self selector:@selector(jsThreadMain) object:nil];
+    self.jsThread.name = @"WhiteNeedle.JSExecution";
+    [self.jsThread start];
+
+    dispatch_semaphore_wait(self.jsThreadStartSemaphore, DISPATCH_TIME_FOREVER);
+}
+
+- (void)stopJSThread {
+    NSThread *thread = self.jsThread;
+    if (!thread) return;
+
+    [self performSelector:@selector(stopJSThreadRunLoop)
+                 onThread:thread
+               withObject:nil
+            waitUntilDone:NO];
+    [thread cancel];
+    self.jsThread = nil;
+    self.jsKeepAlivePort = nil;
+    self.jsThreadReady = NO;
+}
+
+- (void)jsThreadMain {
+    @autoreleasepool {
+        self.jsRunLoopRef = CFRunLoopGetCurrent();
+        self.jsKeepAlivePort = [NSMachPort port];
+        [[NSRunLoop currentRunLoop] addPort:self.jsKeepAlivePort forMode:NSDefaultRunLoopMode];
+        WNSetInvokeTargetQueue(dispatch_get_main_queue());
+        self.jsThreadReady = YES;
+        if (self.jsThreadStartSemaphore) {
+            dispatch_semaphore_signal(self.jsThreadStartSemaphore);
+        }
+
+        while (![[NSThread currentThread] isCancelled]) {
+            @autoreleasepool {
+                [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate distantFuture]];
+            }
+        }
+
+        WNSetInvokeTargetQueue(NULL);
+        self.jsRunLoopRef = NULL;
+    }
+}
+
+- (void)stopJSThreadRunLoop {
+    CFRunLoopStop(CFRunLoopGetCurrent());
+}
+
+- (void)executeBlock:(dispatch_block_t)block {
+    if (block) block();
+}
+
+- (id)performOnJSThreadSyncValue:(id (^)(void))block {
+    if (!block) return nil;
+    __block id result = nil;
+    [self performOnJSThread:^{
+        result = block();
+    } waitUntilDone:YES];
+    return result;
+}
+
+- (void)performOnJSThread:(dispatch_block_t)block waitUntilDone:(BOOL)waitUntilDone {
+    if (!block) return;
+    [self ensureJSThread];
+
+    if ([NSThread currentThread] == self.jsThread) {
+        block();
+        return;
+    }
+
+    BOOL isExternalWaiter = (waitUntilDone && [NSThread currentThread] != self.jsThread);
+    if (isExternalWaiter) {
+        atomic_fetch_add_explicit(&s_wnJSThreadExternalWaitCount, 1, memory_order_relaxed);
+    }
+    @try {
+        [self performSelector:@selector(executeBlock:)
+                     onThread:self.jsThread
+                   withObject:[block copy]
+                waitUntilDone:waitUntilDone];
+    } @finally {
+        if (isExternalWaiter) {
+            atomic_fetch_sub_explicit(&s_wnJSThreadExternalWaitCount, 1, memory_order_relaxed);
+        }
+    }
+}
+
+- (BOOL)isOnJSThread {
+    return [NSThread currentThread] == self.jsThread;
+}
+
+- (void)wakeJSThread {
+    CFRunLoopRef rl = self.jsRunLoopRef;
+    if (rl) {
+        CFRunLoopWakeUp(rl);
+    }
+}
+
 #pragma mark - Script management
 
 - (BOOL)loadScript:(NSString *)code name:(NSString *)name {
@@ -142,42 +287,54 @@ static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
         return NO;
     }
 
-    [self unloadScript:name];
+    __block BOOL ok = NO;
+    [self performOnJSThread:^{
+        [self unloadScript:name];
 
-    // Re-evaluating the same script in one JSContext leaves top-level `class` / `let` / `const`
-    // bindings in the global environment; a second run causes "Can't create duplicate variable".
-    // Run user scripts inside an IIFE so each load gets a fresh function scope. Optional
-    // bootstrap (bundled as bootstrap.js) is left unwrapped so it can intentionally populate globals.
-    NSString *codeToEval = code;
-    if (![name isEqualToString:@"bootstrap.js"]) {
-        codeToEval = [NSString stringWithFormat:@"(function(){\n%@\n})();", code];
-    }
+        // Re-evaluating the same script in one JSContext leaves top-level `class` / `let` / `const`
+        // bindings in the global environment; a second run causes "Can't create duplicate variable".
+        // Run user scripts inside an IIFE so each load gets a fresh function scope. Optional
+        // bootstrap (bundled as bootstrap.js) is left unwrapped so it can intentionally populate globals.
+        NSString *codeToEval = code;
+        if (![name isEqualToString:@"bootstrap.js"]) {
+            codeToEval = [NSString stringWithFormat:@"(function(){\n%@\n})();", code];
+        }
 
-    JSValue *result = [self.context evaluateScript:codeToEval withSourceURL:[NSURL URLWithString:name]];
-    if (!result) {
-        NSLog(@"%@ Failed to evaluate script: %@", kWNLogPrefix, name);
-        return NO;
-    }
+        WNSetInvokeTargetQueue(dispatch_get_main_queue());
+        JSValue *result = [self.context evaluateScript:codeToEval withSourceURL:[NSURL URLWithString:name]];
+        if (!result) {
+            NSLog(@"%@ Failed to evaluate script: %@", kWNLogPrefix, name);
+            return;
+        }
 
-    self.loadedScripts[name] = result;
-    NSLog(@"%@ Script loaded: %@", kWNLogPrefix, name);
-    return YES;
+        self.loadedScripts[name] = result;
+        NSLog(@"%@ Script loaded: %@", kWNLogPrefix, name);
+        ok = YES;
+    } waitUntilDone:YES];
+    return ok;
 }
 
 - (void)unloadScript:(NSString *)name {
-    if (self.loadedScripts[name]) {
-        [self.loadedScripts removeObjectForKey:name];
-        NSLog(@"%@ Script unloaded: %@", kWNLogPrefix, name);
-    }
+    [self performOnJSThread:^{
+        if (self.loadedScripts[name]) {
+            [self.loadedScripts removeObjectForKey:name];
+            NSLog(@"%@ Script unloaded: %@", kWNLogPrefix, name);
+        }
+    } waitUntilDone:YES];
 }
 
 - (JSValue *)evaluateScript:(NSString *)code {
     if (!self.isReady) return nil;
-    return [self.context evaluateScript:code];
+    return [self performOnJSThreadSyncValue:^id{
+        WNSetInvokeTargetQueue(dispatch_get_main_queue());
+        return [self.context evaluateScript:code];
+    }];
 }
 
 - (NSArray<NSString *> *)loadedScriptNames {
-    return [self.loadedScripts allKeys];
+    return [self performOnJSThreadSyncValue:^id{
+        return [self.loadedScripts allKeys];
+    }] ?: @[];
 }
 
 #pragma mark - Console API
@@ -284,14 +441,20 @@ static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
     NSTimer *timer = [NSTimer timerWithTimeInterval:interval repeats:repeats block:^(NSTimer *t) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) return;
-        JSValue *fn = managedCallback.value;
-        if (fn && ![fn isUndefined]) {
-            [fn callWithArguments:@[]];
-        }
-        if (!repeats) {
-            [strongSelf.context.virtualMachine removeManagedReference:managedCallback withOwner:strongSelf];
-            [strongSelf.timers removeObjectForKey:@(timerId)];
-        }
+
+        // Never touch JSManagedValue/JSValue on main thread: it takes JSLock and can deadlock
+        // with JS thread -> dispatch_sync(main) invoke paths.
+        [strongSelf performOnJSThread:^{
+            JSValue *fn = managedCallback.value;
+            if (fn && ![fn isUndefined]) {
+                [fn callWithArguments:@[]];
+            }
+            if (!repeats) {
+                [strongSelf.context.virtualMachine removeManagedReference:managedCallback withOwner:strongSelf];
+                [strongSelf.timers removeObjectForKey:@(timerId)];
+            }
+        } waitUntilDone:NO];
+        [strongSelf wakeJSThread];
     }];
 
     WNTimerHandle *handle = [[WNTimerHandle alloc] init];
@@ -332,6 +495,18 @@ static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
     rpcObj[@"exports"] = [JSValue valueWithNewObjectInContext:self.context];
     self.context[@"rpc"] = rpcObj;
 
+    // __wnRunLoopSleep(ms) — Pump current thread run loop without going through ObjC bridge invoke.
+    // This avoids temporary invoke-target-queue overrides (e.g. dispatch.none) leaking into nested
+    // callbacks while still letting the JS thread process queued tasks.
+    self.context[@"__wnRunLoopSleep"] = ^(JSValue *msVal) {
+        double ms = [msVal toDouble];
+        if (ms < 0) ms = 0;
+        NSDate *endDate = [NSDate dateWithTimeIntervalSinceNow:(ms / 1000.0)];
+        while ([endDate timeIntervalSinceNow] > 0) {
+            [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:endDate];
+        }
+    };
+
     [self registerDispatchAPI];
 }
 
@@ -340,33 +515,55 @@ static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
 - (void)registerDispatchAPI {
     JSValue *dispatchObj = [JSValue valueWithNewObjectInContext:self.context];
 
-    // dispatch.main(fn) — synchronous: block until fn completes on main thread, return result
+    // dispatch.main(fn) — keep JS on JS thread; route ObjC invoke/KVC to main queue
     dispatchObj[@"main"] = ^JSValue *(JSValue *fn) {
         if (!fn || [fn isUndefined] || [fn isNull]) {
             return [JSValue valueWithUndefinedInContext:[JSContext currentContext]];
         }
 
         JSContext *ctx = [JSContext currentContext];
-
-        if ([NSThread isMainThread]) {
-            void (^savedHandler)(JSContext *, JSValue *) = ctx.exceptionHandler;
-            __block JSValue *thrownException = nil;
-            ctx.exceptionHandler = ^(JSContext *c, JSValue *exc) {
-                thrownException = exc;
-            };
-            JSValue *result = [fn callWithArguments:@[]];
-            ctx.exceptionHandler = savedHandler;
-            if (thrownException) {
-                ctx.exception = thrownException;
-                return [JSValue valueWithUndefinedInContext:ctx];
-            }
-            return result;
-        }
-
-        __block JSValue *result = nil;
-        dispatch_sync(dispatch_get_main_queue(), ^{
+        dispatch_queue_t previousQueue = WNGetInvokeTargetQueue();
+        WNSetInvokeTargetQueue(dispatch_get_main_queue());
+        JSValue *result = nil;
+        @try {
             result = [fn callWithArguments:@[]];
-        });
+        } @finally {
+            WNSetInvokeTargetQueue(previousQueue);
+        }
+        return result ?: [JSValue valueWithUndefinedInContext:ctx];
+    };
+
+    // dispatch.global(fn) — keep JS on JS thread; route ObjC invoke/KVC to global queue
+    dispatchObj[@"global"] = ^JSValue *(JSValue *fn) {
+        if (!fn || [fn isUndefined] || [fn isNull]) {
+            return [JSValue valueWithUndefinedInContext:[JSContext currentContext]];
+        }
+        JSContext *ctx = [JSContext currentContext];
+        dispatch_queue_t previousQueue = WNGetInvokeTargetQueue();
+        WNSetInvokeTargetQueue(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
+        JSValue *result = nil;
+        @try {
+            result = [fn callWithArguments:@[]];
+        } @finally {
+            WNSetInvokeTargetQueue(previousQueue);
+        }
+        return result ?: [JSValue valueWithUndefinedInContext:ctx];
+    };
+
+    // dispatch.none(fn) — execute fn on JS thread without forcing ObjC invoke to a target queue
+    dispatchObj[@"none"] = ^JSValue *(JSValue *fn) {
+        if (!fn || [fn isUndefined] || [fn isNull]) {
+            return [JSValue valueWithUndefinedInContext:[JSContext currentContext]];
+        }
+        JSContext *ctx = [JSContext currentContext];
+        dispatch_queue_t previousQueue = WNGetInvokeTargetQueue();
+        WNSetInvokeTargetQueue(NULL);
+        JSValue *result = nil;
+        @try {
+            result = [fn callWithArguments:@[]];
+        } @finally {
+            WNSetInvokeTargetQueue(previousQueue);
+        }
         return result ?: [JSValue valueWithUndefinedInContext:ctx];
     };
 
@@ -382,13 +579,21 @@ static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
 
         dispatch_async(dispatch_get_main_queue(), ^{
             WNJSEngine *eng = weakSelf;
-            JSValue *callback = managed.value;
-            if (callback && ![callback isUndefined]) {
-                [callback callWithArguments:@[]];
-            }
-            if (eng) {
+            if (!eng) return;
+            [eng performOnJSThread:^{
+                JSValue *callback = managed.value;
+                if (callback && ![callback isUndefined]) {
+                    dispatch_queue_t previousQueue = WNGetInvokeTargetQueue();
+                    WNSetInvokeTargetQueue(dispatch_get_main_queue());
+                    @try {
+                        [callback callWithArguments:@[]];
+                    } @finally {
+                        WNSetInvokeTargetQueue(previousQueue);
+                    }
+                }
                 [eng.context.virtualMachine removeManagedReference:managed withOwner:eng];
-            }
+            } waitUntilDone:NO];
+            [eng wakeJSThread];
         });
     };
 
@@ -406,13 +611,21 @@ static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(ms * NSEC_PER_MSEC)),
                        dispatch_get_main_queue(), ^{
             WNJSEngine *eng = weakSelf;
-            JSValue *callback = managed.value;
-            if (callback && ![callback isUndefined]) {
-                [callback callWithArguments:@[]];
-            }
-            if (eng) {
+            if (!eng) return;
+            [eng performOnJSThread:^{
+                JSValue *callback = managed.value;
+                if (callback && ![callback isUndefined]) {
+                    dispatch_queue_t previousQueue = WNGetInvokeTargetQueue();
+                    WNSetInvokeTargetQueue(dispatch_get_main_queue());
+                    @try {
+                        [callback callWithArguments:@[]];
+                    } @finally {
+                        WNSetInvokeTargetQueue(previousQueue);
+                    }
+                }
                 [eng.context.virtualMachine removeManagedReference:managed withOwner:eng];
-            }
+            } waitUntilDone:NO];
+            [eng wakeJSThread];
         });
     };
 
@@ -475,3 +688,33 @@ static NSString *const kWNLogPrefix = @"[WhiteNeedle:JS]";
 }
 
 @end
+
+#pragma mark - Cross-thread main helper (H1 / audit)
+
+BOOL WNIsExternalThreadWaitingOnJSThread(void) {
+    return atomic_load(&s_wnJSThreadExternalWaitCount) > 0;
+}
+
+BOOL WNShouldAvoidSynchronousMainFromJSThread(void) {
+    WNJSEngine *eng = [WNJSEngine sharedEngine];
+    if (!eng) return NO;
+    if (![eng isOnJSThread]) return NO;
+    return WNIsExternalThreadWaitingOnJSThread() || WNIsInvokeMainThreadHopActive();
+}
+
+void WNRunOnMainFromAnyThread(void (^block)(void)) {
+    if (!block) return;
+    if ([NSThread isMainThread]) {
+        block();
+        return;
+    }
+    WNJSEngine *eng = [WNJSEngine sharedEngine];
+    if (eng && WNShouldAvoidSynchronousMainFromJSThread()) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            block();
+            [eng wakeJSThread];
+        });
+        return;
+    }
+    dispatch_sync(dispatch_get_main_queue(), block);
+}

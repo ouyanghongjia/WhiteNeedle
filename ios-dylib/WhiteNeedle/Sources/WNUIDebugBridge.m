@@ -1,15 +1,12 @@
 #import "WNUIDebugBridge.h"
+#import "WNJSEngine.h"
 #import <UIKit/UIKit.h>
 
 static NSString *const kLogPrefix = @"[WNUIDebugBridge]";
 static const NSInteger kHighlightTag = 99887766;
 
 static void wn_runOnMain(void (^block)(void)) {
-    if ([NSThread isMainThread]) {
-        block();
-    } else {
-        dispatch_sync(dispatch_get_main_queue(), block);
-    }
+    WNRunOnMainFromAnyThread(block);
 }
 
 @implementation WNUIDebugBridge

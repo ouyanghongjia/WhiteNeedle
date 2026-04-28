@@ -2,9 +2,11 @@
 #import "WNObjCBridge.h"
 #import "WNTypeConversion.h"
 #import "WNBoxing.h"
+#import "WNJSEngine.h"
 #import "libffi/include/ffi.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
+#import <os/lock.h>
 
 static NSString *const kLogPrefix = @"[WhiteNeedle:Hook]";
 
@@ -105,8 +107,10 @@ static ffi_type *wn_hk_ffi_type(const char *enc) {
 
 static NSMutableDictionary<NSString *, WNHookEntry *> *g_hooks = nil;
 static JSContext *g_hookContext = nil;
+static os_unfair_lock g_wnHookMapLock = OS_UNFAIR_LOCK_INIT;
 static NSMutableSet<NSString *> *g_reentrancyGuard = nil;
 static _Thread_local int g_forwardingDepth = 0;
+static const void *kWNHookForwardedToJSThreadKey = &kWNHookForwardedToJSThreadKey;
 
 @class WNHookEngine;
 @interface WNHookEngine (ForwardDecl)
@@ -122,6 +126,15 @@ static void WNHookClosureCallback(ffi_cif *cif, void *ret, void **args, void *us
     __unsafe_unretained id self_ = *(__unsafe_unretained id *)args[0];
 
     if (g_forwardingDepth > 0) {
+        ffi_call(cif, (void (*)(void))entry.originalIMP, ret, args);
+        return;
+    }
+
+    os_unfair_lock_lock(&g_wnHookMapLock);
+    WNHookEntry *live = g_hooks[entry.selectorKey];
+    BOOL stillInstalled = (live == entry);
+    os_unfair_lock_unlock(&g_wnHookMapLock);
+    if (!stillInstalled) {
         ffi_call(cif, (void (*)(void))entry.originalIMP, ret, args);
         return;
     }
@@ -166,7 +179,9 @@ static void WNHookClosureCallback(ffi_cif *cif, void *ret, void **args, void *us
 }
 
 + (void)registerInContext:(JSContext *)context {
+    os_unfair_lock_lock(&g_wnHookMapLock);
     g_hookContext = context;
+    os_unfair_lock_unlock(&g_wnHookMapLock);
 
     JSValue *interceptor = [JSValue valueWithNewObjectInContext:context];
 
@@ -207,11 +222,15 @@ static void WNHookClosureCallback(ffi_cif *cif, void *ret, void **args, void *us
 }
 
 + (NSArray<NSString *> *)activeHooks {
-    return [g_hooks allKeys];
+    os_unfair_lock_lock(&g_wnHookMapLock);
+    NSArray<NSString *> *keys = [g_hooks.allKeys copy];
+    os_unfair_lock_unlock(&g_wnHookMapLock);
+    return keys;
 }
 
 + (NSArray<NSDictionary *> *)activeHooksDetailed {
     NSMutableArray *result = [NSMutableArray array];
+    os_unfair_lock_lock(&g_wnHookMapLock);
     [g_hooks enumerateKeysAndObjectsUsingBlock:^(NSString *key, WNHookEntry *entry, BOOL *stop) {
         [result addObject:@{
             @"selector": key,
@@ -225,20 +244,31 @@ static void WNHookClosureCallback(ffi_cif *cif, void *ret, void **args, void *us
             @"hasReplacement": @(entry.replacement != nil),
         }];
     }];
+    os_unfair_lock_unlock(&g_wnHookMapLock);
     return result;
 }
 
 + (BOOL)pauseHook:(NSString *)selectorKey {
+    os_unfair_lock_lock(&g_wnHookMapLock);
     WNHookEntry *entry = g_hooks[selectorKey];
-    if (!entry) return NO;
+    if (!entry) {
+        os_unfair_lock_unlock(&g_wnHookMapLock);
+        return NO;
+    }
     entry.paused = YES;
+    os_unfair_lock_unlock(&g_wnHookMapLock);
     return YES;
 }
 
 + (BOOL)resumeHook:(NSString *)selectorKey {
+    os_unfair_lock_lock(&g_wnHookMapLock);
     WNHookEntry *entry = g_hooks[selectorKey];
-    if (!entry) return NO;
+    if (!entry) {
+        os_unfair_lock_unlock(&g_wnHookMapLock);
+        return NO;
+    }
     entry.paused = NO;
+    os_unfair_lock_unlock(&g_wnHookMapLock);
     return YES;
 }
 
@@ -330,12 +360,21 @@ static void WNHookClosureCallback(ffi_cif *cif, void *ret, void **args, void *us
     BOOL isClassMethod;
     if (![self parseSelectorKey:selectorKey className:&className selectorName:&selectorName isClassMethod:&isClassMethod]) {
         NSLog(@"%@ Invalid selector format: %@ (use \"-[Class method:]\")", kLogPrefix, selectorKey);
+        if (context) {
+            context.exception = [JSValue valueWithNewErrorFromMessage:
+                @"Invalid selector key (expected e.g. \"-[Class method:]\" or \"+[Class method:]\")"
+                inContext:context];
+        }
         return;
     }
 
     Class cls = NSClassFromString(className);
     if (!cls) {
         NSLog(@"%@ Class not found: %@", kLogPrefix, className);
+        if (context) {
+            context.exception = [JSValue valueWithNewErrorFromMessage:
+                [NSString stringWithFormat:@"Class not found: %@", className] inContext:context];
+        }
         return;
     }
 
@@ -345,11 +384,11 @@ static void WNHookClosureCallback(ffi_cif *cif, void *ret, void **args, void *us
     Method method = class_getInstanceMethod(targetCls, sel);
     if (!method) {
         NSLog(@"%@ Method not found: %@", kLogPrefix, selectorKey);
+        if (context) {
+            context.exception = [JSValue valueWithNewErrorFromMessage:
+                [NSString stringWithFormat:@"Method not found: %@", selectorKey] inContext:context];
+        }
         return;
-    }
-
-    if (g_hooks[selectorKey]) {
-        [self detachHook:selectorKey];
     }
 
     const char *typeEncoding = method_getTypeEncoding(method);
@@ -360,7 +399,6 @@ static void WNHookClosureCallback(ffi_cif *cif, void *ret, void **args, void *us
                            className, selectorName];
     aliasName = [aliasName stringByReplacingOccurrencesOfString:@":" withString:@"_"];
     SEL aliasSel = NSSelectorFromString(aliasName);
-    class_addMethod(targetCls, aliasSel, originalIMP, typeEncoding);
 
     WNHookEntry *entry = [[WNHookEntry alloc] init];
     entry.selectorKey = selectorKey;
@@ -383,13 +421,26 @@ static void WNHookClosureCallback(ffi_cif *cif, void *ret, void **args, void *us
         entry.onLeave = onLeave;
     }
 
-    if (![self buildClosureForEntry:entry]) {
-        NSLog(@"%@ Failed to create ffi closure, hook aborted: %@", kLogPrefix, selectorKey);
-        return;
+    os_unfair_lock_lock(&g_wnHookMapLock);
+    @try {
+        if (g_hooks[selectorKey]) {
+            [self wn_detachHookUnlockedForKey:selectorKey];
+        }
+        class_addMethod(targetCls, aliasSel, originalIMP, typeEncoding);
+        if (![self buildClosureForEntry:entry]) {
+            NSLog(@"%@ Failed to create ffi closure, hook aborted: %@", kLogPrefix, selectorKey);
+            if (context) {
+                context.exception = [JSValue valueWithNewErrorFromMessage:
+                    [NSString stringWithFormat:@"Failed to build ffi closure for %@", selectorKey]
+                    inContext:context];
+            }
+            return;
+        }
+        g_hooks[selectorKey] = entry;
+        method_setImplementation(method, entry.hookIMP);
+    } @finally {
+        os_unfair_lock_unlock(&g_wnHookMapLock);
     }
-
-    g_hooks[selectorKey] = entry;
-    method_setImplementation(method, entry.hookIMP);
 
     NSLog(@"%@ Hooked: %@ (ffi-closure, re-entrance safe)", kLogPrefix, selectorKey);
 }
@@ -403,12 +454,21 @@ static void WNHookClosureCallback(ffi_cif *cif, void *ret, void **args, void *us
     BOOL isClassMethod;
     if (![self parseSelectorKey:selectorKey className:&className selectorName:&selectorName isClassMethod:&isClassMethod]) {
         NSLog(@"%@ Invalid selector format: %@", kLogPrefix, selectorKey);
+        if (context) {
+            context.exception = [JSValue valueWithNewErrorFromMessage:
+                @"Invalid selector key (expected e.g. \"-[Class method:]\" or \"+[Class method:]\")"
+                inContext:context];
+        }
         return;
     }
 
     Class cls = NSClassFromString(className);
     if (!cls) {
         NSLog(@"%@ Class not found: %@", kLogPrefix, className);
+        if (context) {
+            context.exception = [JSValue valueWithNewErrorFromMessage:
+                [NSString stringWithFormat:@"Class not found: %@", className] inContext:context];
+        }
         return;
     }
 
@@ -418,11 +478,11 @@ static void WNHookClosureCallback(ffi_cif *cif, void *ret, void **args, void *us
     Method method = class_getInstanceMethod(targetCls, sel);
     if (!method) {
         NSLog(@"%@ Method not found: %@", kLogPrefix, selectorKey);
+        if (context) {
+            context.exception = [JSValue valueWithNewErrorFromMessage:
+                [NSString stringWithFormat:@"Method not found: %@", selectorKey] inContext:context];
+        }
         return;
-    }
-
-    if (g_hooks[selectorKey]) {
-        [self detachHook:selectorKey];
     }
 
     const char *typeEncoding = method_getTypeEncoding(method);
@@ -433,7 +493,6 @@ static void WNHookClosureCallback(ffi_cif *cif, void *ret, void **args, void *us
                            className, selectorName];
     aliasName = [aliasName stringByReplacingOccurrencesOfString:@":" withString:@"_"];
     SEL aliasSel = NSSelectorFromString(aliasName);
-    class_addMethod(targetCls, aliasSel, originalIMP, typeEncoding);
 
     WNHookEntry *entry = [[WNHookEntry alloc] init];
     entry.selectorKey = selectorKey;
@@ -447,15 +506,43 @@ static void WNHookClosureCallback(ffi_cif *cif, void *ret, void **args, void *us
     entry.className = className;
     entry.replacement = replacementFn;
 
-    if (![self buildClosureForEntry:entry]) {
-        NSLog(@"%@ Failed to create ffi closure, replace aborted: %@", kLogPrefix, selectorKey);
-        return;
+    os_unfair_lock_lock(&g_wnHookMapLock);
+    @try {
+        if (g_hooks[selectorKey]) {
+            [self wn_detachHookUnlockedForKey:selectorKey];
+        }
+        class_addMethod(targetCls, aliasSel, originalIMP, typeEncoding);
+        if (![self buildClosureForEntry:entry]) {
+            NSLog(@"%@ Failed to create ffi closure, replace aborted: %@", kLogPrefix, selectorKey);
+            if (context) {
+                context.exception = [JSValue valueWithNewErrorFromMessage:
+                    [NSString stringWithFormat:@"Failed to build ffi closure for %@", selectorKey]
+                    inContext:context];
+            }
+            return;
+        }
+        g_hooks[selectorKey] = entry;
+        method_setImplementation(method, entry.hookIMP);
+    } @finally {
+        os_unfair_lock_unlock(&g_wnHookMapLock);
     }
 
-    g_hooks[selectorKey] = entry;
-    method_setImplementation(method, entry.hookIMP);
-
     NSLog(@"%@ Replaced: %@ (ffi-closure, re-entrance safe)", kLogPrefix, selectorKey);
+}
+
+#pragma mark - Detach (g_wnHookMapLock must be held for Unlocked; public methods take the lock)
+
++ (void)wn_detachHookUnlockedForKey:(NSString *)selectorKey {
+    WNHookEntry *te = g_hooks[selectorKey];
+    if (!te) {
+        return;
+    }
+    Method method = class_getInstanceMethod(te.targetClass, te.originalSelector);
+    if (method && te.originalIMP) {
+        method_setImplementation(method, te.originalIMP);
+    }
+    [g_hooks removeObjectForKey:selectorKey];
+    NSLog(@"%@ Detached: %@", kLogPrefix, selectorKey);
 }
 
 #pragma mark - Handle hooked invocation (core logic — unchanged from v2)
@@ -463,8 +550,10 @@ static void WNHookClosureCallback(ffi_cif *cif, void *ret, void **args, void *us
 + (void)handleHookedInvocation:(NSInvocation *)invocation
                           entry:(WNHookEntry *)entry
                          target:(id)target {
+    os_unfair_lock_lock(&g_wnHookMapLock);
     entry.hitCount++;
     entry.lastHitTime = [[NSDate date] timeIntervalSince1970];
+    os_unfair_lock_unlock(&g_wnHookMapLock);
 
     NSString *guardKey = entry.selectorKey;
 
@@ -472,6 +561,65 @@ static void WNHookClosureCallback(ffi_cif *cif, void *ret, void **args, void *us
         [invocation setSelector:entry.aliasSelector];
         [invocation invoke];
         [invocation setSelector:entry.originalSelector];
+        return;
+    }
+
+    JSContext *ctx;
+    os_unfair_lock_lock(&g_wnHookMapLock);
+    ctx = g_hookContext;
+    os_unfair_lock_unlock(&g_wnHookMapLock);
+    NSMethodSignature *sig = entry.methodSignature;
+    const char *methodRetType = sig.methodReturnType;
+    BOOL isVoidReturn = (methodRetType && methodRetType[0] == 'v');
+    BOOL hasReplacement = (entry.replacement && ![entry.replacement isUndefined]);
+    BOOL hasOnEnter = (entry.onEnter && ![entry.onEnter isUndefined]);
+    BOOL hasOnLeave = (entry.onLeave && ![entry.onLeave isUndefined]);
+    BOOL hasJSHookLogic = (hasReplacement || hasOnEnter || hasOnLeave);
+    BOOL alreadyForwarded = [objc_getAssociatedObject(invocation, kWNHookForwardedToJSThreadKey) boolValue];
+    WNJSEngine *engine = [WNJSEngine sharedEngine];
+
+    // Always execute JS hook logic on the dedicated JS thread when possible.
+    // If main thread is currently serving a dispatch_sync(main) from JS invoke, synchronous handoff
+    // would deadlock (main waits JS, JS waits main). In that case:
+    // - void methods: async forward to JS thread
+    // - non-void methods: safely fall back to original implementation
+    if (ctx && hasJSHookLogic && ![engine isOnJSThread] && !alreadyForwarded) {
+        BOOL wouldDeadlock = [NSThread isMainThread] && WNIsInvokeMainThreadHopActive();
+        [invocation retainArguments];
+        objc_setAssociatedObject(invocation, kWNHookForwardedToJSThreadKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+        if (wouldDeadlock) {
+            if (isVoidReturn) {
+                NSInvocation *capturedInvocation = invocation;
+                WNHookEntry *capturedEntry = entry;
+                id capturedTarget = target;
+                [engine performOnJSThread:^{
+                    [WNHookEngine handleHookedInvocation:capturedInvocation
+                                                   entry:capturedEntry
+                                                  target:capturedTarget];
+                } waitUntilDone:NO];
+                // JS thread may be in dispatch_sync(main) or a long runMode; wake so
+                // performSelector/queued hook runs before the next test assertion.
+                [engine wakeJSThread];
+                return;
+            }
+
+            NSLog(@"%@ Skip JS hook on main (avoid deadlock), fallback original: %@",
+                  kLogPrefix, entry.selectorKey);
+            [invocation setSelector:entry.aliasSelector];
+            [invocation invoke];
+            [invocation setSelector:entry.originalSelector];
+            return;
+        }
+
+        NSInvocation *capturedInvocation = invocation;
+        WNHookEntry *capturedEntry = entry;
+        id capturedTarget = target;
+        [engine performOnJSThread:^{
+            [WNHookEngine handleHookedInvocation:capturedInvocation
+                                           entry:capturedEntry
+                                          target:capturedTarget];
+        } waitUntilDone:YES];
         return;
     }
 
@@ -494,8 +642,6 @@ static void WNHookClosureCallback(ffi_cif *cif, void *ret, void **args, void *us
     BOOL aliasInvoked = NO;
 
     @try {
-    NSMethodSignature *sig = entry.methodSignature;
-    JSContext *ctx = g_hookContext;
     if (!ctx) {
         [invocation setSelector:entry.aliasSelector];
         [invocation invoke];
@@ -640,29 +786,30 @@ static void WNHookClosureCallback(ffi_cif *cif, void *ret, void **args, void *us
     }
 }
 
-#pragma mark - Detach
+#pragma mark - Detach (public)
 
 + (void)detachHook:(NSString *)selectorKey {
+    if (!selectorKey) return;
+    os_unfair_lock_lock(&g_wnHookMapLock);
     WNHookEntry *entry = g_hooks[selectorKey];
     if (!entry) {
+        os_unfair_lock_unlock(&g_wnHookMapLock);
         NSLog(@"%@ No hook found for: %@", kLogPrefix, selectorKey);
         return;
     }
-
-    Method method = class_getInstanceMethod(entry.targetClass, entry.originalSelector);
-    if (method && entry.originalIMP) {
-        method_setImplementation(method, entry.originalIMP);
-    }
-
-    [g_hooks removeObjectForKey:selectorKey];
-    NSLog(@"%@ Detached: %@", kLogPrefix, selectorKey);
+    [self wn_detachHookUnlockedForKey:selectorKey];
+    os_unfair_lock_unlock(&g_wnHookMapLock);
 }
 
 + (void)detachAll {
-    NSArray *keys = [g_hooks allKeys];
-    for (NSString *key in keys) {
-        [self detachHook:key];
+    os_unfair_lock_lock(&g_wnHookMapLock);
+    NSArray<NSString *> *keys = [g_hooks allKeys];
+    for (NSString *key in [keys copy]) {
+        if (g_hooks[key]) {
+            [self wn_detachHookUnlockedForKey:key];
+        }
     }
+    os_unfair_lock_unlock(&g_wnHookMapLock);
     NSLog(@"%@ All hooks detached (%lu)", kLogPrefix, (unsigned long)keys.count);
 }
 

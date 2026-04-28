@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <JavaScriptCore/JavaScriptCore.h>
+#import <dispatch/dispatch.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -27,5 +28,11 @@ NS_ASSUME_NONNULL_BEGIN
 + (NSArray<NSString *> *)methodsForClass:(Class)cls isInstance:(BOOL)isInstance;
 
 @end
+
+/// Control which queue executes pure ObjC invocation work inside invoke/getProperty/setProperty.
+/// JSValue conversion always stays on the current JS thread.
+extern void WNSetInvokeTargetQueue(dispatch_queue_t _Nullable queue);
+extern dispatch_queue_t _Nullable WNGetInvokeTargetQueue(void);
+extern BOOL WNIsInvokeMainThreadHopActive(void);
 
 NS_ASSUME_NONNULL_END

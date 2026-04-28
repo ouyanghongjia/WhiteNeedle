@@ -33,6 +33,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 @property (nonatomic, readonly) uint16_t port;
 @property (nonatomic, readonly) BOOL isListening;
+/// Exposed for JSON-RPC category (`WNRemoteServerRPC.m`); not part of the original public contract but required for the split.
+@property (nonatomic, strong, readonly) WNJSEngine *engine;
 
 @end
 

@@ -308,9 +308,10 @@ var WNTest = (function() {
 
                 var pendingAsync = 0;
                 var allDone = false;
+                var isEnumerating = true;
 
                 function checkComplete() {
-                    if (pendingAsync > 0 || allDone) return;
+                    if (isEnumerating || pendingAsync > 0 || allDone) return;
                     allDone = true;
                     finalize();
                 }
@@ -375,7 +376,7 @@ var WNTest = (function() {
                         }
 
                         if (isAsync) {
-                            (function(testCase, asserts, assertObj, start, timeoutMs, grp) {
+                            (function(testCase, asserts, assertObj, start, timeoutMs, grp, groupRpt) {
                                 pendingAsync++;
                                 var settled = false;
                                 var timerId = setTimeout(function() {
@@ -386,7 +387,7 @@ var WNTest = (function() {
                                         message: 'TIMEOUT',
                                         detail: 'exceeded ' + timeoutMs + 'ms'
                                     });
-                                    finishCase(testCase, asserts, start, grp, groupReport);
+                                    finishCase(testCase, asserts, start, grp, groupRpt);
                                     pendingAsync--;
                                     checkComplete();
                                 }, timeoutMs);
@@ -396,7 +397,7 @@ var WNTest = (function() {
                                         if (settled) return;
                                         settled = true;
                                         clearTimeout(timerId);
-                                        finishCase(testCase, asserts, start, grp, groupReport);
+                                        finishCase(testCase, asserts, start, grp, groupRpt);
                                         pendingAsync--;
                                         checkComplete();
                                     });
@@ -409,12 +410,12 @@ var WNTest = (function() {
                                             message: 'EXCEPTION',
                                             detail: e.message || String(e)
                                         });
-                                        finishCase(testCase, asserts, start, grp, groupReport);
+                                        finishCase(testCase, asserts, start, grp, groupRpt);
                                         pendingAsync--;
                                         checkComplete();
                                     }
                                 }
-                            })(tc, assertions, assert, caseStart, timeout, group);
+                            })(tc, assertions, assert, caseStart, timeout, group, groupReport);
                         } else {
                             try {
                                 tc.fn(assert);
@@ -502,9 +503,8 @@ var WNTest = (function() {
                     });
                 }
 
-                if (pendingAsync === 0) {
-                    finalize();
-                }
+                isEnumerating = false;
+                checkComplete();
 
                 return report;
             }

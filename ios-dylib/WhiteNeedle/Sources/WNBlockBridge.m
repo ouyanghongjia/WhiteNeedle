@@ -4,8 +4,10 @@
 #import "WNBoxing.h"
 #import "WNTypeConversion.h"
 #import "WNObjCBridge.h"
+#import "WNJSEngine.h"
 #import <objc/runtime.h>
 #import <CoreGraphics/CoreGraphics.h>
+#import <dispatch/dispatch.h>
 
 static NSString *const kLogPrefix = @"[WhiteNeedle:Block]";
 
@@ -1659,6 +1661,65 @@ static void *jsValueToRawReturn(JSValue *result, char retType) {
         free(argBuf);
     }
 
+    // Callback blocks (and especially UI completion handlers) are usually meant to run on the main
+    // queue. The JS/Hook path often invokes from the dedicated WhiteNeedle JS thread; calling the
+    // block here without a main hop breaks UIKit (Main Thread Checker) and can crash the layout
+    // engine. Always invoke on the main queue when not already on the main thread.
+    const char *retType = sig.methodReturnType;
+    BOOL isVoid = (retType[0] == 'v');
+
+    if (![NSThread isMainThread]) {
+        if (WNShouldAvoidSynchronousMainFromJSThread()) {
+            WNJSEngine *eng = [WNJSEngine sharedEngine];
+            if (isVoid) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    @try {
+                        [invocation invoke];
+                    } @catch (NSException *e) {
+                        NSLog(@"%@ Block invoke on main (async) exception: %@", kLogPrefix, e);
+                    } @finally {
+                        [eng wakeJSThread];
+                    }
+                });
+                [eng wakeJSThread];
+                return [JSValue valueWithUndefinedInContext:context];
+            }
+            NSLog(@"%@ Skip block callback with return value: cannot dispatch_sync to main (avoid Main↔JS deadlock)",
+                  kLogPrefix);
+            return [JSValue valueWithNullInContext:context];
+        }
+        if (isVoid) {
+            @try {
+                WNRunOnMainFromAnyThread(^{ [invocation invoke]; });
+            } @catch (NSException *e) {
+                NSLog(@"%@ Block invocation exception: %@", kLogPrefix, e);
+                return [JSValue valueWithNullInContext:context];
+            }
+            return [JSValue valueWithUndefinedInContext:context];
+        }
+
+        NSUInteger retSize = sig.methodReturnLength;
+        void *retBuf = (retSize > 0) ? calloc(1, retSize) : NULL;
+        if (!retBuf && retSize > 0) {
+            return [JSValue valueWithNullInContext:context];
+        }
+        @try {
+            WNRunOnMainFromAnyThread(^{
+                [invocation invoke];
+                if (retBuf) {
+                    [invocation getReturnValue:retBuf];
+                }
+            });
+        } @catch (NSException *e) {
+            if (retBuf) free(retBuf);
+            NSLog(@"%@ Block invocation exception: %@", kLogPrefix, e);
+            return [JSValue valueWithNullInContext:context];
+        }
+        JSValue *result = [WNTypeConversion convertToJSValue:retBuf typeEncoding:retType inContext:context];
+        if (retBuf) free(retBuf);
+        return result;
+    }
+
     @try {
         [invocation invoke];
     } @catch (NSException *e) {
@@ -1666,8 +1727,7 @@ static void *jsValueToRawReturn(JSValue *result, char retType) {
         return [JSValue valueWithNullInContext:context];
     }
 
-    const char *retType = sig.methodReturnType;
-    if (retType[0] == 'v') {
+    if (isVoid) {
         return [JSValue valueWithUndefinedInContext:context];
     }
 

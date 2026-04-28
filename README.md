@@ -6,7 +6,7 @@ WhiteNeedle is an iOS dynamic scripting engine built on **JavaScriptCore**. It e
 
 | Path | Description |
 |------|-------------|
-| `ios-dylib/` | WhiteNeedle framework source and `Makefile` |
+| `ios-dylib/` | WhiteNeedle framework source, `Makefile`, and built-in JS in `WhiteNeedle/BuiltinModules/*.js` (single copy; no `lib/` duplicate) |
 | `ios-example/` | Example Xcode app (CocoaPods) for local debugging |
 | `docs/` | JavaScript API reference (Markdown) |
 | `vscode-extension/` | VS Code / Cursor extension (TypeScript) |

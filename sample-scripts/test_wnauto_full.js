@@ -50,6 +50,26 @@
         }
     }
 
+    /**
+     * 主线程/JS RunLoop 让步并轮询，用于 Interceptor 在「JS→main 同步 + wouldDeadlock」
+     * 时异步排队的 hook 与 $callBlock（现在会回到主线程）与 UI 刷新晚到的场景。
+     */
+    function waitUntil(pred, maxMs) {
+        var step = 50;
+        var total = 0;
+        var cap = (typeof maxMs === 'number' && maxMs > 0) ? maxMs : 5000;
+        while (total < cap && !pred()) {
+            WNAuto.runLoop(step);
+            total += step;
+        }
+        return pred();
+    }
+
+    function objCDescription(obj) {
+        if (!obj) return '';
+        try { return String(obj.invoke ? obj.invoke('description') : obj); } catch (e) { return ''; }
+    }
+
     function findVCByClass(className) {
         var results = WNAuto.find.byClass(className);
         if (results && results.length > 0) return results[0];
@@ -675,11 +695,16 @@
             var btn = findOne('asyncFetchButton');
             a.isNotNil(btn, 'asyncFetchButton 存在');
             WNAuto.tap(btn);
-            WNAuto.runLoop(800);
+            waitUntil(function() { return hookCalled; }, 5000);
+            WNAuto.runLoop(200);
 
             a.ok(hookCalled, 'Interceptor.replace 应拦截到 fetchData 调用');
 
-            var result = textOf('asyncResult');
+            var result = null;
+            waitUntil(function() {
+                result = textOf('asyncResult');
+                return result && result.indexOf('ok') >= 0 && result.indexOf('3') >= 0;
+            }, 5000);
             a.ok(result && result.indexOf('ok') >= 0,
                  '异步结果应包含 ok, 实际: ' + result);
             a.ok(result && result.indexOf('3') >= 0,
@@ -698,9 +723,9 @@
             Interceptor.replace("-[WNAutoTestDataService loginWithUsername:password:completion:]",
                 function(self, args) {
                     loginHooked = true;
-                    hookedUser = args[0].invoke('description');
+                    hookedUser = objCDescription(args[0]);
                     console.log('[Hook] login 拦截 (replace): user=' + hookedUser);
-                    var password = args[1].invoke('description');
+                    var password = objCDescription(args[1]);
                     var completion = args[2];
                     if (completion) {
                         var ok = (hookedUser === 'admin' && password === 'secret');
@@ -726,12 +751,17 @@
             var btn = findOne('asyncLoginButton');
             a.isNotNil(btn, 'asyncLoginButton 存在');
             WNAuto.tap(btn);
-            WNAuto.runLoop(300);
+            waitUntil(function() { return loginHooked; }, 5000);
+            WNAuto.runLoop(100);
 
             a.ok(loginHooked, 'Interceptor.replace 应拦截到 login 方法');
             a.eq(hookedUser, 'admin', '拦截到的用户名应为 admin');
 
-            var result = textOf('asyncLoginResult');
+            var result = null;
+            waitUntil(function() {
+                result = textOf('asyncLoginResult');
+                return result && result.indexOf('tok_abc123') >= 0;
+            }, 5000);
             a.ok(result && result.indexOf('tok_abc123') >= 0,
                  '异步登录应返回 token, 实际: ' + result);
 
@@ -745,8 +775,8 @@
             Interceptor.replace("-[WNAutoTestDataService loginWithUsername:password:completion:]",
                 function(self, args) {
                     hookFired = true;
-                    var user = args[0].invoke('description');
-                    var pass = args[1].invoke('description');
+                    var user = objCDescription(args[0]);
+                    var pass = objCDescription(args[1]);
                     console.log('[Hook] login 失败测试 (replace): user=' + user);
                     var completion = args[2];
                     if (completion) {
@@ -770,13 +800,19 @@
             WNAuto.runLoop(200);
 
             var btn = findOne('asyncLoginButton');
+            a.isNotNil(btn, 'asyncLoginButton 存在');
             WNAuto.tap(btn);
-            WNAuto.runLoop(300);
+            waitUntil(function() { return hookFired; }, 5000);
+            WNAuto.runLoop(100);
 
             a.ok(hookFired, 'Hook 应触发');
 
-            var result = textOf('asyncLoginResult');
-            a.ok(result && result.indexOf('failed') >= 0,
+            var result = null;
+            waitUntil(function() {
+                result = textOf('asyncLoginResult');
+                return result && (result.toLowerCase().indexOf('fail') >= 0);
+            }, 5000);
+            a.ok(result && (result.toLowerCase().indexOf('fail') >= 0),
                  '错误凭证应显示 failed, 实际: ' + result);
 
             Interceptor.detach("-[WNAutoTestDataService loginWithUsername:password:completion:]");

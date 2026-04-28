@@ -9,11 +9,102 @@
 #import <malloc/malloc.h>
 #import <mach/mach.h>
 #import <mach/vm_map.h>
+#import <pthread/pthread.h>
+#import <stdatomic.h>
 #if __has_feature(ptrauth_calls)
 #import <ptrauth.h>
 #endif
 
 static NSString *const kLogPrefix = @"[WhiteNeedle:ObjC]";
+// Remove the old line:
+// static _Thread_local dispatch_queue_t _wnInvokeTargetQueue = NULL;
+
+static pthread_key_t _wnQueueKey;
+static atomic_int _wnInvokeMainHopCounter = 0;
+static void _wnQueueDestructor(void *queue) {
+    if (queue) {
+        // Transfer ownership back so release occurs
+        (void)(__bridge_transfer dispatch_queue_t)queue;
+    }
+}
+static void _wnInitQueueKey(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        pthread_key_create(&_wnQueueKey, _wnQueueDestructor);
+    });
+}
+
+void WNSetInvokeTargetQueue(dispatch_queue_t queue) {
+    _wnInitQueueKey();
+    // Remove old value (if any) — will be released by destructor when thread exits,
+    // but if we overwrite, we need to release the old one now.
+    void *old = pthread_getspecific(_wnQueueKey);
+    if (old) {
+        // Transfer ownership back to release it
+        (void)(__bridge_transfer dispatch_queue_t)old;
+    }
+    if (queue) {
+        // Transfer ownership to the key (retain)
+        pthread_setspecific(_wnQueueKey, (__bridge_retained void *)queue);
+    } else {
+        pthread_setspecific(_wnQueueKey, NULL);
+    }
+}
+
+dispatch_queue_t WNGetInvokeTargetQueue(void) {
+    _wnInitQueueKey();
+    void *ptr = pthread_getspecific(_wnQueueKey);
+    if (ptr) {
+        // No transfer, just bridge (no retain/release)
+        return (__bridge dispatch_queue_t)ptr;
+    }
+    return NULL;
+}
+
+BOOL WNIsInvokeMainThreadHopActive(void) {
+    return atomic_load(&_wnInvokeMainHopCounter) > 0;
+}
+
+/// When TLS names a target queue, ObjC work (invoke / KVC) must run *on* that queue, not "whenever
+/// the pointer matches" — the old `WNGetInvokeTargetQueue() == queue` was always true at call sites
+/// and skipped dispatch entirely, so UI ran on the JS thread.
+static BOOL WNShouldDispatchToTargetQueue(dispatch_queue_t targetQueue) {
+    if (!targetQueue) {
+        return NO; // no preferred queue: run on current thread (e.g. legacy)
+    }
+    if (targetQueue == dispatch_get_main_queue()) {
+        // TLS can hold `main` while the JS thread is executing; still must hop to the main thread.
+        return ![NSThread isMainThread];
+    }
+    // Global / custom queues: do not use pointer identity with TLS — that also skipped all hops.
+    // `dispatch_sync` to a global queue runs the block on a pool thread; avoid only serial self-sync
+    // if you later set a per-queue specific (not used here).
+    return YES;
+}
+
+/// UIKit/CoreAnimation objects must be touched on main thread even when invoke target queue is
+/// temporarily cleared (e.g. `dispatch.none` used for JS run-loop pumping).
+static BOOL WNObjectRequiresMainThread(id target) {
+    if (!target) return NO;
+
+    static Class UIViewCls = Nil;
+    static Class UIViewControllerCls = Nil;
+    static Class CALayerCls = Nil;
+    static Class UIGestureRecognizerCls = Nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        UIViewCls = NSClassFromString(@"UIView");
+        UIViewControllerCls = NSClassFromString(@"UIViewController");
+        CALayerCls = NSClassFromString(@"CALayer");
+        UIGestureRecognizerCls = NSClassFromString(@"UIGestureRecognizer");
+    });
+
+    if (UIViewCls && [target isKindOfClass:UIViewCls]) return YES;
+    if (UIViewControllerCls && [target isKindOfClass:UIViewControllerCls]) return YES;
+    if (CALayerCls && [target isKindOfClass:CALayerCls]) return YES;
+    if (UIGestureRecognizerCls && [target isKindOfClass:UIGestureRecognizerCls]) return YES;
+    return NO;
+}
 
 /// Best-effort checks before treating `addr` as an ObjC object pointer (no objc_msgSend / object_getClass).
 /// - Pointer-aligned, lies in a VM region with VM_PROT_READ
@@ -182,12 +273,47 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
         WNObjCProxy *p = weakProxy;
         if (!p || !p.target) return [JSValue valueWithNullInContext:[JSContext currentContext]];
         JSContext *ctx = [JSContext currentContext];
+        dispatch_queue_t targetQueue = WNGetInvokeTargetQueue();
+        if (!targetQueue && ![NSThread isMainThread] && WNObjectRequiresMainThread(p.target)) {
+            NSLog(@"%@ Main-thread enforced for getProperty %@ on %@ (invoke target queue is nil)",
+                  kLogPrefix, propertyName, NSStringFromClass([p.target class]));
+            targetQueue = dispatch_get_main_queue();
+        }
+
+        BOOL shouldDispatch = WNShouldDispatchToTargetQueue(targetQueue);
+        __block id value = nil;
+        __block NSException *capturedException = nil;
+
+        void (^getValueBlock)(void) = ^{
+            @try {
+                value = [p.target valueForKey:propertyName];
+            } @catch (NSException *e) {
+                capturedException = e;
+            }
+        };
+
+        if (shouldDispatch) {
+            BOOL mainHop = (targetQueue == dispatch_get_main_queue());
+            if (mainHop) atomic_fetch_add(&_wnInvokeMainHopCounter, 1);
+            dispatch_sync(targetQueue, getValueBlock);
+            if (mainHop) atomic_fetch_sub(&_wnInvokeMainHopCounter, 1);
+        } else {
+            getValueBlock();
+        }
+
+        if (capturedException) {
+            NSLog(@"%@ getProperty error: %@", kLogPrefix, capturedException);
+            NSString *msg = [NSString stringWithFormat:@"%@: %@", capturedException.name, capturedException.reason ?: @""];
+            ctx.exception = [JSValue valueWithNewErrorFromMessage:msg inContext:ctx];
+            return [JSValue valueWithUndefinedInContext:ctx];
+        }
 
         @try {
-            id value = [p.target valueForKey:propertyName];
             return [WNTypeConversion objcObjectToJSValue:value inContext:ctx];
         } @catch (NSException *e) {
             NSLog(@"%@ getProperty error: %@", kLogPrefix, e);
+            NSString *msg = [NSString stringWithFormat:@"%@: %@", e.name, e.reason ?: @""];
+            ctx.exception = [JSValue valueWithNewErrorFromMessage:msg inContext:ctx];
             return [JSValue valueWithUndefinedInContext:ctx];
         }
     };
@@ -195,11 +321,39 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
     jsProxy[@"setProperty"] = ^(NSString *propertyName, JSValue *value) {
         WNObjCProxy *p = weakProxy;
         if (!p || !p.target) return;
+        JSContext *setCtx = [JSContext currentContext];
+        dispatch_queue_t targetQueue = WNGetInvokeTargetQueue();
+        if (!targetQueue && ![NSThread isMainThread] && WNObjectRequiresMainThread(p.target)) {
+            NSLog(@"%@ Main-thread enforced for setProperty %@ on %@ (invoke target queue is nil)",
+                  kLogPrefix, propertyName, NSStringFromClass([p.target class]));
+            targetQueue = dispatch_get_main_queue();
+        }
+        BOOL shouldDispatch = WNShouldDispatchToTargetQueue(targetQueue);
         @try {
             id obj = [WNTypeConversion jsValueToObjCObject:value];
-            [p.target setValue:obj forKey:propertyName];
+            __block NSException *capturedException = nil;
+            void (^setValueBlock)(void) = ^{
+                @try {
+                    [p.target setValue:obj forKey:propertyName];
+                } @catch (NSException *e) {
+                    capturedException = e;
+                }
+            };
+            if (shouldDispatch) {
+                BOOL mainHop = (targetQueue == dispatch_get_main_queue());
+                if (mainHop) atomic_fetch_add(&_wnInvokeMainHopCounter, 1);
+                dispatch_sync(targetQueue, setValueBlock);
+                if (mainHop) atomic_fetch_sub(&_wnInvokeMainHopCounter, 1);
+            } else {
+                setValueBlock();
+            }
+            if (capturedException) {
+                @throw capturedException;
+            }
         } @catch (NSException *e) {
             NSLog(@"%@ setProperty error: %@", kLogPrefix, e);
+            NSString *msg = [NSString stringWithFormat:@"%@: %@", e.name, e.reason ?: @""];
+            setCtx.exception = [JSValue valueWithNewErrorFromMessage:msg inContext:setCtx];
         }
     };
 
@@ -258,6 +412,8 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
 
     if (![target respondsToSelector:selector]) {
         NSLog(@"%@ Selector not found: %@ on %@", kLogPrefix, selectorString, target);
+        NSString *msg = [NSString stringWithFormat:@"Selector not found: %@ on %@", selectorString, target];
+        context.exception = [JSValue valueWithNewErrorFromMessage:msg inContext:context];
         return [JSValue valueWithUndefinedInContext:context];
     }
     
@@ -265,6 +421,8 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
 
     if (!sig) {
         NSLog(@"%@ Cannot get method signature for: %@", kLogPrefix, selectorString);
+        NSString *msg = [NSString stringWithFormat:@"Cannot get method signature for: %@", selectorString];
+        context.exception = [JSValue valueWithNewErrorFromMessage:msg inContext:context];
         return [JSValue valueWithUndefinedInContext:context];
     }
 
@@ -273,10 +431,6 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
     [invocation setSelector:selector];
     [invocation retainArguments];
     
-    if ([selectorString isEqualToString:@"setContentOffset:animated:"]) {
-        NSLog(@"");
-    }
-
     for (NSUInteger i = 0; i < jsArgs.count && (i + 2) < sig.numberOfArguments; i++) {
         const char *argType = [sig getArgumentTypeAtIndex:i + 2];
         NSUInteger argSize = 0;
@@ -331,23 +485,54 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
         free(argBuf);
     }
 
-    @try {
-        [invocation invoke];
-    } @catch (NSException *exception) {
-        NSLog(@"%@ Invocation exception for %@: %@ — %@", kLogPrefix, selectorString, exception.name, exception.reason);
-        NSString *msg = [NSString stringWithFormat:@"%@: %@", exception.name, exception.reason ?: @""];
-        context.exception = [JSValue valueWithNewErrorFromMessage:msg inContext:context];
-        return [JSValue valueWithUndefinedInContext:context];
-    }
-
     const char *retType = sig.methodReturnType;
-    if (retType[0] == 'v') {
+    NSUInteger retSize = sig.methodReturnLength;
+    void *retBuf = (retType[0] == 'v' || retSize == 0) ? NULL : calloc(1, retSize);
+    dispatch_queue_t targetQueue = WNGetInvokeTargetQueue();
+    if (!targetQueue && ![NSThread isMainThread] && !isClass && WNObjectRequiresMainThread(target)) {
+        NSLog(@"%@ Main-thread enforced for invoke %@ on %@ (invoke target queue is nil)",
+              kLogPrefix, selectorString, NSStringFromClass([target class]));
+        targetQueue = dispatch_get_main_queue();
+    }
+    BOOL shouldDispatch = WNShouldDispatchToTargetQueue(targetQueue);
+    __block NSException *capturedException = nil;
+
+    void (^invokeBlock)(void) = ^{
+        @try {
+            [invocation invoke];
+            if (retBuf) {
+                [invocation getReturnValue:retBuf];
+            }
+        } @catch (NSException *exception) {
+            capturedException = exception;
+        }
+    };
+
+    if (shouldDispatch) {
+        BOOL mainHop = (targetQueue == dispatch_get_main_queue());
+        if (mainHop) atomic_fetch_add(&_wnInvokeMainHopCounter, 1);
+        dispatch_sync(targetQueue, invokeBlock);
+        if (mainHop) atomic_fetch_sub(&_wnInvokeMainHopCounter, 1);
+    } else {
+        invokeBlock();
+    }
+
+    if (capturedException) {
+        NSLog(@"%@ Invocation exception for %@: %@ — %@", kLogPrefix, selectorString, capturedException.name, capturedException.reason);
+        NSString *msg = [NSString stringWithFormat:@"%@: %@", capturedException.name, capturedException.reason ?: @""];
+        context.exception = [JSValue valueWithNewErrorFromMessage:msg inContext:context];
+        if (retBuf) free(retBuf);
         return [JSValue valueWithUndefinedInContext:context];
     }
 
-    NSUInteger retSize = sig.methodReturnLength;
-    void *retBuf = calloc(1, retSize);
-    [invocation getReturnValue:retBuf];
+    if (retType[0] == 'v') {
+        if (retBuf) free(retBuf);
+        return [JSValue valueWithUndefinedInContext:context];
+    }
+
+    if (!retBuf) {
+        return [JSValue valueWithUndefinedInContext:context];
+    }
 
     // Auto-wrap returned ObjC objects as proxies
     if (retType[0] == '@') {

@@ -37,10 +37,26 @@ var WNAuto = (function() {
         return ObjC.instance(viewOrAddress);
     }
 
+    // On the dedicated JS thread, avoid NSThread sleep: it does not run that thread's run loop, so
+    // performSelector:onThread: (used to re-enter the JS engine) would stall until sleep ends.
     function sleep(ms) {
-        var runLoop = ObjC.use('NSRunLoop').invoke('currentRunLoop');
-        var date = ObjC.use('NSDate').invoke('dateWithTimeIntervalSinceNow:', [ms / 1000.0]);
-        runLoop.invoke('runUntilDate:', [date]);
+        var s = Math.max(0, +ms) / 1000.0;
+        if (typeof __wnRunLoopSleep === 'function') {
+            __wnRunLoopSleep(Math.max(0, +ms));
+            return;
+        }
+        var run = function() {
+            var end = ObjC.use('NSDate').invoke('dateWithTimeIntervalSinceNow:', [s]);
+            ObjC.use('NSRunLoop').invoke('currentRunLoop').invoke('runUntilDate:', [end]);
+        };
+
+        // Let JS-thread run loop pump pending performSelector tasks (e.g. async hook forwarding)
+        // instead of always hopping ObjC calls to main queue.
+        if (typeof dispatch !== "undefined" && dispatch.none) {
+            dispatch.none(run);
+            return;
+        }
+        run();
     }
 
     function runLoop(ms) {

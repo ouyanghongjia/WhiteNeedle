@@ -24,6 +24,20 @@ jobs:
       - run: npm run build
       - run: npm test
 
+  js-builtin-modules:
+    name: BuiltinModules JS 存在性检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/verify-builtin-modules.sh
+
+  ios-dylib:
+    name: iOS dylib — Build
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C ios-dylib
+
   vscode-extension:
     name: VS Code Extension — Build & Test
     runs-on: ubuntu-latest

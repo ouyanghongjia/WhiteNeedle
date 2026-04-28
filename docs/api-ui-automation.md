@@ -448,8 +448,8 @@ suite.run();
 connect
 
 # 2. 加载测试框架
-load_script name="wn-test" code="<lib/wn-test.js 内容>"
-load_script name="wn-auto" code="<lib/wn-auto.js 内容>"
+load_script name="wn-test" code="<ios-dylib/WhiteNeedle/BuiltinModules/wn-test.js 内容>"
+load_script name="wn-auto" code="<ios-dylib/WhiteNeedle/BuiltinModules/wn-auto.js 内容>"
 
 # 3. 加载并运行测试
 load_script name="my-test" code="<测试脚本内容>"

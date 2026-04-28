@@ -12,6 +12,7 @@ set -euo pipefail
 #   - cocoapods/WhiteNeedle/          # CocoaPods private pod (framework distribution)
 #   - sample-scripts/                 # example scripts for users
 #   - test-scripts/                   # API stability tests, not for distribution
+#   - builtin-js/                     # 内置 JS 源码副本（来自 ios-dylib/.../BuiltinModules，单一来源）
 #   - docs/                           # API & usage documentation
 #   - README.md                       # distribution guide
 #
@@ -193,6 +194,10 @@ mkdir -p "$POD_DIR"
 # Copy framework and podspec
 cp -R "$DIST_DIR/WhiteNeedle.framework" "$POD_DIR/WhiteNeedle.framework"
 
+# Builtin JS → WhiteNeedleBuiltins.bundle（与 ios-dylib 源码 Pod 一致，供 require('wn-test') 等）
+mkdir -p "$POD_DIR/BuiltinModules"
+cp "$ROOT_DIR/ios-dylib/WhiteNeedle/BuiltinModules/"*.js "$POD_DIR/BuiltinModules/"
+
 cat > "$POD_DIR/WhiteNeedle.podspec" <<'PODSPEC'
 Pod::Spec.new do |s|
   s.name             = 'WhiteNeedle'
@@ -220,6 +225,11 @@ Pod::Spec.new do |s|
 
   # ── Binary distribution ─────────────────────────────────────────────
   s.vendored_frameworks = 'WhiteNeedle.framework'
+
+  # 内置 JS（events / util / wn-test / wn-auto）→ App 内 WhiteNeedleBuiltins.bundle，与 WNModuleLoader 约定一致
+  s.resource_bundles = {
+    'WhiteNeedleBuiltins' => ['BuiltinModules/*.js']
+  }
 
   s.frameworks       = 'Foundation', 'UIKit', 'JavaScriptCore', 'Security', 'WebKit'
   s.libraries        = 'c++', 'sqlite3'
@@ -268,9 +278,19 @@ fi
 log "→ dist/docs/ (api-*.md + USAGE-GUIDE.md + guide-images/)"
 
 # ============================================================================
-# Step 8: Generate dist README
+# Step 8: Copy builtin JS modules (canonical: ios-dylib/WhiteNeedle/BuiltinModules)
 # ============================================================================
-step 8 "Generate distribution README"
+step 8 "Copy builtin JS modules"
+
+BUILTIN_SRC="$ROOT_DIR/ios-dylib/WhiteNeedle/BuiltinModules"
+mkdir -p "$DIST_DIR/builtin-js"
+cp "$BUILTIN_SRC/"*.js "$DIST_DIR/builtin-js/"
+log "→ dist/builtin-js/ ($(ls "$DIST_DIR/builtin-js/"*.js 2>/dev/null | wc -l | tr -d ' ') files)"
+
+# ============================================================================
+# Step 9: Generate dist README
+# ============================================================================
+step 9 "Generate distribution README"
 
 cp "$ROOT_DIR/dist-README.md" "$DIST_DIR/README.md" 2>/dev/null || {
     warn "dist-README.md not found, will be generated separately"
