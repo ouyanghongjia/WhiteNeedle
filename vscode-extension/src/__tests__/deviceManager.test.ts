@@ -178,7 +178,7 @@ describe('DeviceManager', () => {
     });
 
     describe('RPC forwarding', () => {
-        it('loadScript calls bridge and stores last script', async () => {
+        it('loadScript calls bridge with code and name', async () => {
             await dm.connect(makeDevice());
             mockBridgeInstance.callFn.mockResolvedValueOnce({ ok: true });
 
@@ -317,9 +317,10 @@ describe('DeviceManager', () => {
     });
 
     describe('session restore', () => {
-        it('restores last loaded script after reconnect', async () => {
+        it('does not restore last loaded script after reconnect', async () => {
             const device = makeDevice();
             await dm.connect(device);
+            const firstBridge = mockBridgeInstance;
 
             mockBridgeInstance.callFn.mockResolvedValueOnce({});
             await dm.loadScript('hook()', 'hook.js');
@@ -327,10 +328,13 @@ describe('DeviceManager', () => {
             mockBridgeInstance.emit('disconnected');
             await vi.advanceTimersByTimeAsync(1001);
 
-            expect(mockBridgeInstance.callFn).toHaveBeenCalledWith('loadScript', {
-                code: 'hook()',
-                name: 'hook.js',
-            });
+            const firstBridgeLoadScriptCalls = firstBridge.callFn.mock.calls
+                .filter(([method]) => method === 'loadScript');
+            const loadScriptCalls = mockBridgeInstance.callFn.mock.calls
+                .filter(([method]) => method === 'loadScript');
+            expect(firstBridgeLoadScriptCalls).toHaveLength(1);
+            // Reconnect creates a new bridge instance; no auto-replay should happen on it.
+            expect(loadScriptCalls).toHaveLength(0);
         });
     });
 
@@ -424,7 +428,7 @@ describe('DeviceManager', () => {
     });
 
     describe('isConnectedTo consistency', () => {
-        it('BUG: isConnectedTo compares host+port, but connect uses host+enginePort', async () => {
+        it('treats same host+enginePort as same device even if service port changes', async () => {
             // A device discovered via Bonjour might have port=27042 (mDNS service port)
             // but enginePort=27043 (the actual TCP engine port)
             const device = makeDevice({
@@ -445,17 +449,17 @@ describe('DeviceManager', () => {
                 enginePort: 27043,
                 bundleId: 'unknown',
             });
-            // This should logically be the same device (same host, same engine), but isConnectedTo returns false
-            expect(dm.isConnectedTo(samDeviceDiffPort)).toBe(false);
+            // Same host + enginePort should still be considered the same connection target.
+            expect(dm.isConnectedTo(samDeviceDiffPort)).toBe(true);
         });
 
-        it('matches device by host and port correctly', async () => {
+        it('matches fallback identity by host and enginePort correctly', async () => {
             const device = makeDevice({ host: '10.0.0.1', port: 27042, bundleId: 'unknown' });
             await dm.connect(device);
 
             expect(dm.isConnectedTo(makeDevice({ host: '10.0.0.1', port: 27042, bundleId: 'unknown' }))).toBe(true);
             expect(dm.isConnectedTo(makeDevice({ host: '10.0.0.2', port: 27042, bundleId: 'unknown' }))).toBe(false);
-            expect(dm.isConnectedTo(makeDevice({ host: '10.0.0.1', port: 99999, bundleId: 'unknown' }))).toBe(false);
+            expect(dm.isConnectedTo(makeDevice({ host: '10.0.0.1', enginePort: 99999, bundleId: 'unknown' }))).toBe(false);
         });
     });
 

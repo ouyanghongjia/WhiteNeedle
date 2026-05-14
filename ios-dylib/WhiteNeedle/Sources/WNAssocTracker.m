@@ -2,6 +2,7 @@
 #import "fishhook.h"
 #import <objc/runtime.h>
 #import <pthread.h>
+#import <dlfcn.h>
 
 static NSString *const kLogPrefix = @"[WNAssocTracker]";
 
@@ -14,6 +15,7 @@ typedef struct {
 
 static NSMapTable<id, NSMutableArray<NSValue *> *> *sAssocMap;
 static pthread_mutex_t sAssocMutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t sInstallMutex = PTHREAD_MUTEX_INITIALIZER;
 static BOOL sInstalled = NO;
 static BOOL sUseFBFallback = NO;
 
@@ -21,13 +23,31 @@ static BOOL sUseFBFallback = NO;
 
 static void (*orig_setAssocObj)(id object, const void *key, id value, objc_AssociationPolicy policy);
 static void (*orig_removeAssocObjs)(id object);
+static void (*sRuntimeSetAssocObj)(id object, const void *key, id value, objc_AssociationPolicy policy);
+static void (*sRuntimeRemoveAssocObjs)(id object);
+static pthread_once_t sRuntimeLookupOnce = PTHREAD_ONCE_INIT;
 
 #pragma mark - Hook replacements
 
 static _Thread_local BOOL sReentrant = NO;
 
+static void wn_resolveRuntimeAssocFns(void) {
+    sRuntimeSetAssocObj = (void (*)(id, const void *, id, objc_AssociationPolicy))dlsym(RTLD_DEFAULT, "objc_setAssociatedObject");
+    sRuntimeRemoveAssocObjs = (void (*)(id))dlsym(RTLD_DEFAULT, "objc_removeAssociatedObjects");
+}
+
 static void wn_setAssocObj(id object, const void *key, id value, objc_AssociationPolicy policy) {
-    orig_setAssocObj(object, key, value, policy);
+    void (*setAssocFn)(id, const void *, id, objc_AssociationPolicy) = orig_setAssocObj;
+    if (!setAssocFn || setAssocFn == wn_setAssocObj) {
+        pthread_once(&sRuntimeLookupOnce, wn_resolveRuntimeAssocFns);
+        setAssocFn = sRuntimeSetAssocObj;
+    }
+
+    if (!setAssocFn || setAssocFn == wn_setAssocObj) {
+        NSLog(@"%@ objc_setAssociatedObject hook skipped due to invalid original function", kLogPrefix);
+        return;
+    }
+    setAssocFn(object, key, value, policy);
 
     if (!sAssocMap || sReentrant || object_isClass(object)) return;
 
@@ -78,7 +98,17 @@ static void wn_setAssocObj(id object, const void *key, id value, objc_Associatio
 }
 
 static void wn_removeAssocObjs(id object) {
-    orig_removeAssocObjs(object);
+    void (*removeAssocFn)(id) = orig_removeAssocObjs;
+    if (!removeAssocFn || removeAssocFn == wn_removeAssocObjs) {
+        pthread_once(&sRuntimeLookupOnce, wn_resolveRuntimeAssocFns);
+        removeAssocFn = sRuntimeRemoveAssocObjs;
+    }
+
+    if (!removeAssocFn || removeAssocFn == wn_removeAssocObjs) {
+        NSLog(@"%@ objc_removeAssociatedObjects hook skipped due to invalid original function", kLogPrefix);
+        return;
+    }
+    removeAssocFn(object);
 
     if (!sAssocMap || sReentrant || object_isClass(object)) return;
 
@@ -94,12 +124,17 @@ static void wn_removeAssocObjs(id object) {
 @implementation WNAssocTracker
 
 + (void)installIfSafe {
-    if (sInstalled) return;
+    pthread_mutex_lock(&sInstallMutex);
+    if (sInstalled) {
+        pthread_mutex_unlock(&sInstallMutex);
+        return;
+    }
 
     if (NSClassFromString(@"FBAssociationManager")) {
         NSLog(@"%@ FBRetainCycleDetector detected, delegating to FBAssociationManager", kLogPrefix);
         sUseFBFallback = YES;
         sInstalled = YES;
+        pthread_mutex_unlock(&sInstallMutex);
         return;
     }
 
@@ -114,15 +149,21 @@ static void wn_removeAssocObjs(id object) {
     int result = rebind_symbols(rebindings, 2);
     if (result != 0) {
         NSLog(@"%@ rebind_symbols failed: %d", kLogPrefix, result);
+        pthread_mutex_unlock(&sInstallMutex);
         return;
     }
 
     sInstalled = YES;
     NSLog(@"%@ Installed (fishhook)", kLogPrefix);
+    pthread_mutex_unlock(&sInstallMutex);
 }
 
 + (void)uninstall {
-    if (!sInstalled || sUseFBFallback) return;
+    pthread_mutex_lock(&sInstallMutex);
+    if (!sInstalled || sUseFBFallback) {
+        pthread_mutex_unlock(&sInstallMutex);
+        return;
+    }
 
     pthread_mutex_lock(&sAssocMutex);
     [sAssocMap removeAllObjects];
@@ -131,6 +172,7 @@ static void wn_removeAssocObjs(id object) {
 
     sInstalled = NO;
     NSLog(@"%@ Uninstalled", kLogPrefix);
+    pthread_mutex_unlock(&sInstallMutex);
 }
 
 + (BOOL)isInstalled {

@@ -508,6 +508,23 @@ button:disabled { opacity: 0.4; cursor: default; }
 .type-modified .mon-type { color: var(--yellow); } .type-moved .mon-type { color: var(--blue); }
 .type-info { opacity: 0.5; } .type-info .mon-type { opacity: 0.5; }
 
+/* search bar */
+.search-bar { display: flex; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--border); align-items: center; position: sticky; top: 80px; background: var(--bg); z-index: 9; }
+.search-input-wrap { position: relative; flex: 1; min-width: 0; display: flex; align-items: center; }
+.search-input-wrap .search-icon { position: absolute; left: 7px; top: 50%; transform: translateY(-50%); font-size: 12px; opacity: 0.4; pointer-events: none; }
+.search-input-wrap input { width: 100%; background: var(--input-bg); color: var(--input-fg); border: 1px solid var(--input-border); border-radius: 3px; padding: 4px 28px 4px 26px; font-size: 12px; outline: none; }
+.search-input-wrap input:focus { border-color: var(--btn-bg); }
+.search-input-wrap input::placeholder { opacity: 0.45; }
+.search-input-wrap .search-clear { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--fg); font-size: 14px; cursor: pointer; opacity: 0.5; padding: 0 2px; line-height: 1; display: none; }
+.search-input-wrap .search-clear:hover { opacity: 1; }
+.search-input-wrap .search-clear.visible { display: block; }
+.search-match-info { font-size: 10px; opacity: 0.5; flex-shrink: 0; white-space: nowrap; }
+.search-hint { font-size: 10px; opacity: 0.35; padding: 2px 12px; border-bottom: 1px solid var(--border); display: none; }
+.search-hint.visible { display: block; }
+mark.path-hl { background: var(--vscode-editor-findMatchHighlightBackground, rgba(234,92,0,0.33)); color: inherit; padding: 0 1px; border-radius: 2px; }
+.copy-btn { background: none; border: none; cursor: pointer; font-size: 13px; padding: 0 2px; opacity: 0.6; line-height: 1; }
+.copy-btn:hover { opacity: 1; background: none; }
+
 .toast { position: fixed; bottom: 16px; right: 16px; padding: 8px 16px; border-radius: 4px; background: var(--btn-bg); color: var(--btn-fg); z-index: 100; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
 .toast.show { opacity: 1; }
 .toast.error { background: var(--error-fg); }
@@ -528,6 +545,14 @@ ${OVERLAY_HTML}
         <button id="pasteBtn" style="display:none" title="Paste here">📋 Paste</button>
         <button id="uploadBtn">⬆ Upload</button>
         <button id="refreshBtn">↻</button>
+    </div>
+    <div class="search-bar" id="searchBar">
+        <div class="search-input-wrap">
+            <span class="search-icon">🔍</span>
+            <input id="searchInput" type="text" placeholder="Filter files or type absolute path to jump (e.g. /Documents/data)" />
+            <button id="searchClear" class="search-clear" title="Clear">✕</button>
+        </div>
+        <span id="searchMatchInfo" class="search-match-info"></span>
     </div>
     <div id="fileList" class="file-list">
         <div class="empty">Loading…</div>
@@ -596,6 +621,87 @@ let currentPath = '/';
 let currentEntries = [];
 let clipboard = null; // { path, name, isDir, op: 'cut'|'copy' }
 let selectedEntry = null; // { path, name, isDir, size }
+let searchText = '';
+
+const searchInput = document.getElementById('searchInput');
+const searchClear = document.getElementById('searchClear');
+const searchMatchInfo = document.getElementById('searchMatchInfo');
+
+function updateSearchClear() {
+    if (searchClear) {
+        if (searchText) searchClear.classList.add('visible');
+        else searchClear.classList.remove('visible');
+    }
+}
+
+function getFilteredEntries() {
+    if (!searchText) return currentEntries;
+    const lf = searchText.toLowerCase();
+    return currentEntries.filter(e =>
+        e.name.toLowerCase().indexOf(lf) >= 0 || e.path.toLowerCase().indexOf(lf) >= 0
+    );
+}
+
+function highlightName(name, keyword) {
+    if (!keyword) return escH(name);
+    const lower = name.toLowerCase();
+    const kw = keyword.toLowerCase();
+    const idx = lower.indexOf(kw);
+    if (idx < 0) return escH(name);
+    const before = name.substring(0, idx);
+    const match = name.substring(idx, idx + kw.length);
+    const after = name.substring(idx + kw.length);
+    return escH(before) + '<mark class="path-hl">' + escH(match) + '</mark>' + escH(after);
+}
+
+if (searchInput) {
+    searchInput.addEventListener('input', () => {
+        searchText = searchInput.value;
+        updateSearchClear();
+        renderFilteredEntries();
+    });
+    searchInput.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') {
+            ev.preventDefault();
+            const val = searchInput.value.trim();
+            if (val.startsWith('/')) {
+                const pathToGo = val.replace(/\\/+$/, '') || '/';
+                searchInput.value = '';
+                searchText = '';
+                updateSearchClear();
+                navigateTo(pathToGo);
+            }
+        }
+        if (ev.key === 'Escape') {
+            ev.preventDefault();
+            searchInput.value = '';
+            searchText = '';
+            updateSearchClear();
+            renderFilteredEntries();
+            searchInput.blur();
+        }
+    });
+}
+if (searchClear) {
+    searchClear.addEventListener('click', () => {
+        searchText = '';
+        if (searchInput) searchInput.value = '';
+        updateSearchClear();
+        renderFilteredEntries();
+    });
+}
+
+function renderFilteredEntries() {
+    const filtered = getFilteredEntries();
+    if (searchMatchInfo) {
+        if (searchText && currentEntries.length > 0) {
+            searchMatchInfo.textContent = filtered.length + '/' + currentEntries.length;
+        } else {
+            searchMatchInfo.textContent = '';
+        }
+    }
+    renderEntries(filtered, searchText);
+}
 
 function navigateTo(dir) {
     currentPath = dir;
@@ -634,11 +740,11 @@ function updatePasteBtn() {
     }
 }
 
-function renderEntries(entries) {
-    currentEntries = entries;
+function renderEntries(entries, highlight) {
+    if (!highlight) currentEntries = entries;
     const el = document.getElementById('fileList');
     if (!entries || entries.length === 0) {
-        el.innerHTML = '<div class="empty">Empty directory</div>';
+        el.innerHTML = '<div class="empty">' + (highlight ? 'No files match "' + escH(highlight) + '"' : 'Empty directory') + '</div>';
         return;
     }
     el.innerHTML = '';
@@ -657,7 +763,11 @@ function renderEntries(entries) {
 
         const nameSpan = document.createElement('span');
         nameSpan.className = 'name';
-        nameSpan.textContent = e.name;
+        if (highlight) {
+            nameSpan.innerHTML = highlightName(e.name, highlight);
+        } else {
+            nameSpan.textContent = e.name;
+        }
 
         const meta = document.createElement('span');
         meta.className = 'meta';
@@ -665,11 +775,14 @@ function renderEntries(entries) {
 
         const actions = document.createElement('span');
         actions.className = 'actions';
+        const copyBtn = '<button class="copy-btn" title="Copy path" onclick="event.stopPropagation();doCopyPath(this)">📋</button>';
         if (e.isDir) {
-            actions.innerHTML = '<button class="small" title="Download" onclick="event.stopPropagation();doDownloadFolder(this)">⬇</button>'
+            actions.innerHTML = copyBtn
+                + '<button class="small" title="Download" onclick="event.stopPropagation();doDownloadFolder(this)">⬇</button>'
                 + '<button class="small danger" title="Delete" onclick="event.stopPropagation();doDelete(this)">✕</button>';
         } else {
-            actions.innerHTML = '<button class="small" title="Download" onclick="event.stopPropagation();doDownloadFile(this)">⬇</button>'
+            actions.innerHTML = copyBtn
+                + '<button class="small" title="Download" onclick="event.stopPropagation();doDownloadFile(this)">⬇</button>'
                 + '<button class="small danger" title="Delete" onclick="event.stopPropagation();doDelete(this)">✕</button>';
         }
 
@@ -757,6 +870,7 @@ function showContextMenu(x, y, entry) {
     const menu = document.getElementById('ctxMenu');
     const hasCB = !!clipboard;
     let html = '';
+    html += '<div class="ctx-item" data-action="copypath">Copy Path</div>';
     html += '<div class="ctx-item" data-action="rename">Rename<span class="ctx-shortcut">F2</span></div>';
     html += '<div class="ctx-sep"></div>';
     html += '<div class="ctx-item" data-action="cut">Cut<span class="ctx-shortcut">⌘X</span></div>';
@@ -780,7 +894,8 @@ function showContextMenu(x, y, entry) {
         item.addEventListener('click', () => {
             hideContextMenu();
             const a = item.dataset.action;
-            if (a === 'rename') startInlineRename(entry);
+            if (a === 'copypath') { navigator.clipboard.writeText(entry.path).then(() => showToast('Path copied')).catch(() => {}); }
+            else if (a === 'rename') startInlineRename(entry);
             else if (a === 'cut') { clipboard = { path: entry.path, name: entry.name, isDir: entry.isDir, op: 'cut' }; updatePasteBtn(); markCutItems(); showToast('Cut: ' + entry.name); }
             else if (a === 'copy') { clipboard = { path: entry.path, name: entry.name, isDir: entry.isDir, op: 'copy' }; updatePasteBtn(); markCutItems(); showToast('Copied: ' + entry.name); }
             else if (a === 'paste') doPaste();
@@ -874,6 +989,11 @@ function doDelete(btn) {
     const row = btn.closest('.file-row');
     vscode.postMessage({ command: 'deleteEntry', path: row.dataset.path, name: row.dataset.name });
 }
+function doCopyPath(btn) {
+    const row = btn.closest('.file-row');
+    const p = row?.dataset.path;
+    if (p) { navigator.clipboard.writeText(p).then(() => showToast('Path copied')).catch(() => {}); }
+}
 function getIcon(name) {
     const ext = (name.split('.').pop() || '').toLowerCase();
     const m = { plist:'📄', json:'📋', js:'📜', db:'🗃️', sqlite:'🗃️', sqlite3:'🗃️', png:'🖼️', jpg:'🖼️', jpeg:'🖼️', gif:'🖼️', webp:'🖼️', log:'📝', txt:'📝' };
@@ -958,7 +1078,14 @@ function trimLog() { if (monEvents.length > 500) monEvents.length = 500; }
 window.addEventListener('message', e => {
     const msg = e.data;
     switch (msg.command) {
-        case 'dirListed': renderEntries(msg.entries); break;
+        case 'dirListed':
+            currentEntries = msg.entries || [];
+            searchText = '';
+            if (searchInput) searchInput.value = '';
+            updateSearchClear();
+            if (searchMatchInfo) searchMatchInfo.textContent = '';
+            renderEntries(currentEntries);
+            break;
         case 'entryDeleted': navigateTo(currentPath); showToast('Deleted'); break;
         case 'opDone':
             if (msg.clearClipboard) { clipboard = null; updatePasteBtn(); }

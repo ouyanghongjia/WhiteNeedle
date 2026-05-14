@@ -15,6 +15,7 @@
 		1CDB3E96E34424E2103CE142 /* Pods-WhiteNeedleExample.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-WhiteNeedleExample.debug.xcconfig"; path = "Target Support Files/Pods-WhiteNeedleExample/Pods-WhiteNeedleExample.debug.xcconfig"; sourceTree = "<group>"; };
 		29390B36904AA22FE0D89240 /* Pods-WhiteNeedleExample.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-WhiteNeedleExample.release.xcconfig"; path = "Target Support Files/Pods-WhiteNeedleExample/Pods-WhiteNeedleExample.release.xcconfig"; sourceTree = "<group>"; };
 		6CDBE7032F76CDF6006DCC01 /* WhiteNeedleExample.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WhiteNeedleExample.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1C0E301B95A4A6E9D01F001 /* curl.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = curl.framework; path = Frameworks/curl.framework; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -54,6 +55,7 @@
 			isa = PBXGroup;
 			children = (
 				0E2A8719A0EF94B6235F8CC4 /* libPods-WhiteNeedleExample.a */,
+				A1C0E301B95A4A6E9D01F001 /* curl.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -96,8 +98,10 @@
 				6CDBE6FF2F76CDF6006DCC01 /* Sources */,
 				6CDBE7002F76CDF6006DCC01 /* Frameworks */,
 				6CDBE7012F76CDF6006DCC01 /* Resources */,
-				AF8C09A487FF6C483466D6EF /* [WhiteNeedle] Inject Network Permissions */,
+				8E488EA31923F3DB5F042D5D /* [WhiteNeedle] Inject Network Permissions */,
 				39DEEAA3F9914E20E8617141 /* [CP-User] Copy Test Scripts */,
+				A1C0E302B95A4A6E9D01F002 /* [WhiteNeedle] Embed curl.framework */,
+				EFAE4C5AD43FC896C0F644D1 /* [CP] Copy Pods Resources */,
 			);
 			buildRules = (
 			);
@@ -165,7 +169,25 @@
 			shellPath = /bin/sh;
 			shellScript = "rsync -av --delete \"${SRCROOT}/../../test-scripts/\" \"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/test-scripts/\"";
 		};
-		AF8C09A487FF6C483466D6EF /* [WhiteNeedle] Inject Network Permissions */ = {
+		A1C0E302B95A4A6E9D01F002 /* [WhiteNeedle] Embed curl.framework */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "[WhiteNeedle] Embed curl.framework";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ \"${PLATFORM_NAME}\" != \"iphoneos\" ]; then\n  echo \"note: [WhiteNeedle] Skip embedding curl.framework on ${PLATFORM_NAME}\"\n  exit 0\nfi\n\nSRC=\"${SRCROOT}/Frameworks/curl.framework\"\nDST_DIR=\"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}\"\nDST=\"${DST_DIR}/curl.framework\"\n\nif [ ! -d \"$SRC\" ]; then\n  echo \"warning: [WhiteNeedle] curl.framework not found at ${SRC}\"\n  exit 0\nfi\n\nmkdir -p \"$DST_DIR\"\nrsync -a --delete \"$SRC\" \"$DST_DIR/\"\n\nif [ -n \"${EXPANDED_CODE_SIGN_IDENTITY}\" ]; then\n  /usr/bin/codesign --force --sign \"${EXPANDED_CODE_SIGN_IDENTITY}\" --preserve-metadata=identifier,entitlements \"$DST\"\nfi\n\necho \"note: [WhiteNeedle] Embedded curl.framework\"";
+		};
+		8E488EA31923F3DB5F042D5D /* [WhiteNeedle] Inject Network Permissions */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -205,6 +227,23 @@
 			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 			showEnvVarsInLog = 0;
 		};
+		EFAE4C5AD43FC896C0F644D1 /* [CP] Copy Pods Resources */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-WhiteNeedleExample/Pods-WhiteNeedleExample-resources-${CONFIGURATION}-input-files.xcfilelist",
+			);
+			name = "[CP] Copy Pods Resources";
+			outputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-WhiteNeedleExample/Pods-WhiteNeedleExample-resources-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-WhiteNeedleExample/Pods-WhiteNeedleExample-resources.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -228,7 +267,15 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = YK4WKE5WAM;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Frameworks",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Frameworks/curl.framework/Headers",
+				);
 				INFOPLIST_FILE = WhiteNeedleExample/Info.plist;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
@@ -241,6 +288,11 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"-framework",
+					curl,
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.bigwhite.WhiteNeedleExample;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -259,7 +311,15 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = YK4WKE5WAM;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Frameworks",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Frameworks/curl.framework/Headers",
+				);
 				INFOPLIST_FILE = WhiteNeedleExample/Info.plist;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
@@ -272,6 +332,11 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"-framework",
+					curl,
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.bigwhite.WhiteNeedleExample;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;

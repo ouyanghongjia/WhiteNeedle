@@ -35,6 +35,8 @@
   "activationEvents": [
     "onView:whiteneedle-devices",
     "onCommand:whiteneedle.connectByIP",
+    "onCommand:whiteneedle.blockDevice",
+    "onCommand:whiteneedle.manageBlockedTargets",
     "onCommand:whiteneedle.connectDevice",
     "onCommand:whiteneedle.refreshDevices",
     "onCommand:whiteneedle.pushScript",
@@ -111,6 +113,18 @@
         "command": "whiteneedle.connectByIP",
         "title": "Connect by IP Address",
         "icon": "$(plug)",
+        "category": "WhiteNeedle"
+      },
+      {
+        "command": "whiteneedle.blockDevice",
+        "title": "Block This Device/IP",
+        "icon": "$(circle-slash)",
+        "category": "WhiteNeedle"
+      },
+      {
+        "command": "whiteneedle.manageBlockedTargets",
+        "title": "Manage Blocked Devices/IPs",
+        "icon": "$(list-unordered)",
         "category": "WhiteNeedle"
       },
       {
@@ -303,6 +317,11 @@
           "group": "navigation@2"
         },
         {
+          "command": "whiteneedle.manageBlockedTargets",
+          "when": "view == whiteneedle-devices",
+          "group": "navigation@2.5"
+        },
+        {
           "command": "whiteneedle.openPanelsMenu",
           "when": "view == whiteneedle-devices",
           "group": "navigation@3"
@@ -329,6 +348,11 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "whiteneedle.blockDevice",
+          "when": "view == whiteneedle-devices && (viewItem == device || viewItem == connectedDevice)",
+          "group": "inline"
+        },
         {
           "command": "whiteneedle.uninstallModule",
           "when": "view == whiteneedle-modules && viewItem == installedModule",
@@ -471,6 +495,18 @@
           "default": true,
           "description": "Auto-connect to the last device when the extension restarts and the device is found via Bonjour or direct TCP probe"
         },
+        "whiteneedle.blockedHosts": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Blocked device IP list. Discovery, auto-connect, manual Connect by IP, and TCP fallback will refuse these hosts."
+        },
+        "whiteneedle.blockedDeviceIds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Blocked device identity list (deviceId). Discovery, auto-connect, and manual/fallback connection flows will refuse these devices."
+        },
         "whiteneedle.proxyPort": {
           "type": "number",
           "default": 8899,
@@ -485,7 +521,13 @@
           "type": "array",
           "items": { "type": "string" },
           "default": [],
-          "description": "常用面板列表（命令 ID 数组），排列在 Panels 菜单顶部。通过 Panels → 管理常用面板 进行配置"
+          "description": "常用面板列表（命令 ID 数组），排列在 Panels 菜单顶部"
+        },
+        "whiteneedle.hiddenPanels": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "隐藏的面板列表（命令 ID 数组），不在 Panels 菜单中显示"
         }
       }
     }

@@ -23,6 +23,7 @@ NS_ASSUME_NONNULL_BEGIN
  * Notifications (server → client):
  *   console      { level, message }
  *   scriptError  { message }
+ *   nativeLog    { level, message }
  */
 @interface WNRemoteServer : NSObject
 

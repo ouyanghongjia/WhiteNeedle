@@ -8,6 +8,8 @@ export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'rec
 const MAX_RECONNECT_ATTEMPTS = 10;
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 30000;
+const RAPID_DISCONNECT_THRESHOLD_MS = 5000;
+const MAX_RAPID_DISCONNECTS = 3;
 
 export class DeviceManager extends EventEmitter {
     private bridge: TcpBridge | null = null;
@@ -16,10 +18,12 @@ export class DeviceManager extends EventEmitter {
     private reconnectAttempt = 0;
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private lastActiveScripts: string[] = [];
-    private lastLoadedScript: { code: string; name: string } | null = null;
     /** Monotonically increasing id — every connect()/disconnect() bumps this so stale
      *  reconnect chains and lingering bridge event handlers become no-ops. */
     private _epoch = 0;
+    private lastConnectedAt = 0;
+    private rapidDisconnectCount = 0;
+    public shouldReconnect?: (device: WNDevice) => boolean;
 
     constructor(private outputChannel: vscode.OutputChannel) {
         super();
@@ -36,11 +40,14 @@ export class DeviceManager extends EventEmitter {
     isConnectedTo(device: WNDevice): boolean {
         if (!this.connectedDevice) { return false; }
         const c = this.connectedDevice;
+        if (c.deviceId && device.deviceId) {
+            return c.deviceId === device.deviceId;
+        }
         if (c.bundleId && c.bundleId !== 'unknown' && c.deviceName &&
             device.bundleId && device.bundleId !== 'unknown' && device.deviceName) {
             return c.bundleId === device.bundleId && c.deviceName === device.deviceName;
         }
-        return c.host === device.host && c.port === device.port;
+        return c.host === device.host && c.enginePort === device.enginePort;
     }
 
     async connect(device: WNDevice): Promise<void> {
@@ -81,10 +88,15 @@ export class DeviceManager extends EventEmitter {
 
         this.connectedDevice = device;
         this.reconnectAttempt = 0;
+        this.rapidDisconnectCount = 0;
+        this.lastConnectedAt = Date.now();
         this.setState('connected');
 
         const cfg = vscode.workspace.getConfiguration('whiteneedle');
         await cfg.update('deviceHost', device.host, vscode.ConfigurationTarget.Global);
+        if (device.enginePort > 0) {
+            await cfg.update('enginePort', device.enginePort, vscode.ConfigurationTarget.Global);
+        }
 
         if (device.bundleId && device.bundleId !== 'unknown') {
             await cfg.update('lastBundleId', device.bundleId, vscode.ConfigurationTarget.Global);
@@ -113,6 +125,7 @@ export class DeviceManager extends EventEmitter {
             this.reconnectTimer = null;
         }
         this.reconnectAttempt = 0;
+        this.rapidDisconnectCount = 0;
         if (this.bridge) {
             this.bridge.disconnect();
             this.bridge = null;
@@ -133,7 +146,6 @@ export class DeviceManager extends EventEmitter {
             throw new Error('Not connected to any device');
         }
         await this.bridge.call('loadScript', { code, name });
-        this.lastLoadedScript = { code, name };
     }
 
     async unloadScript(name?: string): Promise<void> {
@@ -374,26 +386,6 @@ export class DeviceManager extends EventEmitter {
         return this.bridge;
     }
 
-    private async restoreSessionState(): Promise<void> {
-        if (!this.lastLoadedScript || !this.bridge?.isConnected) {
-            return;
-        }
-        try {
-            const { code, name } = this.lastLoadedScript;
-            this.outputChannel.appendLine(
-                `[DeviceManager] Restoring script "${name}" after reconnect...`
-            );
-            await this.bridge.call('loadScript', { code, name });
-            this.outputChannel.appendLine(
-                `[DeviceManager] Script "${name}" restored`
-            );
-        } catch (err: any) {
-            this.outputChannel.appendLine(
-                `[DeviceManager] Failed to restore script: ${err.message}`
-            );
-        }
-    }
-
     private setState(state: ConnectionState): void {
         if (this._state === state) { return; }
         this._state = state;
@@ -406,6 +398,36 @@ export class DeviceManager extends EventEmitter {
         this.outputChannel.appendLine(
             `[DeviceManager] Unexpected disconnect from ${device.deviceName || device.host}`
         );
+
+        if (this.shouldReconnect && !this.shouldReconnect(device)) {
+            this.outputChannel.appendLine(
+                `[DeviceManager] Reconnect vetoed (device blocked or stale).`
+            );
+            this.teardown();
+            this.setState('disconnected');
+            this.emit('reconnectFailed', device);
+            return;
+        }
+
+        const wasConnected = this._state === 'connected';
+        if (wasConnected) {
+            const now = Date.now();
+            if (now - this.lastConnectedAt < RAPID_DISCONNECT_THRESHOLD_MS) {
+                this.rapidDisconnectCount++;
+            } else {
+                this.rapidDisconnectCount = 0;
+            }
+
+            if (this.rapidDisconnectCount >= MAX_RAPID_DISCONNECTS) {
+                this.outputChannel.appendLine(
+                    `[DeviceManager] Rapid disconnect loop detected (${this.rapidDisconnectCount} connects dropped within ${RAPID_DISCONNECT_THRESHOLD_MS}ms each). Giving up.`
+                );
+                this.teardown();
+                this.setState('disconnected');
+                this.emit('reconnectFailed', device);
+                return;
+            }
+        }
 
         if (this.reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
             this.outputChannel.appendLine(
@@ -461,13 +483,12 @@ export class DeviceManager extends EventEmitter {
 
             this.connectedDevice = device;
             this.reconnectAttempt = 0;
+            this.lastConnectedAt = Date.now();
             this.setState('connected');
 
             this.outputChannel.appendLine(
                 `[DeviceManager] Reconnected to ${device.deviceName || device.host}`
             );
-
-            await this.restoreSessionState();
             this.emit('reconnected', device);
         }, delay);
     }

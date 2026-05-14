@@ -8,6 +8,7 @@
 #import "WNNetworkMonitor.h"
 #import "WNUIDebugBridge.h"
 #import "WNMockInterceptor.h"
+#import "WNNativeLogCapture.h"
 
 @implementation WNRemoteServer (RPC)
 
@@ -317,6 +318,37 @@
             }
         }
         return @{@"modules": modules};
+    }
+
+    if ([method isEqualToString:@"setNativeLogCapture"]) {
+        BOOL enabled = [params[@"enabled"] boolValue];
+        [[WNNativeLogCapture shared] setEnabled:enabled];
+        return @{@"enabled": @(enabled)};
+    }
+
+    if ([method isEqualToString:@"getNativeLogCapture"]) {
+        return @{@"enabled": @([[WNNativeLogCapture shared] isEnabled])};
+    }
+
+    // --- Native Log Session History ---
+
+    if ([method isEqualToString:@"listNativeLogSessions"]) {
+        return @{@"sessions": [[WNNativeLogCapture shared] listSessions]};
+    }
+
+    if ([method isEqualToString:@"readNativeLogSession"]) {
+        NSString *filename = params[@"filename"];
+        if (!filename) return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Missing filename"}];
+        unsigned long long offset = [params[@"offset"] unsignedLongLongValue];
+        NSUInteger limit = params[@"limit"] ? [params[@"limit"] unsignedIntegerValue] : 200;
+        return [[WNNativeLogCapture shared] readSession:filename offset:offset limit:limit];
+    }
+
+    if ([method isEqualToString:@"deleteNativeLogSession"]) {
+        NSString *filename = params[@"filename"];
+        if (!filename) return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Missing filename"}];
+        BOOL ok = [[WNNativeLogCapture shared] deleteSession:filename];
+        return @{@"success": @(ok)};
     }
 
     return [NSError errorWithDomain:@"WN" code:-32601

@@ -345,7 +345,7 @@ export class SQLitePanel {
     button.success { background: var(--success); }
     button.warning { background: var(--warning); color: #000; }
     button.danger { background: var(--error-fg); }
-    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; }
     th { text-align: left; padding: 6px 8px; border-bottom: 2px solid var(--border); font-weight: 600; position: sticky; top: 0; background: var(--bg); z-index: 1; }
     td { padding: 4px 8px; border-bottom: 1px solid var(--border); max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; }
     td.null-val { opacity: 0.4; font-style: italic; }
@@ -392,24 +392,26 @@ export class SQLitePanel {
     body.resizing iframe { pointer-events: none !important; }
 
     /* Detail panel (data view) */
-    .detail-panel { display: flex; flex-direction: column; flex: 1; min-height: 120px; overflow: hidden; border: 1px solid var(--border); margin: 0 12px 8px; border-radius: 4px; }
+    .detail-panel { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 120px; overflow: hidden; border: 1px solid var(--border); margin: 0 12px 8px; border-radius: 4px; }
     .detail-panel.hidden { display: none; }
     .detail-panel.maximized { flex: 1; }
-    .detail-header { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--section-header-bg); border-bottom: 1px solid var(--border); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; flex-shrink: 0; }
+    .detail-header { position: absolute; top: 0; left: 0; right: 0; height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 10px; background: var(--section-header-bg); border-bottom: 1px solid var(--border); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; z-index: 10; }
     .detail-header .detail-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .detail-header .detail-actions { margin-left: auto; display: flex; gap: 4px; }
     .detail-header .detail-actions button { padding: 1px 6px; font-size: 10px; background: transparent; color: var(--fg); border: 1px solid var(--border); opacity: 0.7; line-height: 1.4; }
     .detail-header .detail-actions button:hover { opacity: 1; background: var(--list-hover); }
     .detail-header .detail-actions button.close-btn:hover { background: rgba(244,67,54,0.25); color: var(--error-fg); }
-    .detail-body { flex: 1; overflow-y: auto; padding: 8px 10px; min-height: 0; }
+    .detail-body { position: absolute; top: 28px; left: 0; right: 0; bottom: 0; overflow: hidden; }
+    .detail-body-inner { position: absolute; top: 8px; left: 10px; right: 10px; bottom: 8px; display: flex; flex-direction: column; overflow: hidden; }
 
-    .tab-bar { display: flex; gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 8px; }
+    .tab-bar { display: flex; gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 8px; flex-shrink: 0; }
     .tab { padding: 6px 14px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; font-size: 12px; }
     .tab:hover { background: var(--list-hover); }
     .tab.active { border-bottom-color: var(--btn-bg); font-weight: 600; }
     .tab-content { display: none; }
-    .tab-content.active { display: block; }
-    .query-area { margin-bottom: 8px; position: relative; }
+    .tab-content.active { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+    .tab-content[data-tab-content="monitor"].active { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+    .query-area { margin-bottom: 8px; position: relative; flex-shrink: 0; }
     .query-area textarea { width: 100%; height: 80px; background: var(--input-bg); color: var(--input-fg); border: 1px solid var(--input-border); border-radius: 3px; padding: 6px; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; resize: vertical; }
     .query-hint { font-size: 11px; opacity: 0.45; margin: 2px 0 0; }
     .sql-suggest { display: none; position: absolute; left: 6px; right: 6px; max-height: 200px; overflow-y: auto; background: var(--vscode-editorSuggestWidget-background, var(--vscode-dropdown-background, var(--input-bg))); border: 1px solid var(--vscode-editorSuggestWidget-border, var(--input-border)); border-radius: 3px; z-index: 50; box-shadow: 0 4px 12px rgba(0,0,0,0.3); padding: 2px 0; }
@@ -418,18 +420,40 @@ export class SQLitePanel {
     .sg-opt:hover { background: var(--vscode-list-hoverBackground, rgba(255,255,255,0.06)); }
     .sg-opt.active { background: var(--vscode-editorSuggestWidget-selectedBackground, var(--vscode-list-activeSelectionBackground, #094771)); color: var(--vscode-editorSuggestWidget-selectedForeground, var(--vscode-list-activeSelectionForeground, #fff)); }
     .sg-opt b { font-weight: 700; }
-    .query-toolbar { display: flex; gap: 8px; margin-top: 4px; align-items: center; }
-    .data-scroll { overflow: auto; border: 1px solid var(--border); border-radius: 3px; }
+    .query-toolbar { display: flex; gap: 8px; margin-top: 4px; align-items: center; flex-shrink: 0; }
+    .data-scroll { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--border); border-radius: 3px; }
+    .tab-content[data-tab-content="monitor"] .data-scroll { flex: 1; max-height: none; }
     .diff-section { margin-top: 8px; }
     .diff-added { background: rgba(76, 175, 80, 0.15); }
     .diff-removed { background: rgba(244, 67, 54, 0.15); text-decoration: line-through; }
-    .snapshot-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+    .snapshot-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-shrink: 0; }
     .snapshot-bar input { background: var(--input-bg); color: var(--input-fg); border: 1px solid var(--input-border); border-radius: 3px; padding: 4px 8px; font-size: 12px; width: 150px; }
     #status { margin-left: 8px; font-size: 12px; opacity: 0.7; }
     .toast { position: fixed; bottom: 16px; right: 16px; padding: 8px 16px; border-radius: 4px; background: var(--btn-bg); color: var(--btn-fg); z-index: 100; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
     .toast.show { opacity: 1; }
     .toast.error { background: var(--error-fg); }
     .size-label { font-size: 11px; opacity: 0.6; }
+
+    /* uint64 display toggle */
+    .data-options-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; gap: 12px; flex-shrink: 0; }
+    .uint64-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; opacity: 0.75; cursor: pointer; user-select: none; white-space: nowrap; }
+    .uint64-toggle:hover { opacity: 1; }
+    .uint64-toggle input[type="checkbox"] { margin: 0; cursor: pointer; accent-color: var(--btn-bg); }
+    td.uint64-val { color: var(--vscode-debugTokenExpression-number, #b5cea8); }
+
+    /* Filter & Sort controls */
+    .sidebar-filter-bar { display: flex; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--border); align-items: center; flex-shrink: 0; }
+    .sidebar-filter-bar input { flex: 1; min-width: 0; background: var(--input-bg); color: var(--input-fg); border: 1px solid var(--input-border); border-radius: 3px; padding: 3px 6px 3px 24px; font-size: 12px; outline: none; }
+    .sidebar-filter-bar input:focus { border-color: var(--btn-bg); }
+    .sidebar-filter-bar input::placeholder { opacity: 0.5; }
+    .filter-input-wrap { position: relative; flex: 1; min-width: 0; display: flex; align-items: center; }
+    .filter-input-wrap .filter-icon { position: absolute; left: 6px; top: 50%; transform: translateY(-50%); font-size: 12px; opacity: 0.45; pointer-events: none; }
+    .filter-input-wrap .filter-clear { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--fg); font-size: 14px; cursor: pointer; opacity: 0.5; padding: 0 2px; line-height: 1; display: none; }
+    .filter-input-wrap .filter-clear:hover { opacity: 1; }
+    .filter-input-wrap .filter-clear.visible { display: block; }
+    .sort-select { background: var(--input-bg); color: var(--input-fg); border: 1px solid var(--input-border); border-radius: 3px; padding: 3px 4px; font-size: 11px; cursor: pointer; outline: none; flex-shrink: 0; max-width: 110px; }
+    .sort-select:focus { border-color: var(--btn-bg); }
+    .filter-match-info { font-size: 10px; opacity: 0.5; flex-shrink: 0; white-space: nowrap; }
 ${OVERLAY_CSS}
 </style>
 </head>
@@ -437,6 +461,7 @@ ${OVERLAY_CSS}
 ${OVERLAY_HTML}
 <div class="toolbar">
     <button id="discoverBtn">Discover Databases</button>
+    <button id="refreshBtn" title="Refresh: re-scan databases and clear all cached data" disabled>↻ Refresh</button>
     <span id="status"></span>
 </div>
 <div class="split-container" id="splitContainer">
@@ -448,6 +473,24 @@ ${OVERLAY_HTML}
             <div class="section-actions">
                 <button id="sidebarCollapseBtn" title="Collapse database list">&#9472;</button>
             </div>
+        </div>
+        <div class="sidebar-filter-bar" id="sidebarFilterBar">
+            <div class="filter-input-wrap">
+                <span class="filter-icon">&#128269;</span>
+                <input id="dbFilterInput" type="text" placeholder="Filter databases..." />
+                <button id="dbFilterClear" class="filter-clear" title="Clear filter">&#10005;</button>
+            </div>
+            <select id="dbSortSelect" class="sort-select" title="Sort databases">
+                <option value="name-asc">Name A→Z</option>
+                <option value="name-desc">Name Z→A</option>
+                <option value="size-desc">Size ↓</option>
+                <option value="size-asc">Size ↑</option>
+                <option value="tables-desc">Tables ↓</option>
+                <option value="tables-asc">Tables ↑</option>
+                <option value="mtime-desc">Newest</option>
+                <option value="mtime-asc">Oldest</option>
+            </select>
+            <span id="filterMatchInfo" class="filter-match-info"></span>
         </div>
         <div class="sidebar-body" id="sidebar"></div>
     </div>
@@ -509,17 +552,21 @@ ${OVERLAY_JS}
         window.__WN_SQLITE_PENDING_MSGS.push(ev);
     });
     var discoverShell = document.getElementById('discoverBtn');
+    var refreshShell = document.getElementById('refreshBtn');
     var statusShell = document.getElementById('status');
-    if (!discoverShell) {
-        wnDbg('webview: discoverBtn missing (shell)');
-    } else {
+    function triggerDiscover() {
+        if (discoverShell) discoverShell.disabled = true;
+        if (refreshShell) refreshShell.disabled = true;
+        if (statusShell) statusShell.textContent = 'Scanning...';
+        vscode.postMessage({ command: 'discoverDatabases' });
+        wnDbg('webview: discoverDatabases postMessage');
+    }
+    if (discoverShell) {
         wnDbg('webview: discoverBtn bound (shell)');
-        discoverShell.addEventListener('click', function() {
-            discoverShell.disabled = true;
-            if (statusShell) statusShell.textContent = 'Scanning...';
-            vscode.postMessage({ command: 'discoverDatabases' });
-            wnDbg('webview: discoverDatabases postMessage (shell)');
-        });
+        discoverShell.addEventListener('click', triggerDiscover);
+    }
+    if (refreshShell) {
+        refreshShell.addEventListener('click', triggerDiscover);
     }
 })();
 </script>

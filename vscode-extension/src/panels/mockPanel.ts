@@ -22,6 +22,28 @@ export class MockPanel {
         MockPanel.currentPanel = new MockPanel(panel, deviceManager);
     }
 
+    public static createOrShowWithPrefill(deviceManager: DeviceManager, prefill: Record<string, any>): void {
+        const isNew = !MockPanel.currentPanel;
+        if (isNew) {
+            const panel = vscode.window.createWebviewPanel(
+                'whiteneedleMock',
+                'HTTP Mock Rules',
+                vscode.ViewColumn.One,
+                { enableScripts: true, retainContextWhenHidden: true }
+            );
+            MockPanel.currentPanel = new MockPanel(panel, deviceManager);
+        }
+        MockPanel.currentPanel!.panel.reveal();
+        const sendPrefill = () => {
+            MockPanel.currentPanel!.panel.webview.postMessage({ command: 'prefillRule', rule: prefill });
+        };
+        if (isNew) {
+            setTimeout(sendPrefill, 500);
+        } else {
+            sendPrefill();
+        }
+    }
+
     private constructor(panel: vscode.WebviewPanel, deviceManager: DeviceManager) {
         this.panel = panel;
         this.deviceManager = deviceManager;
@@ -194,8 +216,8 @@ ${OVERLAY_HTML}
     <button id="btnClearAll" class="danger">✕ Clear All</button>
     <span class="spacer"></span>
     <span class="status-dot off" id="statusDot"></span>
-    <span class="status-text" id="statusText">Interceptor off</span>
-    <label><input type="checkbox" id="chkInterceptor"> Enable Interceptor</label>
+    <span class="status-text" id="statusText">Mock off</span>
+    <label><input type="checkbox" id="chkInterceptor"> Enable Mock</label>
 </div>
 
 <div class="add-form" id="addForm">
@@ -319,6 +341,8 @@ ${OVERLAY_HTML}
             chkInterceptor.checked = interceptorOn;
             updateStatus();
             renderRules();
+        } else if (msg.command === 'prefillRule') {
+            prefillForm(msg.rule);
         } else if (msg.command === 'error') {
             showToast(msg.message);
         }
@@ -327,8 +351,8 @@ ${OVERLAY_HTML}
     function updateStatus() {
         statusDot.className = 'status-dot ' + (interceptorOn ? 'on' : 'off');
         statusText.textContent = interceptorOn
-            ? 'Interceptor ON · ' + rules.length + ' rule(s)'
-            : 'Interceptor off';
+            ? 'Mock ON · ' + rules.length + ' rule(s)'
+            : 'Mock off';
     }
 
     function renderRules() {
@@ -396,6 +420,25 @@ ${OVERLAY_HTML}
         document.getElementById('fDelay').value = '0';
         document.getElementById('fHeaders').value = '';
         document.getElementById('fBody').value = '';
+    }
+
+    function prefillForm(rule) {
+        editingId = null;
+        document.getElementById('fUrlPattern').value = rule.urlPattern || '';
+        document.getElementById('fMethod').value = rule.method || '*';
+        document.getElementById('fMode').value = rule.mode || 'pureMock';
+        document.getElementById('fStatus').value = rule.statusCode || 200;
+        document.getElementById('fDelay').value = rule.delay || 0;
+        if (rule.responseHeaders && typeof rule.responseHeaders === 'object') {
+            document.getElementById('fHeaders').value = JSON.stringify(rule.responseHeaders);
+        } else {
+            document.getElementById('fHeaders').value = '';
+        }
+        var body = rule.responseBody || '';
+        try { body = JSON.stringify(JSON.parse(body), null, 2); } catch(_) {}
+        document.getElementById('fBody').value = body;
+        document.getElementById('btnSubmitRule').textContent = 'Add Rule';
+        addForm.classList.add('open');
     }
 
     function showToast(msg) {

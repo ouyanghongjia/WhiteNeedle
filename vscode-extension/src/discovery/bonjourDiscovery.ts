@@ -8,7 +8,9 @@ const MAX_REBROWSE_ATTEMPTS = 12;
 export interface WNDevice {
     name: string;
     host: string;
+    aliasIPs?: string[];
     port: number;
+    deviceId?: string;
     bundleId: string;
     deviceName: string;
     systemVersion: string;
@@ -27,6 +29,8 @@ export class DeviceDiscovery extends EventEmitter {
     private devices: Map<string, WNDevice> = new Map();
     private rebrowseTimer: ReturnType<typeof setInterval> | null = null;
     private rebrowseCount = 0;
+    private blockedHosts: Set<string> = new Set();
+    private blockedDeviceIds: Set<string> = new Set();
 
     start(): void {
         this.stop();
@@ -52,6 +56,21 @@ export class DeviceDiscovery extends EventEmitter {
 
     getDevices(): WNDevice[] {
         return Array.from(this.devices.values());
+    }
+
+    setBlockedTargets(hosts: string[], deviceIds: string[]): void {
+        this.blockedHosts = new Set((hosts || []).map((x) => String(x || '').trim()).filter(Boolean));
+        this.blockedDeviceIds = new Set((deviceIds || []).map((x) => String(x || '').trim()).filter(Boolean));
+        let changed = false;
+        for (const [key, device] of this.devices.entries()) {
+            if (this.isBlocked(device)) {
+                this.devices.delete(key);
+                changed = true;
+            }
+        }
+        if (changed) {
+            this.emit('deviceUpdated');
+        }
     }
 
     /**
@@ -100,10 +119,13 @@ export class DeviceDiscovery extends EventEmitter {
      * Falls back to host:port when TXT metadata is missing.
      */
     private deviceIdentityKey(device: WNDevice): string {
+        if (device.deviceId) {
+            return `id:${device.deviceId}`;
+        }
         if (device.bundleId && device.bundleId !== 'unknown' && device.deviceName) {
             return `${device.bundleId}@${device.deviceName}`;
         }
-        return `${device.host}:${device.port}`;
+        return `${device.host}:${device.enginePort}`;
     }
 
     /**
@@ -120,18 +142,30 @@ export class DeviceDiscovery extends EventEmitter {
         this.browser = this.bonjour.find({ type: SERVICE_TYPE }, (service: Service) => {
             const device = this.parseService(service);
             if (!device) { return; }
+            if (this.isBlocked(device)) { return; }
 
             const key = this.deviceIdentityKey(device);
             const existing = this.devices.get(key);
             if (existing) {
+                const mergedAliases = this.mergeAliasIPs(existing.aliasIPs, device.aliasIPs);
+                device.aliasIPs = mergedAliases;
+                const aliasesChanged = (existing.aliasIPs || []).join('|') !== mergedAliases.join('|');
                 // Same logical device seen again — prefer routable IP over link-local
                 if (this.isLinkLocal(existing.host) && !this.isLinkLocal(device.host)) {
                     this.devices.set(key, device);
                     this.emit('deviceUpdated', device);
                 } else if (!this.isLinkLocal(existing.host) && this.isLinkLocal(device.host)) {
-                    // Keep existing routable IP, but store alternate addresses for reference
+                    // Keep existing routable IP, but retain updated metadata and all observed addresses.
+                    const merged = { ...device, host: existing.host, aliasIPs: mergedAliases };
+                    this.devices.set(key, merged);
+                    if (aliasesChanged) {
+                        this.emit('deviceUpdated', merged);
+                    }
                 } else {
                     this.devices.set(key, device);
+                    if (aliasesChanged) {
+                        this.emit('deviceUpdated', device);
+                    }
                 }
             } else {
                 this.devices.set(key, device);
@@ -153,7 +187,7 @@ export class DeviceDiscovery extends EventEmitter {
 
     private parseService(service: Service): WNDevice | null {
         const txt = service.txt || {};
-        const addresses = service.addresses || [];
+        const addresses = this.normalizeAddresses(service.addresses || []);
         const host = addresses.find(a => a.includes('.')) || addresses[0];
         if (!host) { return null; }
 
@@ -163,7 +197,9 @@ export class DeviceDiscovery extends EventEmitter {
         return {
             name: service.name,
             host,
+            aliasIPs: addresses,
             port: service.port,
+            deviceId: this.decodeTxt(txt['deviceId']) || undefined,
             bundleId: this.decodeTxt(txt['bundleId']) || 'unknown',
             deviceName: this.decodeTxt(txt['device']) || service.name,
             systemVersion: this.decodeTxt(txt['systemVersion']) || 'unknown',
@@ -181,5 +217,34 @@ export class DeviceDiscovery extends EventEmitter {
         if (typeof value === 'string') { return value; }
         if (Buffer.isBuffer(value)) { return value.toString('utf8'); }
         return String(value);
+    }
+
+    private isBlocked(device: WNDevice): boolean {
+        if (device.deviceId && this.blockedDeviceIds.has(device.deviceId)) {
+            return true;
+        }
+        if (device.host && this.blockedHosts.has(device.host)) {
+            return true;
+        }
+        if (device.aliasIPs && device.aliasIPs.some((ip) => this.blockedHosts.has(ip))) {
+            return true;
+        }
+        return false;
+    }
+
+    private normalizeAddresses(addresses: string[]): string[] {
+        const seen = new Set<string>();
+        const out: string[] = [];
+        for (const addr of addresses) {
+            const v = String(addr || '').trim();
+            if (!v || seen.has(v)) { continue; }
+            seen.add(v);
+            out.push(v);
+        }
+        return out;
+    }
+
+    private mergeAliasIPs(a?: string[], b?: string[]): string[] {
+        return this.normalizeAddresses([...(a || []), ...(b || [])]);
     }
 }

@@ -10,6 +10,7 @@ import { UserDefaultsPanel } from './panels/userDefaultsPanel';
 import { SandboxPanel } from './panels/sandboxPanel';
 import { ObjCPanel } from './panels/objcPanel';
 import { LogPanel, LogCategory, LogLevel } from './panels/logPanel';
+import { LogStore } from './logs/logStore';
 import { HookPanel } from './panels/hookPanel';
 import { NetworkPanel } from './panels/networkPanel';
 import { ViewHierarchyPanel } from './panels/viewHierarchyPanel';
@@ -44,9 +45,48 @@ let hookCodeRegistry: HookCodeRegistry;
 let moduleManager: ModuleManager;
 let moduleTreeProvider: ModuleTreeProvider;
 
-function appendLog(category: LogCategory, level: LogLevel, message: string, source?: string): void {
+type BlockedTargets = { blockedHosts: string[]; blockedDeviceIds: string[] };
+
+function appendLog(category: LogCategory, level: LogLevel, message: string, source?: string, timestamp?: number): void {
     outputChannel.appendLine(`[${category}:${level}] ${message}`);
-    LogPanel.getInstance()?.appendLog(category, level, message, source);
+    LogStore.getInstance().append({ timestamp: timestamp || Date.now(), category, level, message, source });
+}
+
+function readBlockedTargets(): BlockedTargets {
+    const cfg = vscode.workspace.getConfiguration('whiteneedle');
+    const blockedHosts = cfg.get<string[]>('blockedHosts', []).map((x) => String(x || '').trim()).filter(Boolean);
+    const blockedDeviceIds = cfg.get<string[]>('blockedDeviceIds', []).map((x) => String(x || '').trim()).filter(Boolean);
+    return { blockedHosts, blockedDeviceIds };
+}
+
+function isDeviceBlocked(device: WNDevice): boolean {
+    const { blockedHosts, blockedDeviceIds } = readBlockedTargets();
+    const blockedHostSet = new Set(blockedHosts);
+    const blockedDeviceSet = new Set(blockedDeviceIds);
+    if (device.deviceId && blockedDeviceSet.has(device.deviceId)) { return true; }
+    if (device.host && blockedHostSet.has(device.host)) { return true; }
+    if (device.aliasIPs && device.aliasIPs.some((ip) => blockedHostSet.has(ip))) { return true; }
+    return false;
+}
+
+function resolveDeviceLike(input: unknown): WNDevice | undefined {
+    if (!input || typeof input !== 'object') {
+        return undefined;
+    }
+    const direct = input as Partial<WNDevice>;
+    if (typeof direct.host === 'string' && typeof direct.enginePort === 'number') {
+        return direct as WNDevice;
+    }
+    const nested = (input as { device?: Partial<WNDevice> }).device;
+    if (nested && typeof nested.host === 'string' && typeof nested.enginePort === 'number') {
+        return nested as WNDevice;
+    }
+    return undefined;
+}
+
+async function syncDiscoveryBlockedTargets(): Promise<void> {
+    const { blockedHosts, blockedDeviceIds } = readBlockedTargets();
+    discovery.setBlockedTargets(blockedHosts, blockedDeviceIds);
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -65,12 +105,21 @@ export function activate(context: vscode.ExtensionContext) {
 function activateImpl(context: vscode.ExtensionContext) {
     extensionContext = context;
     outputChannel = vscode.window.createOutputChannel('WhiteNeedle');
+
+    const logStore = LogStore.getInstance();
+    logStore.initialize(context.globalStorageUri).catch(err => {
+        outputChannel.appendLine(`[WhiteNeedle] Failed to initialize log store: ${err.message}`);
+    });
+    context.subscriptions.push(logStore);
+
     outputChannel.appendLine('[WhiteNeedle] Extension activated');
 
     deviceManager = new DeviceManager(outputChannel);
+    deviceManager.shouldReconnect = (d) => !isDeviceBlocked(d);
     hookCodeRegistry = new HookCodeRegistry();
     scriptRunner = new ScriptRunner(deviceManager, outputChannel, hookCodeRegistry);
     discovery = new DeviceDiscovery();
+    void syncDiscoveryBlockedTargets();
 
     // --- Proxy Server ---
     proxyServer = new ProxyServer();
@@ -178,8 +227,13 @@ function activateImpl(context: vscode.ExtensionContext) {
                 ? data.level as LogLevel : 'log';
             appendLog('Console', lvl, data.message);
         });
-        bridge.on('scriptError', (data: { error: string }) => {
-            appendLog('Error', 'error', data.error, 'script');
+        bridge.on('scriptError', (data: { message?: string; error?: string }) => {
+            appendLog('Error', 'error', data.message || data.error || 'Unknown script error', 'script');
+        });
+        bridge.on('nativeLog', (data: { message: string; level?: string; timestamp?: number; flushed?: boolean }) => {
+            const lvl = (data.level === 'warn' || data.level === 'error' || data.level === 'debug')
+                ? data.level as LogLevel : 'log';
+            appendLog('Native', lvl, data.message, 'native', data.timestamp || undefined);
         });
         bridge.on('networkRequest', (data: any) => {
             appendLog('Network', 'log', `${data.method} ${data.url}`, 'network');
@@ -244,15 +298,19 @@ function activateImpl(context: vscode.ExtensionContext) {
         // --- Device commands ---
         vscode.commands.registerCommand('whiteneedle.refreshDevices', () => {
             discovery.restart();
+            void syncDiscoveryBlockedTargets();
             deviceTreeProvider.refresh();
             outputChannel.appendLine('[WhiteNeedle] Scanning for devices...');
         }),
 
         vscode.commands.registerCommand('whiteneedle.connectByIP', async () => {
+            const cfg = vscode.workspace.getConfiguration('whiteneedle');
+            const lastHost = cfg.get<string>('deviceHost') || '169.254.115.191';
+            const lastPort = cfg.get<number>('enginePort', 27042);
             const input = await vscode.window.showInputBox({
                 prompt: 'Enter device IP address and port (e.g., 169.254.115.191:27042)',
                 placeHolder: '192.168.x.x:27042',
-                value: '169.254.115.191:27042',
+                value: `${lastHost}:${lastPort}`,
                 validateInput: (val) => {
                     const match = val.match(/^[\d.]+:\d+$/);
                     return match ? null : 'Format: IP:PORT (e.g., 192.168.1.10:27042)';
@@ -278,6 +336,10 @@ function activateImpl(context: vscode.ExtensionContext) {
             };
 
             try {
+                if (isDeviceBlocked(manualDevice)) {
+                    vscode.window.showWarningMessage(`This target is blocked: ${host}`);
+                    return;
+                }
                 outputChannel.appendLine(`[WhiteNeedle] Connecting to ${host}:${port}...`);
                 outputChannel.show();
                 await deviceManager.connect(manualDevice);
@@ -317,6 +379,12 @@ function activateImpl(context: vscode.ExtensionContext) {
                 device = (picked as any).device;
             }
             try {
+                if (isDeviceBlocked(device)) {
+                    vscode.window.showWarningMessage(
+                        `Blocked target: ${device.deviceName || device.host}. Unblock it first.`
+                    );
+                    return;
+                }
                 await deviceManager.connect(device);
                 attachBridgeListeners();
                 refreshAllViews();
@@ -334,6 +402,58 @@ function activateImpl(context: vscode.ExtensionContext) {
             refreshAllViews();
             outputChannel.appendLine('[WhiteNeedle] Disconnected');
             vscode.window.showInformationMessage('WhiteNeedle: Disconnected');
+        }),
+
+        vscode.commands.registerCommand('whiteneedle.blockDevice', async (deviceLike?: unknown) => {
+            const target = resolveDeviceLike(deviceLike) || deviceManager.getConnectedDevice();
+            if (!target) {
+                vscode.window.showWarningMessage('No target device to block.');
+                return;
+            }
+            const cfg = vscode.workspace.getConfiguration('whiteneedle');
+            const { blockedHosts, blockedDeviceIds } = readBlockedTargets();
+            const hostSet = new Set(blockedHosts);
+            const deviceSet = new Set(blockedDeviceIds);
+            if (target.deviceId) { deviceSet.add(target.deviceId); }
+            if (target.host) { hostSet.add(target.host); }
+            (target.aliasIPs || []).forEach((ip) => hostSet.add(ip));
+            await cfg.update('blockedHosts', Array.from(hostSet), vscode.ConfigurationTarget.Global);
+            await cfg.update('blockedDeviceIds', Array.from(deviceSet), vscode.ConfigurationTarget.Global);
+            await syncDiscoveryBlockedTargets();
+            if (deviceManager.isConnected && deviceManager.isConnectedTo(target)) {
+                await deviceManager.disconnect();
+            }
+            refreshAllViews();
+            const targetLabel = target.deviceName || target.host || target.deviceId || 'target';
+            vscode.window.showInformationMessage(
+                `Blocked ${targetLabel}.`
+            );
+        }),
+
+        vscode.commands.registerCommand('whiteneedle.manageBlockedTargets', async () => {
+            const cfg = vscode.workspace.getConfiguration('whiteneedle');
+            const { blockedHosts, blockedDeviceIds } = readBlockedTargets();
+            const options = [
+                ...blockedDeviceIds.map((id) => ({ label: `Device: ${id}`, kind: 'device' as const, value: id })),
+                ...blockedHosts.map((host) => ({ label: `IP: ${host}`, kind: 'host' as const, value: host })),
+            ];
+            if (!options.length) {
+                vscode.window.showInformationMessage('Blocked list is empty.');
+                return;
+            }
+            const selected = await vscode.window.showQuickPick(
+                options.map((x) => ({ label: x.label, picked: false })),
+                { canPickMany: true, placeHolder: 'Select entries to unblock' }
+            );
+            if (!selected || selected.length === 0) { return; }
+            const selectedLabels = new Set(selected.map((x) => x.label));
+            const newBlockedHosts = blockedHosts.filter((host) => !selectedLabels.has(`IP: ${host}`));
+            const newBlockedDeviceIds = blockedDeviceIds.filter((id) => !selectedLabels.has(`Device: ${id}`));
+            await cfg.update('blockedHosts', newBlockedHosts, vscode.ConfigurationTarget.Global);
+            await cfg.update('blockedDeviceIds', newBlockedDeviceIds, vscode.ConfigurationTarget.Global);
+            await syncDiscoveryBlockedTargets();
+            refreshAllViews();
+            vscode.window.showInformationMessage(`Unblocked ${selected.length} item(s).`);
         }),
 
         // --- Script commands ---
@@ -425,8 +545,35 @@ function activateImpl(context: vscode.ExtensionContext) {
         }),
 
         // --- Webview Panel commands ---
-        vscode.commands.registerCommand('whiteneedle.openLogs', () => {
-            LogPanel.createOrShow(context.extensionUri);
+        vscode.commands.registerCommand('whiteneedle.openLogs', async () => {
+            const logPanel = LogPanel.createOrShow(context.extensionUri);
+            logPanel.onToggleNativeLog = async (enabled: boolean) => {
+                const bridge = deviceManager.getBridge();
+                if (!bridge) {
+                    vscode.window.showWarningMessage('No device connected — cannot toggle native log capture.');
+                    return;
+                }
+                try {
+                    await bridge.call('setNativeLogCapture', { enabled });
+                    appendLog('System', 'log', `Native log capture ${enabled ? 'enabled' : 'disabled'}`);
+                } catch (err: any) {
+                    vscode.window.showErrorMessage(`Failed to toggle native log capture: ${err.message}`);
+                }
+            };
+            logPanel.rpcCall = async (method: string, params: any) => {
+                const bridge = deviceManager.getBridge();
+                if (!bridge) { throw new Error('Not connected to a device'); }
+                return bridge.call(method, params);
+            };
+            const bridge = deviceManager.getBridge();
+            if (bridge) {
+                try {
+                    const res = await bridge.call('getNativeLogCapture', {}) as { enabled?: boolean };
+                    if (res?.enabled) {
+                        logPanel.syncNativeLogState(true);
+                    }
+                } catch (_) { /* device may not support this yet */ }
+            }
         }),
 
         vscode.commands.registerCommand('whiteneedle.openCookies', () => {
@@ -454,7 +601,7 @@ function activateImpl(context: vscode.ExtensionContext) {
         }),
 
         vscode.commands.registerCommand('whiteneedle.openNetwork', () => {
-            NetworkPanel.createOrShow(context.extensionUri, deviceManager);
+            NetworkPanel.createOrShow(context.extensionUri, deviceManager, outputChannel);
         }),
 
         vscode.commands.registerCommand('whiteneedle.openMockRules', () => {
@@ -626,6 +773,9 @@ function activateImpl(context: vscode.ExtensionContext) {
             if (e.affectsConfiguration('whiteneedle.snippets.teamFile')) {
                 void loadTeamSnippetsFromWorkspace().then(() => SnippetPanel.refreshIfOpen());
             }
+            if (e.affectsConfiguration('whiteneedle.blockedHosts') || e.affectsConfiguration('whiteneedle.blockedDeviceIds')) {
+                void syncDiscoveryBlockedTargets().then(() => refreshAllViews());
+            }
         }),
     );
 
@@ -648,6 +798,7 @@ function activateImpl(context: vscode.ExtensionContext) {
 
     let autoConnecting = false;
     discovery.on('deviceFound', async (device: WNDevice) => {
+        if (isDeviceBlocked(device)) { return; }
         outputChannel.appendLine(
             `[WhiteNeedle] Bonjour discovered: ${device.deviceName || device.name} at ${device.host}:${device.enginePort} (bundle=${device.bundleId})`
         );
@@ -763,6 +914,7 @@ function scheduleLastDeviceFallback(
 ): void {
     const cfg = vscode.workspace.getConfiguration('whiteneedle');
     const lastHost = cfg.get<string>('deviceHost');
+    const lastPort = cfg.get<number>('enginePort', 27042);
     const autoConnect = cfg.get<boolean>('autoConnect', true);
     if (!lastHost || !autoConnect) { return; }
 
@@ -772,7 +924,7 @@ function scheduleLastDeviceFallback(
         if (busy) { return; }
         if (discovery.getDevices().length > 0) { return; }
 
-        const port = 27042;
+        const port = lastPort;
         outputChannel.appendLine(
             `[WhiteNeedle] Bonjour timeout — probing last device at ${lastHost}:${port}...`
         );
@@ -799,6 +951,10 @@ function scheduleLastDeviceFallback(
         };
 
         try {
+            if (isDeviceBlocked(fallbackDevice)) {
+                outputChannel.appendLine(`[WhiteNeedle] Fallback target blocked: ${lastHost}:${port}`);
+                return;
+            }
             await deviceManager.connect(fallbackDevice);
             attachBridgeListeners();
             refreshAllViews();

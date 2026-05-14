@@ -48,8 +48,14 @@ static int sWatchCounter = 0;
 + (id)columnValue:(sqlite3_stmt *)stmt index:(int)i {
     int type = sqlite3_column_type(stmt, i);
     switch (type) {
-        case SQLITE_INTEGER:
-            return @(sqlite3_column_int64(stmt, i));
+        case SQLITE_INTEGER: {
+            sqlite3_int64 val = sqlite3_column_int64(stmt, i);
+            // JS Number safely represents integers up to 2^53 - 1 (9007199254740991)
+            if (val > 9007199254740991LL || val < -9007199254740991LL) {
+                return [NSString stringWithFormat:@"%lld", val];
+            }
+            return @(val);
+        }
         case SQLITE_FLOAT:
             return @(sqlite3_column_double(stmt, i));
         case SQLITE_TEXT: {

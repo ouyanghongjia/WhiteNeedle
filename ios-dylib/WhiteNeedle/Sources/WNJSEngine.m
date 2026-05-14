@@ -119,9 +119,9 @@ static _Atomic int s_wnJSThreadExternalWaitCount = 0;
             [WNPerformanceBridge registerInContext:self.context];
             [WNUIDebugBridge registerInContext:self.context];
             [WNSQLiteBridge registerInContext:self.context];
-            [WNLeakDetector registerInContext:self.context];
+            // [WNLeakDetector registerInContext:self.context];
 #if WN_ENABLE_REFGRAPH
-            [WNRefGraphDetector registerInContext:self.context];
+            // [WNRefGraphDetector registerInContext:self.context];
 #endif
 
             self.isReady = YES;

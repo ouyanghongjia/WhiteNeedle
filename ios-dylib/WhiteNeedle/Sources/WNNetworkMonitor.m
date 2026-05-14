@@ -5,6 +5,7 @@
 
 static NSString *const kLogPrefix = @"[WhiteNeedle:Network]";
 static const NSUInteger kMaxCapturedRequests = 500;
+static NSString *const kWNMonitorHandledKey = @"com.whiteneedle.monitor.handled";
 
 #pragma mark - Captured request model
 
@@ -63,19 +64,204 @@ static const NSUInteger kMaxCapturedRequests = 500;
 }
 @end
 
-#pragma mark - WNNetworkMonitor
+#pragma mark - WNNetworkMonitor private interface (forward declaration for protocol)
 
 @interface WNNetworkMonitor ()
 @property (nonatomic, strong) NSMutableArray<WNCapturedRequest *> *requests;
-@property (nonatomic, strong) NSMutableDictionary<NSNumber *, WNCapturedRequest *> *pendingByTaskId;
 @property (nonatomic, weak) WNRemoteServer *server;
 @property (nonatomic, assign) NSUInteger nextId;
 @property (nonatomic, assign) BOOL hooked;
 @end
 
-static IMP g_originalDataTaskWithRequestCompletion = NULL;
-static IMP g_originalDataTaskWithURLCompletion = NULL;
-static IMP g_originalConnectionSendSync = NULL;
+#pragma mark - WNNetworkMonitorProtocol
+
+@class WNNetworkMonitorProtocol;
+
+static NSURLSession *g_forwardSession = nil;
+static NSMapTable<NSURLSessionTask *, WNNetworkMonitorProtocol *> *g_taskToProtocol = nil;
+static NSUInteger g_monitorNextId = 0;
+
+static NSUInteger WNNextMonitorId(void) {
+    @synchronized([WNNetworkMonitor class]) {
+        return ++g_monitorNextId;
+    }
+}
+
+@interface WNNetworkMonitorProtocol : NSURLProtocol
+@property (nonatomic, strong) NSURLSessionDataTask *dataTask;
+@property (nonatomic, strong) WNCapturedRequest *captured;
+@property (nonatomic, strong) NSMutableData *receivedData;
+@end
+
+@interface WNMonitorSessionDelegate : NSObject <NSURLSessionDataDelegate>
++ (instancetype)shared;
+@end
+
+@implementation WNMonitorSessionDelegate
+
++ (instancetype)shared {
+    static WNMonitorSessionDelegate *inst;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ inst = [[self alloc] init]; });
+    return inst;
+}
+
+- (void)URLSession:(NSURLSession *)session
+          dataTask:(NSURLSessionDataTask *)dataTask
+didReceiveResponse:(NSURLResponse *)response
+ completionHandler:(void (^)(NSURLSessionResponseDisposition))completionHandler {
+    WNNetworkMonitorProtocol *proto;
+    @synchronized(g_taskToProtocol) { proto = [g_taskToProtocol objectForKey:dataTask]; }
+    [proto.client URLProtocol:proto didReceiveResponse:response
+          cacheStoragePolicy:NSURLCacheStorageNotAllowed];
+    completionHandler(NSURLSessionResponseAllow);
+}
+
+- (void)URLSession:(NSURLSession *)session
+          dataTask:(NSURLSessionDataTask *)dataTask
+    didReceiveData:(NSData *)data {
+    WNNetworkMonitorProtocol *proto;
+    @synchronized(g_taskToProtocol) { proto = [g_taskToProtocol objectForKey:dataTask]; }
+    [proto.receivedData appendData:data];
+    [proto.client URLProtocol:proto didLoadData:data];
+}
+
+- (void)URLSession:(NSURLSession *)session
+              task:(NSURLSessionTask *)task
+didCompleteWithError:(nullable NSError *)error {
+    WNNetworkMonitorProtocol *proto;
+    @synchronized(g_taskToProtocol) {
+        proto = [g_taskToProtocol objectForKey:task];
+        [g_taskToProtocol removeObjectForKey:task];
+    }
+    if (!proto) return;
+
+    WNCapturedRequest *cap = proto.captured;
+    cap.endTime = [[NSDate date] timeIntervalSince1970];
+    cap.responseBody = proto.receivedData;
+    cap.responseSize = proto.receivedData.length;
+
+    if (error) {
+        cap.errorMessage = error.localizedDescription;
+        [proto.client URLProtocol:proto didFailWithError:error];
+    } else {
+        [proto.client URLProtocolDidFinishLoading:proto];
+    }
+
+    NSURLResponse *resp = task.response;
+    if ([resp isKindOfClass:[NSHTTPURLResponse class]]) {
+        NSHTTPURLResponse *http = (NSHTTPURLResponse *)resp;
+        cap.statusCode = http.statusCode;
+        cap.responseHeaders = http.allHeaderFields;
+        cap.mimeType = http.MIMEType;
+    }
+
+    [[WNNetworkMonitor shared].server broadcastNotification:@"networkResponse" params:[cap summaryDict]];
+}
+
+- (void)URLSession:(NSURLSession *)session
+              task:(NSURLSessionTask *)task
+willPerformHTTPRedirection:(NSHTTPURLResponse *)response
+        newRequest:(NSURLRequest *)request
+ completionHandler:(void (^)(NSURLRequest * _Nullable))completionHandler {
+    WNNetworkMonitorProtocol *proto;
+    @synchronized(g_taskToProtocol) { proto = [g_taskToProtocol objectForKey:task]; }
+    NSMutableURLRequest *taggedRedirect = [request mutableCopy];
+    [NSURLProtocol setProperty:@YES forKey:kWNMonitorHandledKey inRequest:taggedRedirect];
+    [proto.client URLProtocol:proto wasRedirectedToRequest:taggedRedirect redirectResponse:response];
+    completionHandler(taggedRedirect);
+}
+
+@end
+
+@implementation WNNetworkMonitorProtocol
+
++ (void)ensureForwardSession {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        g_taskToProtocol = [NSMapTable strongToWeakObjectsMapTable];
+        NSURLSessionConfiguration *config = [NSURLSessionConfiguration ephemeralSessionConfiguration];
+        g_forwardSession = [NSURLSession sessionWithConfiguration:config
+                                                         delegate:[WNMonitorSessionDelegate shared]
+                                                    delegateQueue:nil];
+    });
+}
+
++ (BOOL)canInitWithRequest:(NSURLRequest *)request {
+    if (![WNNetworkMonitor shared].capturing) return NO;
+    if ([NSURLProtocol propertyForKey:kWNMonitorHandledKey inRequest:request]) return NO;
+    NSString *scheme = request.URL.scheme.lowercaseString;
+    return [scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"];
+}
+
++ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request {
+    return request;
+}
+
+- (void)startLoading {
+    [[self class] ensureForwardSession];
+    WNNetworkMonitor *monitor = [WNNetworkMonitor shared];
+
+    WNCapturedRequest *cap = [WNCapturedRequest new];
+    cap.requestId = [NSString stringWithFormat:@"req_%lu", (unsigned long)WNNextMonitorId()];
+    cap.method = self.request.HTTPMethod ?: @"GET";
+    cap.url = self.request.URL.absoluteString ?: @"";
+    cap.host = self.request.URL.host ?: @"";
+    cap.requestHeaders = self.request.allHTTPHeaderFields ?: @{};
+    cap.requestBody = self.request.HTTPBody;
+    cap.startTime = [[NSDate date] timeIntervalSince1970];
+    cap.source = @"NSURLSession";
+    self.captured = cap;
+    self.receivedData = [NSMutableData data];
+
+    @synchronized(monitor.requests) {
+        [monitor.requests addObject:cap];
+        if (monitor.requests.count > kMaxCapturedRequests) {
+            [monitor.requests removeObjectAtIndex:0];
+        }
+    }
+
+    [monitor.server broadcastNotification:@"networkRequest" params:[cap summaryDict]];
+
+    NSMutableURLRequest *forwarded = [self.request mutableCopy];
+    [NSURLProtocol setProperty:@YES forKey:kWNMonitorHandledKey inRequest:forwarded];
+
+    NSURLSessionDataTask *task = [g_forwardSession dataTaskWithRequest:forwarded];
+    self.dataTask = task;
+    @synchronized(g_taskToProtocol) {
+        [g_taskToProtocol setObject:self forKey:task];
+    }
+    [task resume];
+}
+
+- (void)stopLoading {
+    NSURLSessionDataTask *task = self.dataTask;
+    if (task) {
+        @synchronized(g_taskToProtocol) {
+            [g_taskToProtocol removeObjectForKey:task];
+        }
+        [task cancel];
+    }
+}
+
+@end
+
+#pragma mark - NSURLSessionConfiguration protocolClasses swizzle (chain-aware)
+
+static NSArray<Class> *(*orig_monitorProtocolClassesGetter)(id, SEL) = NULL;
+
+static NSArray<Class> *wn_monitorProtocolClassesGetter(id self, SEL _cmd) {
+    NSArray<Class> *classes = orig_monitorProtocolClassesGetter
+        ? orig_monitorProtocolClassesGetter(self, _cmd) : @[];
+    if ([WNNetworkMonitor shared].capturing) {
+        if (![classes containsObject:[WNNetworkMonitorProtocol class]]) {
+            return [@[[WNNetworkMonitorProtocol class]] arrayByAddingObjectsFromArray:classes ?: @[]];
+        }
+    }
+    return classes;
+}
+
+#pragma mark - WNNetworkMonitor
 
 @implementation WNNetworkMonitor
 
@@ -92,7 +278,6 @@ static IMP g_originalConnectionSendSync = NULL;
     self = [super init];
     if (self) {
         _requests = [NSMutableArray new];
-        _pendingByTaskId = [NSMutableDictionary new];
         _capturing = YES;
         _nextId = 1;
     }
@@ -105,147 +290,27 @@ static IMP g_originalConnectionSendSync = NULL;
         [self installHooks];
         self.hooked = YES;
     }
-    NSLog(@"%@ Network monitor started", kLogPrefix);
+    NSLog(@"%@ Network monitor started (NSURLProtocol-based)", kLogPrefix);
 }
 
 - (void)stop {
     self.capturing = NO;
 }
 
-#pragma mark - Hook installation
+#pragma mark - Hook installation (NSURLProtocol)
 
 - (void)installHooks {
-    Class cls = [NSURLSession class];
+    [NSURLProtocol registerClass:[WNNetworkMonitorProtocol class]];
 
-    // Hook dataTaskWithRequest:completionHandler:
-    SEL sel1 = @selector(dataTaskWithRequest:completionHandler:);
-    Method m1 = class_getInstanceMethod(cls, sel1);
-    if (m1) {
-        g_originalDataTaskWithRequestCompletion = method_getImplementation(m1);
-        IMP newIMP1 = imp_implementationWithBlock(^NSURLSessionDataTask *(NSURLSession *session, NSURLRequest *request, void (^completion)(NSData *, NSURLResponse *, NSError *)) {
-            return [self interceptSession:session request:request originalIMP:g_originalDataTaskWithRequestCompletion sel:sel1 completion:completion];
-        });
-        method_setImplementation(m1, newIMP1);
-        NSLog(@"%@ Hooked dataTaskWithRequest:completionHandler:", kLogPrefix);
+    Method getter = class_getInstanceMethod([NSURLSessionConfiguration class],
+                                            @selector(protocolClasses));
+    if (getter) {
+        orig_monitorProtocolClassesGetter = (void *)method_setImplementation(
+            getter, (IMP)wn_monitorProtocolClassesGetter);
+        NSLog(@"%@ NSURLSessionConfiguration.protocolClasses swizzled for monitor", kLogPrefix);
     }
 
-    // Hook dataTaskWithURL:completionHandler:
-    SEL sel2 = @selector(dataTaskWithURL:completionHandler:);
-    Method m2 = class_getInstanceMethod(cls, sel2);
-    if (m2) {
-        g_originalDataTaskWithURLCompletion = method_getImplementation(m2);
-        IMP newIMP2 = imp_implementationWithBlock(^NSURLSessionDataTask *(NSURLSession *session, NSURL *url, void (^completion)(NSData *, NSURLResponse *, NSError *)) {
-            NSURLRequest *request = [NSURLRequest requestWithURL:url];
-            return [self interceptSession:session request:request originalIMP:g_originalDataTaskWithRequestCompletion sel:sel1 completion:completion];
-        });
-        method_setImplementation(m2, newIMP2);
-        NSLog(@"%@ Hooked dataTaskWithURL:completionHandler:", kLogPrefix);
-    }
-
-    // Hook NSURLConnection +sendSynchronousRequest:returningResponse:error: (legacy API)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    Class connCls = [NSURLConnection class];
-    SEL selConn = @selector(sendSynchronousRequest:returningResponse:error:);
-    Method mConn = class_getClassMethod(connCls, selConn);
-    if (mConn) {
-        g_originalConnectionSendSync = method_getImplementation(mConn);
-        IMP newConnIMP = imp_implementationWithBlock(^NSData *(id _self, NSURLRequest *request, NSURLResponse **response, NSError **error) {
-            if (!self.capturing) {
-                typedef NSData *(*OrigFn)(id, SEL, NSURLRequest *, NSURLResponse **, NSError **);
-                return ((OrigFn)g_originalConnectionSendSync)(_self, selConn, request, response, error);
-            }
-
-            WNCapturedRequest *captured = [WNCapturedRequest new];
-            captured.requestId = [NSString stringWithFormat:@"req_%lu", (unsigned long)self.nextId++];
-            captured.method = request.HTTPMethod ?: @"GET";
-            captured.url = request.URL.absoluteString ?: @"";
-            captured.host = request.URL.host ?: @"";
-            captured.requestHeaders = request.allHTTPHeaderFields ?: @{};
-            captured.requestBody = request.HTTPBody;
-            captured.startTime = [[NSDate date] timeIntervalSince1970];
-            captured.source = @"NSURLConnection";
-
-            @synchronized(self.requests) {
-                [self.requests addObject:captured];
-                if (self.requests.count > kMaxCapturedRequests) {
-                    [self.requests removeObjectAtIndex:0];
-                }
-            }
-            [self.server broadcastNotification:@"networkRequest" params:[captured summaryDict]];
-
-            typedef NSData *(*OrigFn)(id, SEL, NSURLRequest *, NSURLResponse **, NSError **);
-            NSData *data = ((OrigFn)g_originalConnectionSendSync)(_self, selConn, request, response, error);
-
-            captured.endTime = [[NSDate date] timeIntervalSince1970];
-            captured.responseBody = data;
-            captured.responseSize = data.length;
-            if (error && *error) captured.errorMessage = (*error).localizedDescription;
-            if (response && *response && [*response isKindOfClass:[NSHTTPURLResponse class]]) {
-                NSHTTPURLResponse *http = (NSHTTPURLResponse *)*response;
-                captured.statusCode = http.statusCode;
-                captured.responseHeaders = http.allHeaderFields;
-                captured.mimeType = http.MIMEType;
-            }
-            [self.server broadcastNotification:@"networkResponse" params:[captured summaryDict]];
-            return data;
-        });
-        method_setImplementation(mConn, newConnIMP);
-        NSLog(@"%@ Hooked NSURLConnection +sendSynchronousRequest:returningResponse:error:", kLogPrefix);
-    }
-#pragma clang diagnostic pop
-}
-
-- (NSURLSessionDataTask *)interceptSession:(NSURLSession *)session
-                                   request:(NSURLRequest *)request
-                               originalIMP:(IMP)origIMP
-                                       sel:(SEL)sel
-                                completion:(void (^)(NSData *, NSURLResponse *, NSError *))completion {
-
-    if (!self.capturing) {
-        typedef NSURLSessionDataTask *(*OrigFn)(id, SEL, NSURLRequest *, id);
-        return ((OrigFn)origIMP)(session, sel, request, completion);
-    }
-
-    WNCapturedRequest *captured = [WNCapturedRequest new];
-    captured.requestId = [NSString stringWithFormat:@"req_%lu", (unsigned long)self.nextId++];
-    captured.method = request.HTTPMethod ?: @"GET";
-    captured.url = request.URL.absoluteString ?: @"";
-    captured.host = request.URL.host ?: @"";
-    captured.requestHeaders = request.allHTTPHeaderFields ?: @{};
-    captured.requestBody = request.HTTPBody;
-    captured.startTime = [[NSDate date] timeIntervalSince1970];
-    captured.source = @"NSURLSession";
-
-    @synchronized(self.requests) {
-        [self.requests addObject:captured];
-        if (self.requests.count > kMaxCapturedRequests) {
-            [self.requests removeObjectAtIndex:0];
-        }
-    }
-
-    [self.server broadcastNotification:@"networkRequest" params:[captured summaryDict]];
-
-    void (^wrappedCompletion)(NSData *, NSURLResponse *, NSError *) = ^(NSData *data, NSURLResponse *response, NSError *error) {
-        captured.endTime = [[NSDate date] timeIntervalSince1970];
-        captured.responseBody = data;
-        captured.responseSize = data.length;
-        captured.errorMessage = error.localizedDescription;
-
-        if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
-            NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
-            captured.statusCode = http.statusCode;
-            captured.responseHeaders = http.allHeaderFields;
-            captured.mimeType = http.MIMEType;
-        }
-
-        [self.server broadcastNotification:@"networkResponse" params:[captured summaryDict]];
-
-        if (completion) completion(data, response, error);
-    };
-
-    typedef NSURLSessionDataTask *(*OrigFn)(id, SEL, NSURLRequest *, id);
-    return ((OrigFn)origIMP)(session, sel, request, wrappedCompletion);
+    NSLog(@"%@ NSURLProtocol-based hooks installed (covers all NSURLSession tasks)", kLogPrefix);
 }
 
 #pragma mark - RPC interface
@@ -274,6 +339,48 @@ static IMP g_originalConnectionSendSync = NULL;
 - (void)clearAll {
     @synchronized(self.requests) {
         [self.requests removeAllObjects];
+    }
+}
+
+- (void)injectCapturedSummary:(NSDictionary *)summary {
+    WNCapturedRequest *r = [WNCapturedRequest new];
+    r.requestId    = summary[@"id"] ?: @"";
+    r.method       = summary[@"method"] ?: @"GET";
+    r.url          = summary[@"url"] ?: @"";
+    r.host         = summary[@"host"] ?: @"";
+    r.statusCode   = [summary[@"status"] integerValue];
+    r.startTime    = [summary[@"startTime"] doubleValue];
+    r.responseSize = [summary[@"size"] longLongValue];
+    r.mimeType     = summary[@"mimeType"];
+    r.source       = summary[@"source"] ?: @"external";
+    r.errorMessage = summary[@"error"];
+    if ([summary[@"requestHeaders"] isKindOfClass:[NSDictionary class]]) {
+        r.requestHeaders = summary[@"requestHeaders"];
+    } else {
+        r.requestHeaders = @{};
+    }
+    if ([summary[@"responseHeaders"] isKindOfClass:[NSDictionary class]]) {
+        r.responseHeaders = summary[@"responseHeaders"];
+    } else {
+        r.responseHeaders = @{};
+    }
+    if ([summary[@"requestBody"] isKindOfClass:[NSString class]]) {
+        r.requestBody = [summary[@"requestBody"] dataUsingEncoding:NSUTF8StringEncoding];
+    }
+    if ([summary[@"responseBody"] isKindOfClass:[NSString class]]) {
+        r.responseBody = [summary[@"responseBody"] dataUsingEncoding:NSUTF8StringEncoding];
+    }
+    if ([summary[@"duration"] isKindOfClass:[NSNumber class]]) {
+        if (r.startTime <= 0) {
+            r.startTime = [[NSDate date] timeIntervalSince1970] - ([summary[@"duration"] doubleValue] / 1000.0);
+        }
+        r.endTime = r.startTime + [summary[@"duration"] doubleValue] / 1000.0;
+    }
+    @synchronized(self.requests) {
+        [self.requests addObject:r];
+        if (self.requests.count > kMaxCapturedRequests) {
+            [self.requests removeObjectAtIndex:0];
+        }
     }
 }
 

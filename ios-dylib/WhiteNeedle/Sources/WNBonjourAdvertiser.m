@@ -5,21 +5,50 @@ NSString *const kWNServiceType = @"_whiteneedle._tcp.";
 
 @interface WNBonjourAdvertiser () <NSNetServiceDelegate>
 @property (nonatomic, strong) NSNetService *netService;
+@property (nonatomic, assign) NSInteger lastPort;
+@property (nonatomic, assign) NSInteger lastInspectorPort;
 @end
 
 @implementation WNBonjourAdvertiser
+
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(appWillEnterForeground)
+                                                     name:UIApplicationWillEnterForegroundNotification
+                                                   object:nil];
+    }
+    return self;
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)appWillEnterForeground {
+    if (self.lastPort > 0) {
+        NSLog(@"[WhiteNeedle] Bonjour: App entering foreground, restarting advertisement...");
+        [self startWithPort:self.lastPort inspectorPort:self.lastInspectorPort];
+    }
+}
 
 - (void)startWithPort:(NSInteger)port {
     [self startWithPort:port inspectorPort:0];
 }
 
 - (void)startWithPort:(NSInteger)port inspectorPort:(NSInteger)inspectorPort {
+    self.lastPort = port;
+    self.lastInspectorPort = inspectorPort;
+
     if (self.netService) {
         [self stop];
     }
 
     NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
     NSString *deviceName = [[UIDevice currentDevice] name];
+    NSString *vendorId = [[[UIDevice currentDevice] identifierForVendor] UUIDString] ?: @"unknown";
+    NSString *deviceId = [NSString stringWithFormat:@"%@|%@", bundleId, vendorId];
     NSString *serviceName = [NSString stringWithFormat:@"%@|%@", deviceName, bundleId];
 
     self.netService = [[NSNetService alloc] initWithDomain:@""
@@ -29,6 +58,7 @@ NSString *const kWNServiceType = @"_whiteneedle._tcp.";
     self.netService.delegate = self;
 
     NSMutableDictionary *txtDict = [@{
+        @"deviceId": deviceId,
         @"bundleId": bundleId,
         @"device": deviceName,
         @"systemVersion": [[UIDevice currentDevice] systemVersion],
@@ -48,7 +78,7 @@ NSString *const kWNServiceType = @"_whiteneedle._tcp.";
     [self.netService publish];
 
     _isPublishing = YES;
-    NSLog(@"[WhiteNeedle] Bonjour: Publishing '%@' on port %ld (inspector: %ld)", serviceName, (long)port, (long)inspectorPort);
+    NSLog(@"[WhiteNeedle] Bonjour: Publishing '%@' on port %ld (inspector: %ld, deviceId: %@)", serviceName, (long)port, (long)inspectorPort, deviceId);
 }
 
 - (void)stop {

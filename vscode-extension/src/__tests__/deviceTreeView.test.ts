@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'events';
 
+let mockConfigValues: Record<string, unknown> = {};
+
 vi.mock('vscode', () => {
     class MockTreeItem {
         label: string;
@@ -26,7 +28,10 @@ vi.mock('vscode', () => {
             fire(data: any) { this._cbs.forEach(cb => cb(data)); }
         },
         workspace: {
-            getConfiguration: () => ({ update: vi.fn().mockResolvedValue(undefined) }),
+            getConfiguration: () => ({
+                update: vi.fn().mockResolvedValue(undefined),
+                get: vi.fn((key: string, def?: unknown) => Object.prototype.hasOwnProperty.call(mockConfigValues, key) ? mockConfigValues[key] : def),
+            }),
         },
         ConfigurationTarget: { Global: 1 },
     };
@@ -38,6 +43,7 @@ function makeDevice(overrides?: Partial<WNDevice>): WNDevice {
     return {
         name: 'TestApp',
         host: '192.168.1.100',
+        aliasIPs: ['192.168.1.100'],
         port: 27042,
         bundleId: 'com.test.app',
         deviceName: 'iPhone 15',
@@ -94,6 +100,7 @@ describe('DeviceTreeProvider', () => {
     let treeProvider: DeviceTreeProvider;
 
     beforeEach(() => {
+        mockConfigValues = {};
         discovery = new MockDiscovery();
         deviceManager = new MockDeviceManager();
         treeProvider = new DeviceTreeProvider(discovery as any, deviceManager as any);
@@ -134,6 +141,17 @@ describe('DeviceTreeProvider', () => {
 
             const items = await treeProvider.getChildren();
             expect(items[0].contextValue).toBe('device');
+        });
+
+        it('shows blocked icon and disables connect for blocked device', async () => {
+            mockConfigValues['blockedHosts'] = ['192.168.1.100'];
+            const device = makeDevice({ host: '192.168.1.100' });
+            discovery.setDevices([device]);
+
+            const items = await treeProvider.getChildren();
+            expect(items[0].contextValue).toBe('blockedDevice');
+            expect((items[0].iconPath as any)?.id).toBe('circle-slash');
+            expect(items[0].command).toBeUndefined();
         });
 
         it('shows description as bundleId', async () => {
@@ -232,8 +250,9 @@ describe('DeviceTreeProvider', () => {
             const rootItems = await treeProvider.getChildren();
             const details = await treeProvider.getChildren(rootItems[0]);
 
-            expect(details.length).toBe(7);
+            expect(details.length).toBe(8);
             expect(details.some(d => (d.label as string).includes('IP'))).toBe(true);
+            expect(details.some(d => (d.label as string).includes('Alias IPs'))).toBe(true);
             expect(details.some(d => (d.label as string).includes('Bundle'))).toBe(true);
             expect(details.some(d => (d.label as string).includes('iOS'))).toBe(true);
             expect(details.some(d => (d.label as string).includes('Model'))).toBe(true);

@@ -47,3 +47,7 @@ jsconfig.json
 
 # Optional: local Cursor rules with machine paths (uncomment if needed)
 # .cursor/
+.gitnexus
+.claude
+.cursor
+ios-example/WhiteNeedleExample/Frameworks/*

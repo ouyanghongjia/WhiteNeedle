@@ -5,7 +5,10 @@ NS_ASSUME_NONNULL_BEGIN
 @class WNRemoteServer;
 
 /**
- * WNNetworkMonitor — hooks NSURLSession to capture HTTP traffic.
+ * WNNetworkMonitor — captures HTTP traffic via NSURLProtocol.
+ *
+ * Uses a custom NSURLProtocol subclass injected into NSURLSessionConfiguration
+ * to intercept ALL NSURLSession traffic (completion-based and delegate-based).
  *
  * Broadcasts JSON-RPC notifications:
  *   networkRequest  — when a request starts
@@ -29,6 +32,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSArray<NSDictionary *> *)capturedRequestList;
 - (nullable NSDictionary *)requestDetailForId:(NSString *)requestId;
 - (void)clearAll;
+
+/// Inject an externally captured request (e.g. from WNCurlMonitor) into the shared store.
+- (void)injectCapturedSummary:(NSDictionary *)summary;
 
 @end
 

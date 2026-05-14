@@ -48,6 +48,7 @@ function makeService(overrides?: Partial<any>): any {
         port: 27042,
         addresses: ['192.168.1.100'],
         txt: {
+            deviceId: 'com.test.app|vendor-a',
             bundleId: 'com.test.app',
             device: 'iPhone 15',
             systemVersion: '18.0',
@@ -112,7 +113,9 @@ describe('DeviceDiscovery', () => {
             const device: WNDevice = foundSpy.mock.calls[0][0];
             expect(device.name).toBe('TestApp');
             expect(device.host).toBe('192.168.1.100');
+            expect(device.aliasIPs).toEqual(['192.168.1.100']);
             expect(device.port).toBe(27042);
+            expect(device.deviceId).toBe('com.test.app|vendor-a');
             expect(device.bundleId).toBe('com.test.app');
             expect(device.deviceName).toBe('iPhone 15');
             expect(device.systemVersion).toBe('18.0');
@@ -217,16 +220,18 @@ describe('DeviceDiscovery', () => {
 
             mockBrowserInstance.simulateServiceUp(makeService({
                 addresses: ['192.168.1.100'],
+                txt: { ...makeService().txt, deviceId: 'com.test.app|vendor-a' },
             }));
             mockBrowserInstance.simulateServiceUp(makeService({
                 addresses: ['192.168.1.101'],
+                txt: { ...makeService().txt, deviceId: 'com.test.app|vendor-b' },
             }));
 
             expect(foundSpy).toHaveBeenCalledTimes(2);
             expect(discovery.getDevices().length).toBe(2);
         });
 
-        it('BUG: same device with different port vs enginePort can appear as different entries', () => {
+        it('dedupes same deviceId even if service port/address changes', () => {
             discovery.start();
             const foundSpy = vi.fn();
             discovery.on('deviceFound', foundSpy);
@@ -243,12 +248,25 @@ describe('DeviceDiscovery', () => {
                 txt: { ...makeService().txt, enginePort: '27043' },
             }));
 
-            // Discovery uses host:port as key, so same host with different port → 2 entries
-            // This is a potential source of the "device appearing twice" bug
-            expect(discovery.getDevices().length).toBe(2);
+            // Same deviceId should collapse into one logical device
+            expect(discovery.getDevices().length).toBe(1);
+            expect(foundSpy).toHaveBeenCalledTimes(1);
+        });
+
+        it('aggregates alias IPs for the same deviceId', () => {
+            discovery.start();
+            mockBrowserInstance.simulateServiceUp(makeService({
+                addresses: ['10.13.157.101', '169.254.177.109'],
+                txt: { ...makeService().txt, deviceId: 'com.test.app|vendor-a' },
+            }));
+            mockBrowserInstance.simulateServiceUp(makeService({
+                addresses: ['169.254.177.109', '10.13.157.101', 'fe80::1234'],
+                txt: { ...makeService().txt, deviceId: 'com.test.app|vendor-a' },
+            }));
+
             const devices = discovery.getDevices();
-            expect(devices[0].host).toBe(devices[1].host);
-            expect(devices[0].enginePort).toBe(devices[1].enginePort);
+            expect(devices.length).toBe(1);
+            expect(devices[0].aliasIPs).toEqual(['10.13.157.101', '169.254.177.109', 'fe80::1234']);
         });
 
         it('updates existing device data on second broadcast', () => {
@@ -285,8 +303,15 @@ describe('DeviceDiscovery', () => {
             expect(discovery.getDevices().length).toBe(1);
 
             mockBrowserInstance.simulateServiceDown({
+                name: 'TestApp',
                 addresses: ['192.168.1.100'],
                 port: 27042,
+                txt: {
+                    deviceId: 'com.test.app|vendor-a',
+                    bundleId: 'com.test.app',
+                    device: 'iPhone 15',
+                    enginePort: '27043',
+                },
             });
 
             expect(lostSpy).toHaveBeenCalledTimes(1);
@@ -354,6 +379,7 @@ describe('DeviceDiscovery', () => {
             }));
             mockBrowserInstance.simulateServiceUp(makeService({
                 addresses: ['192.168.1.101'], port: 27042,
+                txt: { ...makeService().txt, deviceId: 'com.test.app|vendor-b' },
             }));
 
             const devices = discovery.getDevices();

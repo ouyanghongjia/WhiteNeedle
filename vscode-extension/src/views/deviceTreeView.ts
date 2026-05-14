@@ -29,6 +29,9 @@ export class DeviceTreeProvider implements vscode.TreeDataProvider<DeviceTreeIte
             return fromDiscovery;
         }
         const isSame = (a: WNDevice, b: WNDevice): boolean => {
+            if (a.deviceId && b.deviceId) {
+                return a.deviceId === b.deviceId;
+            }
             if (a.bundleId && a.bundleId !== 'unknown' && a.deviceName &&
                 b.bundleId && b.bundleId !== 'unknown' && b.deviceName) {
                 return a.bundleId === b.bundleId && a.deviceName === b.deviceName;
@@ -61,6 +64,7 @@ export class DeviceTreeProvider implements vscode.TreeDataProvider<DeviceTreeIte
         return Promise.resolve(
             devices.map(d => {
                 const isConnected = this.deviceManager.isConnectedTo(d);
+                const isBlocked = this.isBlockedDevice(d);
                 const item = new DeviceTreeItem(
                     d.deviceName,
                     vscode.TreeItemCollapsibleState.Collapsed,
@@ -68,11 +72,14 @@ export class DeviceTreeProvider implements vscode.TreeDataProvider<DeviceTreeIte
                 );
                 item.description = d.bundleId;
                 item.iconPath = new vscode.ThemeIcon(
-                    isConnected ? 'debug-disconnect' : 'device-mobile'
+                    isBlocked ? 'circle-slash' : isConnected ? 'debug-disconnect' : 'device-mobile'
                 );
-                item.contextValue = isConnected ? 'connectedDevice' : 'device';
+                item.contextValue = isBlocked ? 'blockedDevice' : isConnected ? 'connectedDevice' : 'device';
+                if (isBlocked) {
+                    item.tooltip = 'Blocked target';
+                }
 
-                if (!isConnected) {
+                if (!isConnected && !isBlocked) {
                     item.command = {
                         command: 'whiteneedle.connectDevice',
                         title: 'Connect',
@@ -85,8 +92,24 @@ export class DeviceTreeProvider implements vscode.TreeDataProvider<DeviceTreeIte
         );
     }
 
+    private isBlockedDevice(device: WNDevice): boolean {
+        const cfg = vscode.workspace.getConfiguration('whiteneedle');
+        const blockedHosts = new Set((cfg.get<string[]>('blockedHosts', []) || []).map((x) => String(x || '').trim()).filter(Boolean));
+        const blockedDeviceIds = new Set((cfg.get<string[]>('blockedDeviceIds', []) || []).map((x) => String(x || '').trim()).filter(Boolean));
+        if (device.deviceId && blockedDeviceIds.has(device.deviceId)) {
+            return true;
+        }
+        if (device.host && blockedHosts.has(device.host)) {
+            return true;
+        }
+        if (device.aliasIPs && device.aliasIPs.some((ip) => blockedHosts.has(ip))) {
+            return true;
+        }
+        return false;
+    }
+
     private getDeviceDetails(device: WNDevice): DeviceTreeItem[] {
-        return [
+        const details = [
             this.detailItem('IP', `${device.host}:${device.port}`),
             this.detailItem('Bundle', device.bundleId),
             this.detailItem('iOS', device.systemVersion),
@@ -95,6 +118,13 @@ export class DeviceTreeProvider implements vscode.TreeDataProvider<DeviceTreeIte
             this.detailItem('Engine', device.engineType),
             this.detailItem('WN Version', device.wnVersion),
         ];
+        if (device.aliasIPs && device.aliasIPs.length > 0) {
+            details.push(this.detailItem('Alias IPs', device.aliasIPs.join(', ')));
+        }
+        if (device.deviceId) {
+            details.push(this.detailItem('Device ID', device.deviceId));
+        }
+        return details;
     }
 
     private detailItem(label: string, value: string): DeviceTreeItem {

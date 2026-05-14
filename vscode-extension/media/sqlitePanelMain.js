@@ -18,11 +18,20 @@
     var queryResults = {};
     var snapshots = {};
 
+    var dbFilterText = '';
+    var dbSortMode = 'name-asc';
+    var showUint64 = false;
+
     var discoverBtn = document.getElementById('discoverBtn');
+    var refreshBtn = document.getElementById('refreshBtn');
     var statusEl = document.getElementById('status');
     var sidebarEl = document.getElementById('sidebar');
     var detailEl = document.getElementById('detail');
     var toastEl = document.getElementById('toast');
+    var dbFilterInput = document.getElementById('dbFilterInput');
+    var dbFilterClear = document.getElementById('dbFilterClear');
+    var dbSortSelect = document.getElementById('dbSortSelect');
+    var filterMatchInfo = document.getElementById('filterMatchInfo');
 
     /* --- Split-panel resizer, collapse, close & maximize logic --- */
     var sidebarPanel = document.getElementById('sidebarPanel');
@@ -38,6 +47,67 @@
     var dbCountBadge = document.getElementById('dbCount');
     var sidebarCollapsed = false;
     var detailClosed = true;
+
+    function getFilteredAndSortedDatabases() {
+        var list = databases;
+        if (dbFilterText) {
+            var lf = dbFilterText.toLowerCase();
+            list = list.filter(function(db) {
+                return db.name.toLowerCase().indexOf(lf) >= 0 || db.path.toLowerCase().indexOf(lf) >= 0;
+            });
+        }
+        var parts = dbSortMode.split('-');
+        var field = parts[0];
+        var dir = parts[1] === 'desc' ? -1 : 1;
+        list = list.slice().sort(function(a, b) {
+            var va, vb;
+            if (field === 'name') {
+                va = a.name.toLowerCase();
+                vb = b.name.toLowerCase();
+                return va < vb ? -dir : va > vb ? dir : 0;
+            } else if (field === 'size') {
+                return ((a.size || 0) - (b.size || 0)) * dir;
+            } else if (field === 'tables') {
+                return ((a.tableCount || 0) - (b.tableCount || 0)) * dir;
+            } else if (field === 'mtime') {
+                return ((a.mtime || 0) - (b.mtime || 0)) * dir;
+            }
+            return 0;
+        });
+        return list;
+    }
+
+    function updateFilterClearBtn() {
+        if (dbFilterClear) {
+            if (dbFilterText) {
+                dbFilterClear.classList.add('visible');
+            } else {
+                dbFilterClear.classList.remove('visible');
+            }
+        }
+    }
+
+    if (dbFilterInput) {
+        dbFilterInput.addEventListener('input', function() {
+            dbFilterText = this.value;
+            updateFilterClearBtn();
+            renderSidebar();
+        });
+    }
+    if (dbFilterClear) {
+        dbFilterClear.addEventListener('click', function() {
+            dbFilterText = '';
+            if (dbFilterInput) dbFilterInput.value = '';
+            updateFilterClearBtn();
+            renderSidebar();
+        });
+    }
+    if (dbSortSelect) {
+        dbSortSelect.addEventListener('change', function() {
+            dbSortMode = this.value;
+            renderSidebar();
+        });
+    }
 
     function syncLayout() {
         if (detailClosed) {
@@ -252,16 +322,30 @@
         }
         if (databases.length === 0) {
             sidebarEl.innerHTML = '<div class="empty">Click "Discover Databases" to scan sandbox</div>';
+            if (filterMatchInfo) filterMatchInfo.textContent = '';
+            return;
+        }
+        var filtered = getFilteredAndSortedDatabases();
+        if (filterMatchInfo) {
+            if (dbFilterText) {
+                filterMatchInfo.textContent = filtered.length + '/' + databases.length;
+            } else {
+                filterMatchInfo.textContent = '';
+            }
+        }
+        if (filtered.length === 0) {
+            sidebarEl.innerHTML = '<div class="empty">No databases match "' + esc(dbFilterText) + '"</div>';
             return;
         }
         var html = '';
-        for (var i = 0; i < databases.length; i++) {
-            var db = databases[i];
+        for (var i = 0; i < filtered.length; i++) {
+            var db = filtered[i];
             var isOpen = !!openDbs[db.path];
+            var nameHtml = dbFilterText ? highlightMatch(db.name, dbFilterText) : esc(db.name);
             html += '<div class="db-section">';
-            html += '<div class="db-header" data-db-idx="' + i + '">';
+            html += '<div class="db-header" data-db-path="' + esc(db.path) + '">';
             html += '<span class="arrow ' + (isOpen ? 'open' : '') + '">&#9654;</span>';
-            html += '<strong>' + esc(db.name) + '</strong>';
+            html += '<strong>' + nameHtml + '</strong>';
             html += ' <span class="badge">' + db.tableCount + ' tables</span>';
             html += ' <span class="size-label">' + formatSize(db.size) + '</span>';
             html += '</div>';
@@ -290,12 +374,11 @@
         var headers = sidebarEl.querySelectorAll('.db-header');
         for (var i = 0; i < headers.length; i++) {
             headers[i].addEventListener('click', function() {
-                var idx = parseInt(this.getAttribute('data-db-idx'), 10);
-                var db = databases[idx];
-                if (!db) return;
-                openDbs[db.path] = !openDbs[db.path];
-                if (openDbs[db.path] && !tableCache[db.path]) {
-                    vscode.postMessage({ command: 'loadTables', dbPath: db.path });
+                var dbPath = this.getAttribute('data-db-path');
+                if (!dbPath) return;
+                openDbs[dbPath] = !openDbs[dbPath];
+                if (openDbs[dbPath] && !tableCache[dbPath]) {
+                    vscode.postMessage({ command: 'loadTables', dbPath: dbPath });
                 }
                 renderSidebar();
             });
@@ -328,7 +411,7 @@
     function renderDetail() {
         persistSqlInput();
         if (!selectedDb || !selectedTable) {
-            detailEl.innerHTML = '<div class="empty">Select a table from the sidebar</div>';
+            detailEl.innerHTML = '<div class="detail-body-inner"><div class="empty">Select a table from the sidebar</div></div>';
             if (detailTitle) detailTitle.textContent = 'Data View';
             return;
         }
@@ -342,6 +425,7 @@
         }
 
         var html = '';
+        html += '<div class="detail-body-inner">';
         html += '<div class="tab-bar">';
         html += '<div class="tab' + (activeTab === 'data' ? ' active' : '') + '" data-tab="data">Data</div>';
         html += '<div class="tab' + (activeTab === 'schema' ? ' active' : '') + '" data-tab="schema">Schema</div>';
@@ -357,7 +441,10 @@
         } else if (data.error) {
             html += '<div style="padding:12px;color:var(--error-fg)">' + esc(data.error) + '</div>';
         } else {
-            html += '<div style="margin-bottom:4px;font-size:11px;opacity:0.6">' + data.rowCount + ' rows' + (data.truncated ? ' (truncated)' : '') + '</div>';
+            html += '<div class="data-options-bar">';
+            html += '<span style="font-size:11px;opacity:0.6">' + data.rowCount + ' rows' + (data.truncated ? ' (truncated)' : '') + '</span>';
+            html += '<label class="uint64-toggle" title="Treat negative integers as unsigned 64-bit values"><input type="checkbox" id="uint64Check"' + (showUint64 ? ' checked' : '') + ' /> Show as uint64</label>';
+            html += '</div>';
             html += '<div class="data-scroll">' + buildDataTable(data.rows) + '</div>';
         }
         html += '</div>';
@@ -368,7 +455,8 @@
         if (!schema) {
             html += '<div style="padding:12px;opacity:0.5">Loading...</div>';
         } else {
-            html += '<table><tr><th>#</th><th>Name</th><th>Type</th><th>NotNull</th><th>Default</th><th>PK</th></tr>';
+            html += '<div class="data-scroll">';
+            html += '<table><thead><tr><th>#</th><th>Name</th><th>Type</th><th>NotNull</th><th>Default</th><th>PK</th></tr></thead><tbody>';
             for (var s = 0; s < schema.length; s++) {
                 var col = schema[s];
                 html += '<tr>';
@@ -380,7 +468,8 @@
                 html += '<td>' + (col.pk ? '&#128273;' : '') + '</td>';
                 html += '</tr>';
             }
-            html += '</table>';
+            html += '</tbody></table>';
+            html += '</div>';
         }
         html += '</div>';
 
@@ -399,7 +488,10 @@
             if (qr.error) {
                 html += '<div style="padding:8px;color:var(--error-fg)">' + esc(qr.error) + '</div>';
             } else if (qr.rows) {
-                html += '<div style="margin-bottom:4px;font-size:11px;opacity:0.6">' + qr.rowCount + ' rows' + (qr.truncated ? ' (truncated)' : '') + '</div>';
+                html += '<div class="data-options-bar">';
+                html += '<span style="font-size:11px;opacity:0.6">' + qr.rowCount + ' rows' + (qr.truncated ? ' (truncated)' : '') + '</span>';
+                html += '<label class="uint64-toggle" title="Treat negative integers as unsigned 64-bit values"><input type="checkbox" id="uint64CheckQuery"' + (showUint64 ? ' checked' : '') + ' /> Show as uint64</label>';
+                html += '</div>';
                 html += '<div class="data-scroll">' + buildDataTable(qr.rows) + '</div>';
             } else if (qr.ok !== undefined) {
                 html += '<div style="padding:8px;color:var(--success)">' + qr.changes + ' rows affected</div>';
@@ -413,17 +505,20 @@
         html += '<input id="snapTag" placeholder="snapshot tag" value="' + (snapshots[key + '::lastTag'] || 'before') + '" />';
         html += '<button id="snapBtn" class="success small">Take Snapshot</button>';
         html += '<button id="diffBtn" class="warning small">Diff vs Snapshot</button>';
+        html += '<div style="margin-left:auto;">';
+        html += '<label class="uint64-toggle" title="Treat negative integers as unsigned 64-bit values"><input type="checkbox" id="uint64CheckMonitor"' + (showUint64 ? ' checked' : '') + ' /> Show as uint64</label>';
+        html += '</div>';
         html += '</div>';
         var snap = snapshots[key + '::snap'];
         if (snap) {
-            html += '<div style="font-size:11px;opacity:0.6;margin-bottom:4px">Snapshot "' + esc(snap.tag) + '": ' + snap.result.rowCount + ' rows at ' + new Date(snap.result.timestamp || Date.now()).toLocaleTimeString() + '</div>';
+            html += '<div style="font-size:11px;opacity:0.6;margin-bottom:4px;flex-shrink:0;">Snapshot "' + esc(snap.tag) + '": ' + snap.result.rowCount + ' rows at ' + new Date(snap.result.timestamp || Date.now()).toLocaleTimeString() + '</div>';
         }
         var diff = snapshots[key + '::diff'];
         if (diff) {
             if (diff.error) {
-                html += '<div style="color:var(--error-fg)">' + esc(diff.error) + '</div>';
+                html += '<div style="color:var(--error-fg);flex-shrink:0;">' + esc(diff.error) + '</div>';
             } else {
-                html += '<div style="margin-bottom:6px">';
+                html += '<div style="margin-bottom:6px;flex-shrink:0;">';
                 html += '<span class="badge">' + diff.oldRowCount + ' → ' + diff.newRowCount + '</span> ';
                 if (diff.hasChanges) {
                     html += '<span class="badge green">+' + diff.addedCount + '</span> ';
@@ -432,17 +527,28 @@
                     html += '<span style="opacity:0.6">No changes</span>';
                 }
                 html += '</div>';
+                
+                // Group added and removed sections so they share the remaining height properly
+                html += '<div style="display:flex;flex-direction:column;flex:1;min-height:0;gap:8px;">';
+                
                 if (diff.added && diff.added.length > 0) {
-                    html += '<div style="margin-bottom:4px;font-size:11px;font-weight:600;color:var(--success)">Added rows:</div>';
+                    html += '<div style="display:flex;flex-direction:column;flex:1;min-height:0;">';
+                    html += '<div style="margin-bottom:4px;font-size:11px;font-weight:600;color:var(--success);flex-shrink:0;">Added rows:</div>';
                     html += '<div class="data-scroll">' + buildDataTable(diff.added, 'diff-added') + '</div>';
+                    html += '</div>';
                 }
                 if (diff.removed && diff.removed.length > 0) {
-                    html += '<div style="margin:8px 0 4px;font-size:11px;font-weight:600;color:var(--error-fg)">Removed rows:</div>';
+                    html += '<div style="display:flex;flex-direction:column;flex:1;min-height:0;">';
+                    html += '<div style="margin-bottom:4px;font-size:11px;font-weight:600;color:var(--error-fg);flex-shrink:0;">Removed rows:</div>';
                     html += '<div class="data-scroll">' + buildDataTable(diff.removed, 'diff-removed') + '</div>';
+                    html += '</div>';
                 }
+                
+                html += '</div>'; // close diff flex group
             }
         }
-        html += '</div>';
+        html += '</div>'; // close monitor tab-content
+        html += '</div>'; // close detail-body-inner
 
         detailEl.innerHTML = html;
         bindDetailEvents(key);
@@ -527,16 +633,28 @@
                 vscode.postMessage({ command: 'diffSnapshot', dbPath: selectedDb, tableName: selectedTable, tag: tag });
             });
         }
+
+        var uint64Checks = detailEl.querySelectorAll('#uint64Check, #uint64CheckQuery, #uint64CheckMonitor');
+        for (var ui = 0; ui < uint64Checks.length; ui++) {
+            uint64Checks[ui].addEventListener('change', function() {
+                showUint64 = this.checked;
+                var otherChecks = detailEl.querySelectorAll('#uint64Check, #uint64CheckQuery, #uint64CheckMonitor');
+                for (var oi = 0; oi < otherChecks.length; oi++) {
+                    otherChecks[oi].checked = showUint64;
+                }
+                renderDetail();
+            });
+        }
     }
 
     function buildDataTable(rows, rowClass) {
         if (!rows || rows.length === 0) return '<div style="padding:8px;opacity:0.5">No data</div>';
         var cols = Object.keys(rows[0]);
-        var html = '<table><tr>';
+        var html = '<table><thead><tr>';
         for (var c = 0; c < cols.length; c++) {
             html += '<th>' + esc(cols[c]) + '</th>';
         }
-        html += '</tr>';
+        html += '</tr></thead><tbody>';
         for (var r = 0; r < rows.length; r++) {
             html += '<tr' + (rowClass ? ' class="' + rowClass + '"' : '') + '>';
             for (var ci = 0; ci < cols.length; ci++) {
@@ -544,13 +662,15 @@
                 if (val === null || val === undefined) {
                     html += '<td class="null-val">NULL</td>';
                 } else {
-                    var s = typeof val === 'object' ? JSON.stringify(val) : String(val);
-                    html += '<td title="' + esc(s) + '">' + esc(trunc(s, 60)) + '</td>';
+                    var s = formatCellValue(val);
+                    var isConverted = showUint64 && isNegativeInteger(val) && toUint64Str(val) !== null;
+                    var tooltip = isConverted ? 'signed: ' + val + ' → unsigned: ' + s : s;
+                    html += '<td' + (isConverted ? ' class="uint64-val"' : '') + ' title="' + esc(tooltip) + '">' + esc(trunc(s, 60)) + '</td>';
                 }
             }
             html += '</tr>';
         }
-        html += '</table>';
+        html += '</tbody></table>';
         return html;
     }
 
@@ -572,10 +692,17 @@
         switch (msg.command) {
             case 'databasesLoaded':
                 discoverBtn.disabled = false;
+                if (refreshBtn) refreshBtn.disabled = false;
                 statusEl.textContent = '';
                 databases = msg.databases || [];
                 openDbs = {};
                 tableCache = {};
+                schemaCache = {};
+                dataCache = {};
+                queryResults = {};
+                snapshots = {};
+                selectedDb = null;
+                selectedTable = null;
                 renderSidebar();
                 showToast(databases.length + ' databases found');
                 break;
@@ -620,6 +747,7 @@
                 break;
             case 'error':
                 discoverBtn.disabled = false;
+                if (refreshBtn) refreshBtn.disabled = false;
                 statusEl.textContent = '';
                 showToast(msg.text, true);
                 break;
@@ -632,7 +760,42 @@
         return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
     }
     function trunc(s, n) { return s && s.length > n ? s.substring(0, n) + '\\u2026' : (s || ''); }
+    function isNumeric(val) {
+        if (typeof val === 'number') return true;
+        if (typeof val === 'string' && /^-?\d+$/.test(val)) return true;
+        return false;
+    }
+    function isNegativeInteger(val) {
+        if (!isNumeric(val)) return false;
+        if (typeof val === 'number') return val < 0 && val === Math.floor(val);
+        if (typeof val === 'string') return val.charAt(0) === '-' && /^-?\d+$/.test(val);
+        return false;
+    }
+    function toUint64Str(val) {
+        if (!isNegativeInteger(val)) return null;
+        try {
+            return (BigInt(val) + BigInt('18446744073709551616')).toString();
+        } catch (e) { return null; }
+    }
+    function formatCellValue(val) {
+        if (showUint64 && isNegativeInteger(val)) {
+            var u = toUint64Str(val);
+            if (u !== null) return u;
+        }
+        return typeof val === 'object' ? JSON.stringify(val) : String(val);
+    }
     function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+    function highlightMatch(text, keyword) {
+        if (!keyword) return esc(text);
+        var lower = text.toLowerCase();
+        var kw = keyword.toLowerCase();
+        var idx = lower.indexOf(kw);
+        if (idx < 0) return esc(text);
+        var before = text.substring(0, idx);
+        var match = text.substring(idx, idx + kw.length);
+        var after = text.substring(idx + kw.length);
+        return esc(before) + '<mark style="background:var(--vscode-editor-findMatchHighlightBackground,rgba(234,92,0,0.33));color:inherit;padding:0 1px;border-radius:2px">' + esc(match) + '</mark>' + esc(after);
+    }
     function showToast(text, isError) {
         toastEl.textContent = text;
         toastEl.className = 'toast show' + (isError ? ' error' : '');

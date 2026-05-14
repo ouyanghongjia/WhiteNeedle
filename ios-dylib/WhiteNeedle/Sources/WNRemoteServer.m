@@ -6,6 +6,7 @@
 #import "WNNetworkMonitor.h"
 #import "WNUIDebugBridge.h"
 #import "WNMockInterceptor.h"
+#import "WNNativeLogCapture.h"
 #import <sys/socket.h>
 #import <netinet/in.h>
 #import <arpa/inet.h>
@@ -117,42 +118,52 @@ static void WNSocketCallback(CFSocketRef socket, CFSocketCallBackType type,
 - (void)start {
     if (self.isListening) return;
 
-    CFSocketContext ctx = {0, (__bridge void *)self, NULL, NULL, NULL};
-    self.listenSocket = CFSocketCreate(NULL, AF_INET, SOCK_STREAM, IPPROTO_TCP,
-                                       kCFSocketAcceptCallBack, WNSocketCallback, &ctx);
-    if (!self.listenSocket) {
-        NSLog(@"%@ Failed to create socket", kLogPrefix);
+    uint16_t basePort = self.port;
+    uint16_t maxPort = basePort + 20;
+
+    for (uint16_t tryPort = basePort; tryPort <= maxPort; tryPort++) {
+        CFSocketContext ctx = {0, (__bridge void *)self, NULL, NULL, NULL};
+        CFSocketRef sock = CFSocketCreate(NULL, AF_INET, SOCK_STREAM, IPPROTO_TCP,
+                                          kCFSocketAcceptCallBack, WNSocketCallback, &ctx);
+        if (!sock) {
+            NSLog(@"%@ Failed to create socket", kLogPrefix);
+            return;
+        }
+
+        int yes = 1;
+        setsockopt(CFSocketGetNative(sock), SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+
+        struct sockaddr_in addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(tryPort);
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+        CFDataRef addrData = CFDataCreate(NULL, (const UInt8 *)&addr, sizeof(addr));
+        CFSocketError err = CFSocketSetAddress(sock, addrData);
+        CFRelease(addrData);
+
+        if (err != kCFSocketSuccess) {
+            NSLog(@"%@ Port %d in use, trying next...", kLogPrefix, tryPort);
+            CFRelease(sock);
+            continue;
+        }
+
+        self.listenSocket = sock;
+        self.port = tryPort;
+
+        CFRunLoopSourceRef source = CFSocketCreateRunLoopSource(NULL, self.listenSocket, 0);
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, kCFRunLoopCommonModes);
+        CFRelease(source);
+
+        self.isListening = YES;
+        NSLog(@"%@ Listening on port %d (server=%p)", kLogPrefix, self.port, self);
+
+        [self.engine addObserver:(id<WNJSEngineDelegate>)self];
         return;
     }
 
-    int yes = 1;
-    setsockopt(CFSocketGetNative(self.listenSocket), SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(self.port);
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
-
-    CFDataRef addrData = CFDataCreate(NULL, (const UInt8 *)&addr, sizeof(addr));
-    CFSocketError err = CFSocketSetAddress(self.listenSocket, addrData);
-    CFRelease(addrData);
-
-    if (err != kCFSocketSuccess) {
-        NSLog(@"%@ Failed to bind to port %d", kLogPrefix, self.port);
-        CFRelease(self.listenSocket);
-        self.listenSocket = NULL;
-        return;
-    }
-
-    CFRunLoopSourceRef source = CFSocketCreateRunLoopSource(NULL, self.listenSocket, 0);
-    CFRunLoopAddSource(CFRunLoopGetMain(), source, kCFRunLoopCommonModes);
-    CFRelease(source);
-
-    self.isListening = YES;
-    NSLog(@"%@ Listening on port %d", kLogPrefix, self.port);
-
-    [self.engine addObserver:(id<WNJSEngineDelegate>)self];
+    NSLog(@"%@ Failed to bind to any port in range %d–%d", kLogPrefix, basePort, maxPort);
 }
 
 - (void)stop {
@@ -177,7 +188,10 @@ static void WNSocketCallback(CFSocketRef socket, CFSocketCallBackType type,
     WNClientConnection *client = [[WNClientConnection alloc] initWithHandle:handle server:self];
     [self.clients addObject:client];
     [client open];
-    NSLog(@"%@ Client connected (%lu total)", kLogPrefix, (unsigned long)self.clients.count);
+    NSLog(@"%@ Client connected (%lu total, server=%p, client=%p)",
+          kLogPrefix, (unsigned long)self.clients.count, self, client);
+
+    [[WNNativeLogCapture shared] clientDidConnect];
 }
 
 #pragma mark - NSStreamDelegate
@@ -209,7 +223,11 @@ static void WNSocketCallback(CFSocketRef socket, CFSocketCallBackType type,
         case NSStreamEventErrorOccurred: {
             [client close];
             [self.clients removeObject:client];
-            NSLog(@"%@ Client disconnected (%lu remaining)", kLogPrefix, (unsigned long)self.clients.count);
+            NSLog(@"%@ Client disconnected (%lu remaining, server=%p, client=%p)",
+                  kLogPrefix, (unsigned long)self.clients.count, self, client);
+            if (self.clients.count == 0) {
+                [[WNNativeLogCapture shared] clientDidDisconnect];
+            }
             break;
         }
         default:
@@ -630,20 +648,32 @@ static void WNSocketCallback(CFSocketRef socket, CFSocketCallBackType type,
 #pragma mark - Broadcast notifications
 
 - (void)broadcastNotification:(NSString *)method params:(NSDictionary *)params {
-    NSDictionary *notification = @{
-        @"jsonrpc": @"2.0",
-        @"method": method,
-        @"params": params ?: @{}
+    if (self.clients.count == 0) return;
+
+    dispatch_block_t sendBlock = ^{
+        NSArray<WNClientConnection *> *snapshot = [self.clients copy];
+        if (snapshot.count == 0) return;
+
+        NSDictionary *notification = @{
+            @"jsonrpc": @"2.0",
+            @"method": method,
+            @"params": params ?: @{}
+        };
+        NSData *data = [NSJSONSerialization dataWithJSONObject:notification options:0 error:nil];
+        if (!data) return;
+
+        NSMutableData *line = [data mutableCopy];
+        [line appendData:[@"\n" dataUsingEncoding:NSUTF8StringEncoding]];
+
+        for (WNClientConnection *client in snapshot) {
+            [client sendData:line];
+        }
     };
 
-    NSData *data = [NSJSONSerialization dataWithJSONObject:notification options:0 error:nil];
-    if (!data) return;
-
-    NSMutableData *line = [data mutableCopy];
-    [line appendData:[@"\n" dataUsingEncoding:NSUTF8StringEncoding]];
-
-    for (WNClientConnection *client in self.clients) {
-        [client sendData:line];
+    if ([NSThread isMainThread]) {
+        sendBlock();
+    } else {
+        dispatch_async(dispatch_get_main_queue(), sendBlock);
     }
 }
 

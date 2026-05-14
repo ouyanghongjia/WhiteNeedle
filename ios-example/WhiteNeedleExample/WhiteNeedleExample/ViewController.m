@@ -3,13 +3,29 @@
 #import "WNSQLiteDemo.h"
 #import "WNWebViewTestViewController.h"
 #import "WNAutoTestViewController.h"
+#import <TargetConditionals.h>
 #import <WhiteNeedle/WNJSEngine.h>
 #import <WhiteNeedle/WNHookEngine.h>
 #import <WhiteNeedle/WNNativeBridge.h>
 #import <WhiteNeedle/WNModuleLoader.h>
+#if !TARGET_OS_SIMULATOR
+#import <curl.h>
+#endif
 
 static NSString *const kCellID = @"ScriptCell";
 static NSString *const kNetworkCellID = @"NetworkCell";
+
+#if !TARGET_OS_SIMULATOR
+static size_t WNCurlWriteCallback(void *contents, size_t size, size_t nmemb, void *userp) {
+    size_t total = size * nmemb;
+    if (!userp || !contents || total == 0) {
+        return total;
+    }
+    NSMutableData *data = (__bridge NSMutableData *)userp;
+    [data appendBytes:contents length:total];
+    return total;
+}
+#endif
 
 @interface ViewController ()
 @property (nonatomic, strong) UITableView *tableView;
@@ -141,6 +157,30 @@ static NSString *const kNetworkCellID = @"NetworkCell";
            @"emoji": @"🐙",
            @"detail": @"GET https://api.github.com/repos/nicklockwood/iVersion" },
 
+        @{ @"title": @"cURL GET (httpbin)",
+           @"emoji": @"🧵",
+           @"detail": @"cURL GET https://httpbin.org/get?src=curl" },
+
+        @{ @"title": @"cURL POST JSON",
+           @"emoji": @"🧵",
+           @"detail": @"cURL POST https://httpbin.org/post" },
+
+        @{ @"title": @"cURL Batch (3 requests)",
+           @"emoji": @"🧵",
+           @"detail": @"cURL GET+POST+status in parallel" },
+
+        @{ @"title": @"cURL Multi GET+POST (async)",
+           @"emoji": @"🔀",
+           @"detail": @"curl_multi: 2 requests via async multi interface" },
+
+        @{ @"title": @"NSURLSession Cookie Demo",
+           @"emoji": @"🍪",
+           @"detail": @"Request Cookie + response Set-Cookie" },
+
+        @{ @"title": @"cURL Cookie Demo",
+           @"emoji": @"🍪",
+           @"detail": @"cURL request Cookie + response Set-Cookie" },
+
         @{ @"title": @"🚀 Fire All Requests",
            @"emoji": @"🚀",
            @"detail": @"Send all requests above simultaneously" },
@@ -161,7 +201,13 @@ static NSString *const kNetworkCellID = @"NetworkCell";
         case 9:  [self testDelayedResponse]; break;
         case 10: [self testResponseHeaders]; break;
         case 11: [self testGitHubAPI]; break;
-        case 12: [self fireAllNetworkTests]; break;
+        case 12: [self testCurlGET]; break;
+        case 13: [self testCurlPOSTJSON]; break;
+        case 14: [self testCurlBatch]; break;
+        case 15: [self testCurlMulti]; break;
+        case 16: [self testSessionCookieDemo]; break;
+        case 17: [self testCurlCookieDemo]; break;
+        case 18: [self fireAllNetworkTests]; break;
         default: break;
     }
 }
@@ -281,6 +327,218 @@ static NSString *const kNetworkCellID = @"NetworkCell";
     [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
         [self logNetworkResult:@"GitHub API" response:resp data:data error:err];
     }] resume];
+}
+
+- (void)testCurlGET {
+    [self runCurlRequestWithMethod:@"GET"
+                               url:@"https://httpbin.org/get?src=curl"
+                              body:nil
+                            cookie:nil
+                             label:@"cURL GET"];
+}
+
+- (void)testCurlPOSTJSON {
+    NSDictionary *payload = @{
+        @"client": @"WhiteNeedleExample",
+        @"transport": @"libcurl",
+        @"feature": @"network-monitor"
+    };
+    NSData *bodyData = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
+    NSString *body = [[NSString alloc] initWithData:bodyData encoding:NSUTF8StringEncoding];
+    [self runCurlRequestWithMethod:@"POST"
+                               url:@"https://httpbin.org/post"
+                              body:body
+                            cookie:nil
+                             label:@"cURL POST JSON"];
+}
+
+- (void)testCurlBatch {
+    [self log:@"NET" message:@"▶ cURL batch: GET + POST + status/418"];
+    [self runCurlRequestWithMethod:@"GET"
+                               url:@"https://httpbin.org/get?batch=1&src=curl"
+                              body:nil
+                            cookie:nil
+                             label:@"cURL Batch GET"];
+    [self runCurlRequestWithMethod:@"POST"
+                               url:@"https://httpbin.org/post"
+                              body:@"{\"batch\":true,\"id\":2}"
+                            cookie:nil
+                             label:@"cURL Batch POST"];
+    [self runCurlRequestWithMethod:@"GET"
+                               url:@"https://httpbin.org/status/418"
+                              body:nil
+                            cookie:nil
+                             label:@"cURL Batch Status"];
+}
+
+- (void)testCurlMulti {
+    [self log:@"NET" message:@"▶ cURL Multi: GET + POST via curl_multi (async)"];
+#if TARGET_OS_SIMULATOR
+    [self log:@"NET" message:@"⚠ cURL Multi skipped: curl.framework only has iOS-device slice, run on real device."];
+    return;
+#else
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        CURLM *multi = curl_multi_init();
+        if (!multi) {
+            [self log:@"NET" message:@"✗ cURL Multi — curl_multi_init failed"];
+            return;
+        }
+
+        // --- Easy handle 1: GET ---
+        CURL *easyGET = curl_easy_init();
+        NSMutableData *getResponse = [NSMutableData data];
+        curl_easy_setopt(easyGET, CURLOPT_URL, "https://httpbin.org/get?src=curl_multi");
+        curl_easy_setopt(easyGET, CURLOPT_WRITEFUNCTION, WNCurlWriteCallback);
+        curl_easy_setopt(easyGET, CURLOPT_WRITEDATA, (__bridge void *)getResponse);
+        curl_easy_setopt(easyGET, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(easyGET, CURLOPT_TIMEOUT, 15L);
+        curl_easy_setopt(easyGET, CURLOPT_USERAGENT, "WhiteNeedleExample/1.0 (curl_multi)");
+
+        // --- Easy handle 2: POST ---
+        CURL *easyPOST = curl_easy_init();
+        NSMutableData *postResponse = [NSMutableData data];
+        const char *postBody = "{\"transport\":\"curl_multi\",\"test\":true}";
+        struct curl_slist *postHeaders = curl_slist_append(NULL, "Content-Type: application/json");
+        curl_easy_setopt(easyPOST, CURLOPT_URL, "https://httpbin.org/post?src=curl_multi");
+        curl_easy_setopt(easyPOST, CURLOPT_WRITEFUNCTION, WNCurlWriteCallback);
+        curl_easy_setopt(easyPOST, CURLOPT_WRITEDATA, (__bridge void *)postResponse);
+        curl_easy_setopt(easyPOST, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(easyPOST, CURLOPT_TIMEOUT, 15L);
+        curl_easy_setopt(easyPOST, CURLOPT_USERAGENT, "WhiteNeedleExample/1.0 (curl_multi)");
+        curl_easy_setopt(easyPOST, CURLOPT_POST, 1L);
+        curl_easy_setopt(easyPOST, CURLOPT_POSTFIELDS, postBody);
+        curl_easy_setopt(easyPOST, CURLOPT_POSTFIELDSIZE, (long)strlen(postBody));
+        curl_easy_setopt(easyPOST, CURLOPT_HTTPHEADER, postHeaders);
+
+        curl_multi_add_handle(multi, easyGET);
+        curl_multi_add_handle(multi, easyPOST);
+
+        int stillRunning = 0;
+        do {
+            CURLMcode mc = curl_multi_perform(multi, &stillRunning);
+            if (mc != CURLM_OK) break;
+            if (stillRunning) {
+                curl_multi_wait(multi, NULL, 0, 1000, NULL);
+            }
+        } while (stillRunning);
+
+        int msgsLeft = 0;
+        CURLMsg *msg;
+        while ((msg = curl_multi_info_read(multi, &msgsLeft)) != NULL) {
+            if (msg->msg == CURLMSG_DONE) {
+                CURL *easy = msg->easy_handle;
+                long code = 0;
+                double totalTime = 0;
+                char *effectiveUrl = NULL;
+                curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &code);
+                curl_easy_getinfo(easy, CURLINFO_TOTAL_TIME, &totalTime);
+                curl_easy_getinfo(easy, CURLINFO_EFFECTIVE_URL, &effectiveUrl);
+                NSString *url = effectiveUrl ? [NSString stringWithUTF8String:effectiveUrl] : @"?";
+                NSUInteger sz = (easy == easyGET) ? getResponse.length : postResponse.length;
+                [self log:@"NET" message:[NSString stringWithFormat:
+                    @"✓ cURL Multi — %@ → %ld (%.0fms) %lu bytes",
+                    url, code, totalTime * 1000, (unsigned long)sz]];
+            }
+        }
+
+        curl_multi_remove_handle(multi, easyGET);
+        curl_multi_remove_handle(multi, easyPOST);
+        curl_easy_cleanup(easyGET);
+        curl_easy_cleanup(easyPOST);
+        if (postHeaders) curl_slist_free_all(postHeaders);
+        curl_multi_cleanup(multi);
+    });
+#endif
+}
+
+- (void)testSessionCookieDemo {
+    [self log:@"NET" message:@"▶ NSURLSession Cookie demo"];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:
+        [NSURL URLWithString:@"https://httpbin.org/response-headers?Set-Cookie=wn_session%3Dabc123%3B%20Path%3D%2F"]];
+    [req setValue:@"client=session; wn_debug=1" forHTTPHeaderField:@"Cookie"];
+    [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+        [self logNetworkResult:@"NSURLSession Cookie Demo" response:resp data:data error:err];
+    }] resume];
+}
+
+- (void)testCurlCookieDemo {
+    [self runCurlRequestWithMethod:@"GET"
+                               url:@"https://httpbin.org/response-headers?Set-Cookie=wn_curl%3Dabc123%3B%20Path%3D%2F"
+                              body:nil
+                            cookie:@"client=curl; wn_debug=1"
+                             label:@"cURL Cookie Demo"];
+}
+
+- (void)runCurlRequestWithMethod:(NSString *)method
+                             url:(NSString *)url
+                            body:(NSString *)body
+                          cookie:(NSString *)cookie
+                           label:(NSString *)label {
+    [self log:@"NET" message:[NSString stringWithFormat:@"▶ %@ %@ %@", label, method, url]];
+#if TARGET_OS_SIMULATOR
+    [self log:@"NET" message:[NSString stringWithFormat:@"⚠ %@ skipped: curl.framework only has iOS-device slice, run on real device.", label]];
+    return;
+#else
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        CURL *curl = curl_easy_init();
+        if (!curl) {
+            [self log:@"NET" message:[NSString stringWithFormat:@"✗ %@ — curl_easy_init failed", label]];
+            return;
+        }
+
+        NSMutableData *responseData = [NSMutableData data];
+        curl_easy_setopt(curl, CURLOPT_URL, [url UTF8String]);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WNCurlWriteCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, (__bridge void *)responseData);
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, "WhiteNeedleExample/1.0 (curl)");
+        if (cookie.length > 0) {
+            curl_easy_setopt(curl, CURLOPT_COOKIE, [cookie UTF8String]);
+        }
+
+        struct curl_slist *headers = NULL;
+        if ([[method uppercaseString] isEqualToString:@"POST"]) {
+            curl_easy_setopt(curl, CURLOPT_POST, 1L);
+            if (body.length > 0) {
+                curl_easy_setopt(curl, CURLOPT_POSTFIELDS, [body UTF8String]);
+                curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen([body UTF8String]));
+            }
+            headers = curl_slist_append(headers, "Content-Type: application/json");
+            if (headers) {
+                curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+            }
+        }
+
+        CURLcode code = curl_easy_perform(curl);
+        long statusCode = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &statusCode);
+        double totalTime = 0;
+        curl_easy_getinfo(curl, CURLINFO_TOTAL_TIME, &totalTime);
+
+        if (code != CURLE_OK) {
+            [self log:@"NET" message:[NSString stringWithFormat:@"✗ %@ — cURL error: %s", label, curl_easy_strerror(code)]];
+        } else {
+            NSString *preview = @"";
+            if (responseData.length > 0 && responseData.length < 2048) {
+                NSString *bodyText = [[NSString alloc] initWithData:responseData encoding:NSUTF8StringEncoding];
+                if (bodyText.length > 200) {
+                    bodyText = [[bodyText substringToIndex:200] stringByAppendingString:@"…"];
+                }
+                if (bodyText.length > 0) {
+                    preview = [NSString stringWithFormat:@"\n    body: %@", bodyText];
+                }
+            }
+            [self log:@"NET" message:[NSString stringWithFormat:@"✓ %@ — %ld (%.0fms) %lu bytes%@",
+                label, statusCode, totalTime * 1000, (unsigned long)responseData.length, preview]];
+        }
+
+        if (headers) {
+            curl_slist_free_all(headers);
+        }
+        curl_easy_cleanup(curl);
+    });
+#endif
 }
 
 - (void)logNetworkResult:(NSString *)label response:(NSURLResponse *)resp data:(NSData *)data error:(NSError *)err {
