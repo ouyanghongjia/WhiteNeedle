@@ -4,6 +4,7 @@
 #import "WNBlockSignatureParser.h"
 #import "WNHeapScanner.h"
 #import "WNObjCProxy.h"
+#import "WNJSEngine.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <malloc/malloc.h>
@@ -294,6 +295,14 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
 
         if (shouldDispatch) {
             BOOL mainHop = (targetQueue == dispatch_get_main_queue());
+            if (mainHop && WNShouldAvoidSynchronousMainFromJSThread()) {
+                NSLog(@"%@ Deadlock avoided: async main dispatch for getProperty '%@' (return undefined)", kLogPrefix, propertyName);
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    getValueBlock();
+                    [[WNJSEngine sharedEngine] wakeJSThread];
+                });
+                return [JSValue valueWithUndefinedInContext:ctx];
+            }
             if (mainHop) atomic_fetch_add(&_wnInvokeMainHopCounter, 1);
             dispatch_sync(targetQueue, getValueBlock);
             if (mainHop) atomic_fetch_sub(&_wnInvokeMainHopCounter, 1);
@@ -341,6 +350,14 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
             };
             if (shouldDispatch) {
                 BOOL mainHop = (targetQueue == dispatch_get_main_queue());
+                if (mainHop && WNShouldAvoidSynchronousMainFromJSThread()) {
+                    NSLog(@"%@ Deadlock avoided: async main dispatch for setProperty '%@' (fire-and-forget)", kLogPrefix, propertyName);
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        setValueBlock();
+                        [[WNJSEngine sharedEngine] wakeJSThread];
+                    });
+                    return;
+                }
                 if (mainHop) atomic_fetch_add(&_wnInvokeMainHopCounter, 1);
                 dispatch_sync(targetQueue, setValueBlock);
                 if (mainHop) atomic_fetch_sub(&_wnInvokeMainHopCounter, 1);
@@ -510,6 +527,15 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
 
     if (shouldDispatch) {
         BOOL mainHop = (targetQueue == dispatch_get_main_queue());
+        if (mainHop && WNShouldAvoidSynchronousMainFromJSThread()) {
+            NSLog(@"%@ Deadlock avoided: async main dispatch for invoke '%@' (return undefined)", kLogPrefix, selectorString);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                invokeBlock();
+                [[WNJSEngine sharedEngine] wakeJSThread];
+            });
+            if (retBuf) free(retBuf);
+            return [JSValue valueWithUndefinedInContext:context];
+        }
         if (mainHop) atomic_fetch_add(&_wnInvokeMainHopCounter, 1);
         dispatch_sync(targetQueue, invokeBlock);
         if (mainHop) atomic_fetch_sub(&_wnInvokeMainHopCounter, 1);

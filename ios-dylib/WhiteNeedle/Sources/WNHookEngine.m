@@ -579,12 +579,18 @@ static void WNHookClosureCallback(ffi_cif *cif, void *ret, void **args, void *us
     WNJSEngine *engine = [WNJSEngine sharedEngine];
 
     // Always execute JS hook logic on the dedicated JS thread when possible.
-    // If main thread is currently serving a dispatch_sync(main) from JS invoke, synchronous handoff
-    // would deadlock (main waits JS, JS waits main). In that case:
-    // - void methods: async forward to JS thread
-    // - non-void methods: safely fall back to original implementation
+    // Deadlock detection: if main thread would block waiting for JS, but JS itself needs main
+    // (dispatch_sync(main) from ObjC bridge), both threads stall forever.
+    // Two known triggers:
+    //   1. JS invoke is mid-hop to main (WNIsInvokeMainThreadHopActive)
+    //   2. Another thread (e.g. RPC queue) is already blocked on the JS thread, which means
+    //      JS is busy — if main also blocks on JS, and JS later needs main → deadlock
+    // In either case:
+    //   - void methods: async forward to JS thread
+    //   - non-void methods: safely fall back to original implementation
     if (ctx && hasJSHookLogic && ![engine isOnJSThread] && !alreadyForwarded) {
-        BOOL wouldDeadlock = [NSThread isMainThread] && WNIsInvokeMainThreadHopActive();
+        BOOL wouldDeadlock = [NSThread isMainThread] &&
+            (WNIsInvokeMainThreadHopActive() || WNIsExternalThreadWaitingOnJSThread());
         [invocation retainArguments];
         objc_setAssociatedObject(invocation, kWNHookForwardedToJSThreadKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 

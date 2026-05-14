@@ -275,6 +275,15 @@ static void WNSocketCallback(CFSocketRef socket, CFSocketCallBackType type,
     [client sendData:line];
 }
 
+static dispatch_queue_t WNRemoteServerRPCQueue(void) {
+    static dispatch_queue_t q;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        q = dispatch_queue_create("com.whiteneedle.rpc", DISPATCH_QUEUE_SERIAL);
+    });
+    return q;
+}
+
 - (void)handleRequest:(NSDictionary *)request client:(WNClientConnection *)client {
     NSString *method = request[@"method"];
     NSDictionary *params = request[@"params"] ?: @{};
@@ -282,13 +291,15 @@ static void WNSocketCallback(CFSocketRef socket, CFSocketCallBackType type,
 
     if (!method) return;
 
-    // Heartbeat must not queue behind loadScript/evaluate (main queue can be busy for seconds).
     if ([method isEqualToString:@"ping"] && requestId) {
         [self sendJsonRpcResult:@{@"pong": @YES} requestId:requestId client:client];
         return;
     }
 
-    dispatch_async(dispatch_get_main_queue(), ^{
+    // Run RPC business logic on a dedicated serial queue (NOT main) so the main thread
+    // stays free for UIKit and dispatch_sync(main) from the JS thread.
+    // Socket write-back goes through dispatch_async(main) because NSStream is on mainRunLoop.
+    dispatch_async(WNRemoteServerRPCQueue(), ^{
         id result = [self dispatchMethod:method params:params];
 
         if (requestId) {
@@ -312,9 +323,13 @@ static void WNSocketCallback(CFSocketRef socket, CFSocketCallBackType type,
             }
 
             NSData *data = [NSJSONSerialization dataWithJSONObject:response options:0 error:nil];
-            NSMutableData *line = [data mutableCopy];
-            [line appendData:[@"\n" dataUsingEncoding:NSUTF8StringEncoding]];
-            [client sendData:line];
+            if (data) {
+                NSMutableData *line = [data mutableCopy];
+                [line appendData:[@"\n" dataUsingEncoding:NSUTF8StringEncoding]];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [client sendData:line];
+                });
+            }
         }
     });
 }
