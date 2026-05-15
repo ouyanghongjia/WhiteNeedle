@@ -23,13 +23,13 @@ WN_FRAMEWORK="$WN_DIST/WhiteNeedle.framework"
 WN_CONFIG_DIR="$HOME/.whiteneedle"
 WN_RESIGN_CONF="$WN_CONFIG_DIR/resign.conf"
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
+RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'
+CYAN=$'\033[0;36m'; BOLD=$'\033[1m'; NC=$'\033[0m'
 
-log()  { echo -e "${GREEN}[wn]${NC} $*"; }
-warn() { echo -e "${YELLOW}[wn]${NC} $*" >&2; }
-err()  { echo -e "${RED}[wn]${NC} $*" >&2; exit 1; }
-info() { echo -e "${CYAN}[wn]${NC} $*"; }
+log()  { echo "${GREEN}[wn]${NC} $*"; }
+warn() { echo "${YELLOW}[wn]${NC} $*" >&2; }
+err()  { echo "${RED}[wn]${NC} $*" >&2; exit 1; }
+info() { echo "${CYAN}[wn]${NC} $*"; }
 
 # Sentinel markers for Podfile injection
 SENTINEL_BEGIN="# >>> WhiteNeedle (managed by wn CLI) <<<"
