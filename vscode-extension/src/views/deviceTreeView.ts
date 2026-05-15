@@ -2,9 +2,20 @@ import * as vscode from 'vscode';
 import { DeviceDiscovery, WNDevice } from '../discovery/bonjourDiscovery';
 import { DeviceManager } from '../device/deviceManager';
 
+/**
+ * Dedup key: deviceId + bundleId.
+ * Falls back to deviceName + bundleId when deviceId is absent.
+ */
+function dedupKey(d: WNDevice): string {
+    const id = d.deviceId || d.deviceName || d.host;
+    const bundle = d.bundleId || 'unknown';
+    return `${id}::${bundle}`;
+}
+
 export class DeviceTreeProvider implements vscode.TreeDataProvider<DeviceTreeItem> {
     private _onDidChangeTreeData = new vscode.EventEmitter<DeviceTreeItem | undefined>();
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+    private usbDevices: WNDevice[] = [];
 
     constructor(
         private discovery: DeviceDiscovery,
@@ -13,7 +24,6 @@ export class DeviceTreeProvider implements vscode.TreeDataProvider<DeviceTreeIte
         discovery.on('deviceFound', () => this.refresh());
         discovery.on('deviceLost', () => this.refresh());
         discovery.on('deviceUpdated', () => this.refresh());
-        // Fallback TCP / Connect-by-IP do not go through Bonjour — still show connected device in tree.
         deviceManager.on('stateChanged', () => this.refresh());
     }
 
@@ -21,27 +31,63 @@ export class DeviceTreeProvider implements vscode.TreeDataProvider<DeviceTreeIte
         this._onDidChangeTreeData.fire(undefined);
     }
 
-    /** Bonjour list plus currently connected device if it was reached without discovery (e.g. last-host fallback). */
+    addUsbDevice(device: WNDevice): void {
+        const key = dedupKey(device);
+        const idx = this.usbDevices.findIndex(d => dedupKey(d) === key);
+        if (idx >= 0) {
+            this.usbDevices[idx] = device;
+        } else {
+            this.usbDevices.push(device);
+        }
+        this.refresh();
+    }
+
+    removeUsbDevice(device: WNDevice): void {
+        const key = dedupKey(device);
+        const idx = this.usbDevices.findIndex(d => dedupKey(d) === key);
+        if (idx >= 0) {
+            this.usbDevices.splice(idx, 1);
+            this.refresh();
+        }
+    }
+
+    /**
+     * Merged device list:
+     *  - Both USB and WiFi pools feed in
+     *  - Dedup by deviceId+bundleId; USB wins when both exist
+     *  - When USB entry is removed, the WiFi entry reappears automatically
+     */
     private listRootDevices(): WNDevice[] {
-        const fromDiscovery = this.discovery.getDevices();
+        const wifiDevices = this.discovery.getDevices();
+        const usbKeys = new Set(this.usbDevices.map(dedupKey));
+
+        const merged = new Map<string, WNDevice>();
+
+        // USB entries first (take priority)
+        for (const ud of this.usbDevices) {
+            merged.set(dedupKey(ud), ud);
+        }
+
+        // WiFi entries that are NOT shadowed by USB
+        for (const wd of wifiDevices) {
+            const key = dedupKey(wd);
+            if (!usbKeys.has(key)) {
+                merged.set(key, wd);
+            }
+        }
+
+        const list = Array.from(merged.values());
+
+        // Ensure the currently connected device is always shown
         const connected = this.deviceManager.getConnectedDevice();
-        if (!connected || !this.deviceManager.isConnected) {
-            return fromDiscovery;
-        }
-        const isSame = (a: WNDevice, b: WNDevice): boolean => {
-            if (a.deviceId && b.deviceId) {
-                return a.deviceId === b.deviceId;
+        if (connected && this.deviceManager.isConnected) {
+            const connKey = dedupKey(connected);
+            if (!merged.has(connKey)) {
+                list.unshift(connected);
             }
-            if (a.bundleId && a.bundleId !== 'unknown' && a.deviceName &&
-                b.bundleId && b.bundleId !== 'unknown' && b.deviceName) {
-                return a.bundleId === b.bundleId && a.deviceName === b.deviceName;
-            }
-            return a.host === b.host && a.enginePort === b.enginePort;
-        };
-        if (fromDiscovery.some((d) => isSame(d, connected))) {
-            return fromDiscovery;
         }
-        return [connected, ...fromDiscovery];
+
+        return list;
     }
 
     getTreeItem(element: DeviceTreeItem): vscode.TreeItem {
@@ -65,18 +111,25 @@ export class DeviceTreeProvider implements vscode.TreeDataProvider<DeviceTreeIte
             devices.map(d => {
                 const isConnected = this.deviceManager.isConnectedTo(d);
                 const isBlocked = this.isBlockedDevice(d);
+                const isUsb = d.transport === 'usb';
+                const transportTag = isUsb ? ' [USB]' : '';
+
                 const item = new DeviceTreeItem(
-                    d.deviceName,
+                    d.deviceName + transportTag,
                     vscode.TreeItemCollapsibleState.Collapsed,
                     d
                 );
                 item.description = d.bundleId;
                 item.iconPath = new vscode.ThemeIcon(
-                    isBlocked ? 'circle-slash' : isConnected ? 'debug-disconnect' : 'device-mobile'
+                    isBlocked ? 'circle-slash' :
+                    isConnected ? 'debug-disconnect' :
+                    isUsb ? 'plug' : 'device-mobile'
                 );
                 item.contextValue = isBlocked ? 'blockedDevice' : isConnected ? 'connectedDevice' : 'device';
                 if (isBlocked) {
                     item.tooltip = 'Blocked target';
+                } else if (isUsb) {
+                    item.tooltip = `USB device (serial: ${d.serialNumber || 'unknown'})`;
                 }
 
                 if (!isConnected && !isBlocked) {
@@ -110,6 +163,7 @@ export class DeviceTreeProvider implements vscode.TreeDataProvider<DeviceTreeIte
 
     private getDeviceDetails(device: WNDevice): DeviceTreeItem[] {
         const details = [
+            this.detailItem('Transport', device.transport === 'usb' ? 'USB' : 'Wi-Fi'),
             this.detailItem('IP', `${device.host}:${device.port}`),
             this.detailItem('Bundle', device.bundleId),
             this.detailItem('iOS', device.systemVersion),
@@ -123,6 +177,9 @@ export class DeviceTreeProvider implements vscode.TreeDataProvider<DeviceTreeIte
         }
         if (device.deviceId) {
             details.push(this.detailItem('Device ID', device.deviceId));
+        }
+        if (device.serialNumber) {
+            details.push(this.detailItem('Serial', device.serialNumber));
         }
         return details;
     }

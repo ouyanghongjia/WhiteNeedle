@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as net from 'net';
 import { DeviceDiscovery, WNDevice } from './discovery/bonjourDiscovery';
+import { UsbDiscovery } from './usb/usbDiscovery';
 import { DeviceTreeProvider } from './views/deviceTreeView';
 import { DeviceManager, ConnectionState } from './device/deviceManager';
 import { ScriptRunner } from './scripting/scriptRunner';
@@ -34,6 +35,7 @@ import { ModuleManager } from './modules/moduleManager';
 import { ModuleTreeProvider, ModuleItem } from './views/moduleTreeView';
 
 let discovery: DeviceDiscovery;
+let usbDiscovery: UsbDiscovery;
 let deviceManager: DeviceManager;
 let scriptRunner: ScriptRunner;
 let proxyServer: ProxyServer;
@@ -68,6 +70,9 @@ function isDeviceBlocked(device: WNDevice): boolean {
     if (device.aliasIPs && device.aliasIPs.some((ip) => blockedHostSet.has(ip))) { return true; }
     return false;
 }
+
+/** Tracks whether user explicitly disconnected — suppresses all auto-connect until manual reconnect. */
+let userDisconnected = false;
 
 function resolveDeviceLike(input: unknown): WNDevice | undefined {
     if (!input || typeof input !== 'object') {
@@ -166,7 +171,7 @@ function activateImpl(context: vscode.ExtensionContext) {
         );
     });
 
-    deviceManager.on('reconnectFailed', (device: WNDevice) => {
+    deviceManager.on('reconnectFailed', async (device: WNDevice) => {
         refreshAllViews();
         appendLog('System', 'error', `Failed to reconnect to ${device.deviceName || device.host}`);
         vscode.window.showWarningMessage(
@@ -340,6 +345,7 @@ function activateImpl(context: vscode.ExtensionContext) {
                     vscode.window.showWarningMessage(`This target is blocked: ${host}`);
                     return;
                 }
+                userDisconnected = false;
                 outputChannel.appendLine(`[WhiteNeedle] Connecting to ${host}:${port}...`);
                 outputChannel.show();
                 await deviceManager.connect(manualDevice);
@@ -385,6 +391,7 @@ function activateImpl(context: vscode.ExtensionContext) {
                     );
                     return;
                 }
+                userDisconnected = false;
                 await deviceManager.connect(device);
                 attachBridgeListeners();
                 refreshAllViews();
@@ -398,9 +405,10 @@ function activateImpl(context: vscode.ExtensionContext) {
         }),
 
         vscode.commands.registerCommand('whiteneedle.disconnectDevice', async () => {
+            userDisconnected = true;
             await deviceManager.disconnect();
             refreshAllViews();
-            outputChannel.appendLine('[WhiteNeedle] Disconnected');
+            outputChannel.appendLine('[WhiteNeedle] Disconnected (user-initiated, auto-connect suppressed)');
             vscode.window.showInformationMessage('WhiteNeedle: Disconnected');
         }),
 
@@ -797,50 +805,90 @@ function activateImpl(context: vscode.ExtensionContext) {
     );
 
     let autoConnecting = false;
+
+    const tryAutoConnect = async (device: WNDevice, source: string) => {
+        if (userDisconnected) { return; }
+        if (isDeviceBlocked(device)) { return; }
+        if (deviceManager.isConnected) { return; }
+        if (autoConnecting) { return; }
+
+        const cfg = vscode.workspace.getConfiguration('whiteneedle');
+        const autoConnect = cfg.get<boolean>('autoConnect', true);
+        if (!autoConnect) { return; }
+
+        // Strict match: only auto-connect to the last successfully connected device
+        const lastDeviceId = cfg.get<string>('lastDeviceId');
+        const lastBundleId = cfg.get<string>('lastBundleId');
+
+        if (!lastDeviceId && !lastBundleId) { return; }
+
+        const matchesDeviceId = lastDeviceId && device.deviceId === lastDeviceId;
+        const matchesBundleId = lastBundleId && device.bundleId === lastBundleId;
+
+        // Must match both deviceId+bundleId when both are available,
+        // or at least the bundle when deviceId is not tracked
+        const isMatch = lastDeviceId
+            ? (matchesDeviceId && matchesBundleId)
+            : matchesBundleId;
+
+        if (!isMatch) { return; }
+
+        autoConnecting = true;
+        outputChannel.appendLine(
+            `[WhiteNeedle] Auto-connecting via ${source}: ${device.deviceName} (${device.host}:${device.enginePort})`
+        );
+        try {
+            await deviceManager.connect(device);
+            attachBridgeListeners();
+            refreshAllViews();
+            const transport = device.transport === 'usb' ? ' [USB]' : '';
+            vscode.window.showInformationMessage(
+                `WhiteNeedle: Auto-connected to ${device.deviceName || device.host}${transport}`
+            );
+        } catch (err: any) {
+            outputChannel.appendLine(`[WhiteNeedle] Auto-connect failed: ${err.message}`);
+        } finally {
+            autoConnecting = false;
+        }
+    };
+
     discovery.on('deviceFound', async (device: WNDevice) => {
         if (isDeviceBlocked(device)) { return; }
         outputChannel.appendLine(
             `[WhiteNeedle] Bonjour discovered: ${device.deviceName || device.name} at ${device.host}:${device.enginePort} (bundle=${device.bundleId})`
         );
+        await tryAutoConnect(device, 'Bonjour');
+    });
 
-        if (deviceManager.isConnected && deviceManager.isConnectedTo(device)) { return; }
-        if (autoConnecting) { return; }
-        const cfg = vscode.workspace.getConfiguration('whiteneedle');
-        const autoConnect = cfg.get<boolean>('autoConnect', true);
-        if (!autoConnect) { return; }
+    // --- USB Discovery ---
+    usbDiscovery = new UsbDiscovery();
 
-        const lastHost = cfg.get<string>('deviceHost');
-        const lastBundleId = cfg.get<string>('lastBundleId');
-        const lastDeviceName = cfg.get<string>('lastDeviceName');
+    usbDiscovery.on('deviceFound', async (device: WNDevice) => {
+        outputChannel.appendLine(
+            `[WhiteNeedle] USB discovered: ${device.deviceName} (serial=${device.serialNumber || 'unknown'})`
+        );
+        deviceTreeProvider.addUsbDevice(device);
+        await tryAutoConnect(device, 'USB');
+    });
 
-        const matchesByIdentity = lastBundleId && lastDeviceName &&
-            device.bundleId === lastBundleId && device.deviceName === lastDeviceName;
-        const matchesByHost = lastHost && device.host === lastHost;
-
-        if (matchesByIdentity || matchesByHost) {
-            autoConnecting = true;
-            outputChannel.appendLine(
-                `[WhiteNeedle] Auto-connecting to Bonjour device: ${device.deviceName} (${device.host}:${device.enginePort})`
-            );
-            try {
-                await deviceManager.connect(device);
-                attachBridgeListeners();
-                refreshAllViews();
-                vscode.window.showInformationMessage(
-                    `WhiteNeedle: Auto-connected to ${device.deviceName || device.host}`
-                );
-            } catch (err: any) {
-                outputChannel.appendLine(`[WhiteNeedle] Auto-connect failed: ${err.message}`);
-            } finally {
-                autoConnecting = false;
-            }
-        }
+    usbDiscovery.on('deviceLost', (device: WNDevice) => {
+        outputChannel.appendLine(
+            `[WhiteNeedle] USB device removed: ${device.deviceName}`
+        );
+        deviceTreeProvider.removeUsbDevice(device);
     });
 
     ensureTypingsForWorkspace(context);
 
     discovery.start();
     outputChannel.appendLine('[WhiteNeedle] Scanning for devices on LAN...');
+
+    usbDiscovery.start().then(() => {
+        outputChannel.appendLine('[WhiteNeedle] USB device scanning active');
+    }).catch((err) => {
+        outputChannel.appendLine(`[WhiteNeedle] USB scanning unavailable: ${err.message}`);
+    });
+
     outputChannel.show();
 
     scheduleLastDeviceFallback(context, attachBridgeListeners, refreshAllViews);
@@ -849,6 +897,7 @@ function activateImpl(context: vscode.ExtensionContext) {
 export function deactivate() {
     removeTypingsFromWorkspace();
     proxyServer?.stop();
+    usbDiscovery?.stop();
     discovery?.stop();
     deviceManager?.disconnect();
 }
@@ -879,8 +928,10 @@ function updateStatusBar(state: ConnectionState): void {
         case 'connected': {
             const device = deviceManager.getConnectedDevice();
             const label = device?.deviceName || device?.host || 'Device';
-            statusBarItem.text = `$(plug) WN: ${label}`;
-            statusBarItem.tooltip = `WhiteNeedle — Connected to ${label}\nClick for options`;
+            const transportIcon = device?.transport === 'usb' ? '$(plug)' : '$(radio-tower)';
+            const transportLabel = device?.transport === 'usb' ? '[USB]' : '[WiFi]';
+            statusBarItem.text = `${transportIcon} WN: ${label} ${transportLabel}`;
+            statusBarItem.tooltip = `WhiteNeedle — Connected to ${label} via ${device?.transport === 'usb' ? 'USB' : 'Wi-Fi'}\nClick for options`;
             statusBarItem.backgroundColor = undefined;
             break;
         }
@@ -920,6 +971,7 @@ function scheduleLastDeviceFallback(
 
     const fallbackDelay = 6000;
     const timer = setTimeout(async () => {
+        if (userDisconnected) { return; }
         const busy = deviceManager.state !== 'disconnected';
         if (busy) { return; }
         if (discovery.getDevices().length > 0) { return; }

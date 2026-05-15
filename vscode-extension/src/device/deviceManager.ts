@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { EventEmitter } from 'events';
 import { WNDevice } from '../discovery/bonjourDiscovery';
 import { TcpBridge } from '../bridge/tcpBridge';
+import { UsbTunnelManager } from '../usb/usbTunnelManager';
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 
@@ -24,6 +25,7 @@ export class DeviceManager extends EventEmitter {
     private lastConnectedAt = 0;
     private rapidDisconnectCount = 0;
     public shouldReconnect?: (device: WNDevice) => boolean;
+    private tunnelManager = new UsbTunnelManager();
 
     constructor(private outputChannel: vscode.OutputChannel) {
         super();
@@ -56,9 +58,31 @@ export class DeviceManager extends EventEmitter {
         const epoch = this._epoch;
 
         this.setState('connecting');
-        this.outputChannel.appendLine(
-            `[DeviceManager] Connecting to ${device.host}:${device.enginePort}...`
-        );
+
+        // Resolve connection target: USB devices need a tunnel
+        let connectHost = device.host;
+        let connectPort = device.enginePort;
+
+        if (device.transport === 'usb' && device.usbDeviceId != null) {
+            this.outputChannel.appendLine(
+                `[DeviceManager] Creating USB tunnel for device ${device.usbDeviceId} → port ${device.enginePort}...`
+            );
+            try {
+                const tunnel = await this.tunnelManager.createTunnel(device.usbDeviceId, device.enginePort);
+                connectHost = tunnel.host;
+                connectPort = tunnel.port;
+                this.outputChannel.appendLine(
+                    `[DeviceManager] USB tunnel ready: ${connectHost}:${connectPort}`
+                );
+            } catch (err: any) {
+                this.setState('disconnected');
+                throw new Error(`USB tunnel failed: ${err.message}`);
+            }
+        } else {
+            this.outputChannel.appendLine(
+                `[DeviceManager] Connecting to ${device.host}:${device.enginePort}...`
+            );
+        }
 
         const bridge = new TcpBridge(this.outputChannel);
         this.bridge = bridge;
@@ -70,12 +94,15 @@ export class DeviceManager extends EventEmitter {
         });
 
         try {
-            await bridge.connect(device.host, device.enginePort);
+            await bridge.connect(connectHost, connectPort);
         } catch (err) {
             if (this._epoch === epoch) {
                 bridge.removeAllListeners('disconnected');
                 this.bridge = null;
                 bridge.disconnect();
+                if (device.transport === 'usb' && device.usbDeviceId != null) {
+                    this.tunnelManager.closeTunnel(device.usbDeviceId, device.enginePort);
+                }
                 this.setState('disconnected');
             }
             throw err;
@@ -98,6 +125,9 @@ export class DeviceManager extends EventEmitter {
             await cfg.update('enginePort', device.enginePort, vscode.ConfigurationTarget.Global);
         }
 
+        if (device.deviceId) {
+            await cfg.update('lastDeviceId', device.deviceId, vscode.ConfigurationTarget.Global);
+        }
         if (device.bundleId && device.bundleId !== 'unknown') {
             await cfg.update('lastBundleId', device.bundleId, vscode.ConfigurationTarget.Global);
         }
@@ -107,8 +137,10 @@ export class DeviceManager extends EventEmitter {
         if (device.inspectorPort > 0) {
             await cfg.update('inspectorPort', device.inspectorPort, vscode.ConfigurationTarget.Global);
         }
+
+        const transport = device.transport === 'usb' ? ' [USB]' : '';
         this.outputChannel.appendLine(
-            `[DeviceManager] Connected (engine=${device.enginePort})`
+            `[DeviceManager] Connected${transport} (engine=${device.enginePort})`
         );
     }
 
@@ -129,6 +161,10 @@ export class DeviceManager extends EventEmitter {
         if (this.bridge) {
             this.bridge.disconnect();
             this.bridge = null;
+        }
+        // Close USB tunnel for the previously connected device
+        if (this.connectedDevice?.transport === 'usb' && this.connectedDevice.usbDeviceId != null) {
+            this.tunnelManager.closeTunnel(this.connectedDevice.usbDeviceId, this.connectedDevice.enginePort);
         }
         this.connectedDevice = null;
     }
