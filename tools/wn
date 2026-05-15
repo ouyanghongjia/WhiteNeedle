@@ -7,13 +7,13 @@ set -euo pipefail
 # One-command integration, removal, and resign for iOS projects.
 #
 # Usage:
-#   wn integrate <project-dir>    Integrate WhiteNeedle via CocoaPods
-#   wn remove <project-dir>       Remove WhiteNeedle integration
-#   wn status <project-dir>       Check integration status
-#   wn build                      Build WhiteNeedle framework (full dist)
-#   wn update [opts] [project]    Recompile + install (framework/extension)
-#   wn resign <ipa> [-o output]   Inject WhiteNeedle into IPA and re-sign
-#   wn help                       Show this help
+#   wn integrate [-t target] <project-dir>  Integrate WhiteNeedle via CocoaPods
+#   wn remove <project-dir>                 Remove WhiteNeedle integration
+#   wn status <project-dir>                 Check integration status
+#   wn build                                Build WhiteNeedle framework (full dist)
+#   wn update [opts] [project]              Recompile + install (framework/extension)
+#   wn resign <ipa> [-o output]             Inject WhiteNeedle into IPA and re-sign
+#   wn help                                 Show this help
 # ============================================================================
 
 WN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -375,8 +375,26 @@ cmd_status() {
 # ============================================================================
 
 cmd_integrate() {
-    local project_dir="${1:-.}"
-    project_dir="$(cd "$project_dir" 2>/dev/null && pwd)" || err "Directory not found: $1"
+    local project_dir=""
+    local target_name=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -t|--target) target_name="$2"; shift 2 ;;
+            -h|--help)   integrate_usage ;;
+            -*)          err "Unknown integrate option: $1. Run 'wn integrate --help'" ;;
+            *)
+                if [[ -z "$project_dir" ]]; then
+                    project_dir="$1"; shift
+                else
+                    err "Unexpected argument: $1"
+                fi
+                ;;
+        esac
+    done
+
+    project_dir="${project_dir:-.}"
+    project_dir="$(cd "$project_dir" 2>/dev/null && pwd)" || err "Directory not found: $project_dir"
 
     info "Integrating WhiteNeedle into: $project_dir"
 
@@ -394,23 +412,26 @@ cmd_integrate() {
         return 0
     fi
 
-    # Step 4: Backup Podfile
+    # Step 4: Resolve target name (interactive if needed)
+    target_name=$(resolve_target "$podfile" "$target_name")
+
+    # Step 5: Backup Podfile
     cp "$podfile" "${podfile}.wn-backup"
     log "Backed up Podfile → Podfile.wn-backup"
 
-    # Step 5: Inject pod reference into Podfile
-    inject_pod_reference "$podfile"
+    # Step 6: Inject pod reference into Podfile
+    inject_pod_reference "$podfile" "$target_name"
 
-    # Step 6: Inject post_install hook
+    # Step 7: Inject post_install hook
     inject_post_install_hook "$podfile"
 
-    # Step 7: Append helper function
+    # Step 8: Append helper function
     inject_helper_function "$podfile"
 
-    # Step 8: Remove old require_relative for cocoapods_hook if present
+    # Step 9: Remove old require_relative for cocoapods_hook if present
     remove_old_hook_require "$podfile"
 
-    # Step 9: Run pod install
+    # Step 10: Run pod install
     info "Running pod install..."
     (cd "$project_dir" && pod install)
 
@@ -420,6 +441,7 @@ cmd_integrate() {
     log "============================================"
     echo ""
     echo "  Project: $project_dir"
+    echo "  Target:  $target_name"
     echo "  Pod path: $WN_COCOAPODS"
     echo ""
     echo "  Build your project in Xcode as usual."
@@ -427,8 +449,93 @@ cmd_integrate() {
     echo ""
 }
 
+integrate_usage() {
+    cat <<EOF
+Usage: wn integrate [options] <project-dir>
+
+Integrate WhiteNeedle into an iOS project via CocoaPods.
+
+${BOLD}Options:${NC}
+  -t, --target <name>    Specify which Podfile target to inject into.
+                         If omitted and multiple targets exist, you will
+                         be prompted to choose.
+  -h, --help             Show this help
+
+${BOLD}Examples:${NC}
+  wn integrate ~/Projects/MyApp
+  wn integrate ~/Projects/MyApp -t MyApp
+  wn integrate -t MyAppDebug ~/Projects/MyApp
+EOF
+    exit 0
+}
+
+# Collect all target names from a Podfile
+list_podfile_targets() {
+    local podfile="$1"
+    grep -oE "^target ['\"][^'\"]+['\"]" "$podfile" | sed "s/^target ['\"]//;s/['\"]$//"
+}
+
+# Resolve the target to inject into.
+# If target_name is given, validate it; otherwise prompt if multiple exist.
+resolve_target() {
+    local podfile="$1"
+    local target_name="$2"
+
+    local targets=()
+    while IFS= read -r t; do
+        [[ -n "$t" ]] && targets+=("$t")
+    done < <(list_podfile_targets "$podfile")
+
+    if [[ ${#targets[@]} -eq 0 ]]; then
+        err "No 'target ... do' block found in Podfile"
+    fi
+
+    if [[ -n "$target_name" ]]; then
+        # Validate that the specified target exists
+        local found=false
+        for t in "${targets[@]}"; do
+            if [[ "$t" == "$target_name" ]]; then
+                found=true
+                break
+            fi
+        done
+        if [[ "$found" == false ]]; then
+            err "Target '$target_name' not found in Podfile. Available targets: ${targets[*]}"
+        fi
+        echo "$target_name"
+        return
+    fi
+
+    if [[ ${#targets[@]} -eq 1 ]]; then
+        echo "${targets[0]}"
+        return
+    fi
+
+    # Multiple targets — prompt user to choose
+    echo "" >&2
+    echo -e "${BOLD}Multiple targets found in Podfile:${NC}" >&2
+    echo "" >&2
+    local i=1
+    for t in "${targets[@]}"; do
+        echo "  $i) $t" >&2
+        ((i++))
+    done
+    echo "" >&2
+
+    local choice
+    while true; do
+        read -rp "Which target to inject WhiteNeedle into? [1-${#targets[@]}]: " choice
+        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#targets[@]} )); then
+            echo "${targets[$((choice - 1))]}"
+            return
+        fi
+        echo "  Invalid choice. Please enter a number between 1 and ${#targets[@]}." >&2
+    done
+}
+
 inject_pod_reference() {
     local podfile="$1"
+    local target_name="$2"
     local pod_line="  pod 'WhiteNeedle', :path => '$WN_COCOAPODS'"
 
     # First, remove any existing pod 'WhiteNeedle' lines (old manual references)
@@ -437,13 +544,13 @@ inject_pod_reference() {
     grep -v "pod ['\"]WhiteNeedle['\"]" "$podfile" > "$tmpfile" || true
     mv "$tmpfile" "$podfile"
 
-    # Now inject after the first 'target ... do' line
+    # Inject after the matching 'target '<name>' do' line
     tmpfile=$(mktemp)
     local injected=false
 
     while IFS= read -r line; do
         echo "$line" >> "$tmpfile"
-        if [[ "$injected" == false ]] && echo "$line" | grep -qE "^target .* do"; then
+        if [[ "$injected" == false ]] && echo "$line" | grep -qE "^target ['\"]${target_name}['\"] do"; then
             echo "" >> "$tmpfile"
             echo "$SENTINEL_BEGIN" >> "$tmpfile"
             echo "$pod_line" >> "$tmpfile"
@@ -453,11 +560,11 @@ inject_pod_reference() {
     done < "$podfile"
 
     if [[ "$injected" == false ]]; then
-        err "Could not find 'target ... do' block in Podfile"
+        err "Could not find target '$target_name' in Podfile"
     fi
 
     mv "$tmpfile" "$podfile"
-    log "Added pod 'WhiteNeedle' reference"
+    log "Added pod 'WhiteNeedle' reference to target '$target_name'"
 }
 
 inject_post_install_hook() {
@@ -933,21 +1040,22 @@ usage() {
 ${BOLD}wn${NC} — WhiteNeedle CLI
 
 ${BOLD}Usage:${NC}
-  wn integrate <project-dir>    Integrate WhiteNeedle into an iOS project (CocoaPods)
-  wn remove <project-dir>       Remove WhiteNeedle from a project
-  wn status <project-dir>       Show integration status
-  wn build                      Build WhiteNeedle framework and full dist
-  wn update [opts] [project]    Recompile + install (framework & extension)
-  wn resign <ipa> [-o output]   Inject WhiteNeedle into IPA and re-sign
-  wn help                       Show this help
+  wn integrate [opts] <project-dir>  Integrate WhiteNeedle into an iOS project (CocoaPods)
+  wn remove <project-dir>            Remove WhiteNeedle from a project
+  wn status <project-dir>            Show integration status
+  wn build                           Build WhiteNeedle framework and full dist
+  wn update [opts] [project]         Recompile + install (framework & extension)
+  wn resign <ipa> [-o output]        Inject WhiteNeedle into IPA and re-sign
+  wn help                            Show this help
 
 ${BOLD}Quick Start:${NC}
-  wn integrate ~/Projects/MyApp          # One-click pod integration
-  wn update ~/Projects/MyApp             # Full update: framework + extension
-  wn update --ios ~/Projects/MyApp       # Framework only + refresh pods
-  wn update --ext                        # Extension only → Cursor + VS Code
-  wn update --cursor                     # Extension to Cursor only
-  wn resign App.ipa -o App_debug.ipa     # One-click IPA injection
+  wn integrate ~/Projects/MyApp              # Pod integration (prompt if multi-target)
+  wn integrate -t MyApp ~/Projects/MyApp     # Specify target explicitly
+  wn update ~/Projects/MyApp                 # Full update: framework + extension
+  wn update --ios ~/Projects/MyApp           # Framework only + refresh pods
+  wn update --ext                            # Extension only → Cursor + VS Code
+  wn update --cursor                         # Extension to Cursor only
+  wn resign App.ipa -o App_debug.ipa         # One-click IPA injection
 
 ${BOLD}Configuration:${NC}
   wn resign --setup              Save default signing identity & profile
@@ -962,7 +1070,6 @@ EOF
 case "${1:-help}" in
     integrate)
         shift
-        [[ $# -ge 1 ]] || err "Usage: wn integrate <project-dir>"
         cmd_integrate "$@"
         ;;
     remove)
@@ -980,7 +1087,7 @@ case "${1:-help}" in
         ;;
     update)
         shift
-        cmd_update "${1:-}"
+        cmd_update "$@"
         ;;
     resign)
         shift

@@ -185,6 +185,13 @@ function activateImpl(context: vscode.ExtensionContext) {
         treeDataProvider: deviceTreeProvider,
     });
 
+    deviceTreeView.onDidChangeSelection(e => {
+        const selected = e.selection[0];
+        if (!selected?.device) { return; }
+        if (deviceManager.isConnectedTo(selected.device)) { return; }
+        vscode.commands.executeCommand('whiteneedle.connectDevice', selected.device);
+    });
+
     const scriptTreeProvider = new ScriptTreeProvider(deviceManager);
     const scriptTreeView = vscode.window.createTreeView('whiteneedle-scripts', {
         treeDataProvider: scriptTreeProvider,
@@ -358,7 +365,8 @@ function activateImpl(context: vscode.ExtensionContext) {
             }
         }),
 
-        vscode.commands.registerCommand('whiteneedle.connectDevice', async (device) => {
+        vscode.commands.registerCommand('whiteneedle.connectDevice', async (deviceLike) => {
+            let device: WNDevice | undefined = resolveDeviceLike(deviceLike);
             if (!device) {
                 const devices = discovery.getDevices();
                 if (devices.length === 0) {
@@ -382,8 +390,9 @@ function activateImpl(context: vscode.ExtensionContext) {
                     { placeHolder: 'Select a device to connect' }
                 );
                 if (!picked) { return; }
-                device = (picked as any).device;
+                device = (picked as any).device as WNDevice;
             }
+            if (!device) { return; }
             try {
                 if (isDeviceBlocked(device)) {
                     vscode.window.showWarningMessage(
@@ -778,7 +787,10 @@ function activateImpl(context: vscode.ExtensionContext) {
             void loadTeamSnippetsFromWorkspace().then(() => SnippetPanel.refreshIfOpen());
         }),
         vscode.workspace.onDidChangeConfiguration((e) => {
-            if (e.affectsConfiguration('whiteneedle.snippets.teamFile')) {
+            if (
+                e.affectsConfiguration('whiteneedle.snippets.teamDir') ||
+                e.affectsConfiguration('whiteneedle.snippets.personalDir')
+            ) {
                 void loadTeamSnippetsFromWorkspace().then(() => SnippetPanel.refreshIfOpen());
             }
             if (e.affectsConfiguration('whiteneedle.blockedHosts') || e.affectsConfiguration('whiteneedle.blockedDeviceIds')) {
@@ -852,6 +864,10 @@ function activateImpl(context: vscode.ExtensionContext) {
         }
     };
 
+    discovery.on('log', (msg: string) => {
+        outputChannel.appendLine(`[Bonjour] ${msg}`);
+    });
+
     discovery.on('deviceFound', async (device: WNDevice) => {
         if (isDeviceBlocked(device)) { return; }
         outputChannel.appendLine(
@@ -865,7 +881,7 @@ function activateImpl(context: vscode.ExtensionContext) {
 
     usbDiscovery.on('deviceFound', async (device: WNDevice) => {
         outputChannel.appendLine(
-            `[WhiteNeedle] USB discovered: ${device.deviceName} (serial=${device.serialNumber || 'unknown'})`
+            `[WhiteNeedle] USB discovered: ${device.deviceName} [${device.bundleId}] port=${device.enginePort} (serial=${device.serialNumber || 'unknown'})`
         );
         deviceTreeProvider.addUsbDevice(device);
         await tryAutoConnect(device, 'USB');
@@ -873,7 +889,7 @@ function activateImpl(context: vscode.ExtensionContext) {
 
     usbDiscovery.on('deviceLost', (device: WNDevice) => {
         outputChannel.appendLine(
-            `[WhiteNeedle] USB device removed: ${device.deviceName}`
+            `[WhiteNeedle] USB device removed: ${device.deviceName} [${device.bundleId}] port=${device.enginePort}`
         );
         deviceTreeProvider.removeUsbDevice(device);
     });
@@ -981,25 +997,30 @@ function scheduleLastDeviceFallback(
             `[WhiteNeedle] Bonjour timeout — probing last device at ${lastHost}:${port}...`
         );
 
-        const reachable = await tcpProbe(lastHost, port, 3000);
-        if (!reachable) {
+        const pingResult = await tcpPing(lastHost, port, 3000);
+        if (!pingResult) {
             outputChannel.appendLine(`[WhiteNeedle] Last device ${lastHost}:${port} not reachable.`);
             return;
         }
         if (deviceManager.state !== 'disconnected') { return; }
 
+        const lastDeviceId = cfg.get<string>('lastDeviceId', '');
+        const lastBundleId = cfg.get<string>('lastBundleId', '');
+        const lastDeviceName = cfg.get<string>('lastDeviceName', '');
+
         const fallbackDevice: WNDevice = {
-            name: `Fallback (${lastHost})`,
+            name: `TCP: ${lastHost}`,
             host: lastHost,
             port,
-            bundleId: 'unknown',
-            deviceName: lastHost,
-            systemVersion: 'unknown',
-            model: 'unknown',
-            wnVersion: 'unknown',
+            deviceId: pingResult.deviceId || lastDeviceId || undefined,
+            bundleId: pingResult.bundleId || lastBundleId || 'unknown',
+            deviceName: pingResult.deviceName || lastDeviceName || lastHost,
+            systemVersion: pingResult.systemVersion || 'unknown',
+            model: pingResult.model || 'unknown',
+            wnVersion: pingResult.wnVersion || 'unknown',
             enginePort: port,
-            engineType: 'jscore',
-            inspectorPort: 0,
+            engineType: pingResult.engineType || 'jscore',
+            inspectorPort: parseInt(pingResult.inspectorPort || '0', 10),
         };
 
         try {
@@ -1022,18 +1043,38 @@ function scheduleLastDeviceFallback(
     context.subscriptions.push({ dispose: () => clearTimeout(timer) });
 }
 
-function tcpProbe(host: string, port: number, timeoutMs: number): Promise<boolean> {
+function tcpPing(host: string, port: number, timeoutMs: number): Promise<Record<string, string> | null> {
     return new Promise((resolve) => {
         const socket = new net.Socket();
-        const onDone = (ok: boolean) => {
-            socket.destroy();
-            resolve(ok);
-        };
+        const cleanup = () => { socket.removeAllListeners(); socket.destroy(); };
+
         socket.setTimeout(timeoutMs);
-        socket.once('connect', () => onDone(true));
-        socket.once('error', () => onDone(false));
-        socket.once('timeout', () => onDone(false));
-        socket.connect(port, host);
+        socket.once('error', () => { cleanup(); resolve(null); });
+        socket.once('timeout', () => { cleanup(); resolve(null); });
+
+        socket.connect(port, host, () => {
+            let buf = '';
+            const dataTimeout = setTimeout(() => { cleanup(); resolve(null); }, timeoutMs);
+
+            socket.on('data', (chunk: Buffer) => {
+                buf += chunk.toString('utf8');
+                const nlIdx = buf.indexOf('\n');
+                if (nlIdx < 0) { return; }
+                clearTimeout(dataTimeout);
+                try {
+                    const msg = JSON.parse(buf.substring(0, nlIdx));
+                    cleanup();
+                    resolve(msg?.result || null);
+                } catch {
+                    cleanup();
+                    resolve(null);
+                }
+            });
+
+            socket.write(JSON.stringify({
+                jsonrpc: '2.0', id: 1, method: 'ping', params: {},
+            }) + '\n');
+        });
     });
 }
 

@@ -56,12 +56,24 @@ describe('teamSnippetsMerge', () => {
     });
 
     describe('mergeDisplaySnippets', () => {
-        it('orders builtin then visible team then custom', () => {
+        it('orders builtin then visible team then personal then custom', () => {
             const builtin = [b('bi')];
             const teamRaw = [t('t1')];
+            const personal: ScriptSnippet[] = [];
             const custom = [b('c1')];
-            const { snippets } = mergeDisplaySnippets(builtin, teamRaw, custom);
+            const { snippets } = mergeDisplaySnippets(builtin, teamRaw, personal, custom);
             expect(snippets.map(s => s.id)).toEqual(['bi', 't1', 'c1']);
+        });
+
+        it('personal snippets override team, custom overrides both', () => {
+            const builtin = [b('bi')];
+            const teamRaw = [t('shared'), t('team-only')];
+            const personal = [t('shared')]; // same id as team
+            personal[0].code = '//personal';
+            const custom = [b('c1')];
+            const { snippets } = mergeDisplaySnippets(builtin, teamRaw, personal, custom);
+            expect(snippets.map(s => s.id)).toEqual(['bi', 'team-only', 'shared', 'c1']);
+            expect(snippets.find(s => s.id === 'shared')?.code).toBe('//personal');
         });
     });
 });

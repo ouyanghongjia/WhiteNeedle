@@ -13,16 +13,23 @@ import {
     HISTORY_MAX_ENTRIES,
     FAVORITES_KEY,
     HISTORY_KEY,
+    collectCategories,
+    getCategoryLabel,
 } from '../snippets/snippetLibrary';
 import { DeviceManager } from '../device/deviceManager';
 import { ScriptRunner } from '../scripting/scriptRunner';
 import { bindConnectionState, OVERLAY_CSS, OVERLAY_HTML, OVERLAY_JS } from './connectionOverlay';
 import {
     loadTeamSnippetsFromWorkspace,
+    loadPersonalSnippetsFromDisk,
+    syncAllSnippetSources,
     getAllSnippetsMerged,
     getTeamSnippetIdsForUi,
+    getPersonalSnippetIdsForUi,
     getTeamSyncStatusLabel,
+    getPersonalSyncStatusLabel,
     createTeamSnippetWatchers,
+    createPersonalSnippetWatchers,
     reportTeamSyncUi,
 } from '../snippets/teamSnippets';
 
@@ -48,7 +55,7 @@ export class SnippetPanel {
         const column = vscode.ViewColumn.One;
         if (SnippetPanel.currentPanel) {
             SnippetPanel.currentPanel.panel.reveal(column);
-            void SnippetPanel.currentPanel.syncTeamFromDisk(false);
+            void SnippetPanel.currentPanel.syncAllFromDisk(false);
             return SnippetPanel.currentPanel;
         }
         const panel = vscode.window.createWebviewPanel(
@@ -83,19 +90,26 @@ export class SnippetPanel {
             this.disposables,
         );
 
-        void this.syncTeamFromDisk(false);
+        void this.syncAllFromDisk(false);
         this.disposables.push(
             createTeamSnippetWatchers(() => {
-                void this.syncTeamFromDisk(false);
+                void this.syncAllFromDisk(false);
+            }),
+            createPersonalSnippetWatchers(() => {
+                void this.syncAllFromDisk(false);
             }),
         );
     }
 
-    /** Reload team JSON from workspace; optionally show toasts (toolbar / command). */
-    private async syncTeamFromDisk(showUi: boolean): Promise<void> {
-        const result = await loadTeamSnippetsFromWorkspace();
+    private async syncAllFromDisk(showUi: boolean): Promise<void> {
+        await syncAllSnippetSources();
         if (showUi) {
-            reportTeamSyncUi(result);
+            const teamResult = await loadTeamSnippetsFromWorkspace();
+            const personalResult = await loadPersonalSnippetsFromDisk();
+            reportTeamSyncUi(teamResult);
+            if (personalResult.sources.length > 0 || personalResult.errors.length > 0) {
+                reportTeamSyncUi(personalResult);
+            }
         }
         this.refreshWebview();
     }
@@ -105,8 +119,13 @@ export class SnippetPanel {
     }
 
     public static async syncTeamSnippetsCommand(output?: vscode.OutputChannel): Promise<void> {
-        const result = await loadTeamSnippetsFromWorkspace();
-        reportTeamSyncUi(result, output);
+        await syncAllSnippetSources();
+        const teamResult = await loadTeamSnippetsFromWorkspace();
+        reportTeamSyncUi(teamResult, output);
+        const personalResult = await loadPersonalSnippetsFromDisk();
+        if (personalResult.sources.length > 0 || personalResult.errors.length > 0) {
+            reportTeamSyncUi(personalResult, output);
+        }
         SnippetPanel.refreshIfOpen();
     }
 
@@ -231,7 +250,7 @@ export class SnippetPanel {
                 break;
             }
             case 'syncTeamSnippets': {
-                await this.syncTeamFromDisk(true);
+                await this.syncAllFromDisk(true);
                 break;
             }
             case 'exportSnippets': {
@@ -374,9 +393,8 @@ export class SnippetPanel {
             return;
         }
 
-        const VALID_CATEGORIES: SnippetCategory[] = ['hook', 'runtime', 'network', 'ui', 'storage', 'performance', 'utility'];
-        const cat: SnippetCategory = (typeof msg.category === 'string' && VALID_CATEGORIES.includes(msg.category as SnippetCategory))
-            ? msg.category as SnippetCategory
+        const cat: SnippetCategory = (typeof msg.category === 'string' && msg.category.trim())
+            ? msg.category.trim()
             : 'utility';
 
         const tags: string[] = ['custom'];
@@ -416,13 +434,23 @@ export class SnippetPanel {
 
     public refreshWebview(): void {
         const all = this.getAllSnippets();
+        const dynamicCategories: Record<string, string> = {};
+        for (const cat of collectCategories(all)) {
+            dynamicCategories[cat] = getCategoryLabel(cat);
+        }
+        const personalStatus = getPersonalSyncStatusLabel();
+        const syncStatus = personalStatus
+            ? `${getTeamSyncStatusLabel()} | ${personalStatus}`
+            : getTeamSyncStatusLabel();
         this.panel.webview.postMessage({
             command: 'refreshAll',
             snippets: all,
             favorites: [...this.getFavorites()],
             history: this.getHistory(),
-            teamSyncStatus: getTeamSyncStatusLabel(),
+            teamSyncStatus: syncStatus,
             teamIds: [...getTeamSnippetIdsForUi()],
+            personalIds: [...getPersonalSnippetIdsForUi()],
+            categories: dynamicCategories,
         });
     }
 
@@ -436,8 +464,18 @@ export class SnippetPanel {
         const snippetsJson = JSON.stringify(this.getAllSnippets());
         const builtinIds = JSON.stringify(BUILTIN_SNIPPETS.map(s => s.id));
         const teamIds = JSON.stringify([...getTeamSnippetIdsForUi()]);
-        const teamSyncStatus = JSON.stringify(getTeamSyncStatusLabel());
-        const categoriesJson = JSON.stringify(CATEGORY_LABELS);
+        const personalIds = JSON.stringify([...getPersonalSnippetIdsForUi()]);
+        const personalStatus = getPersonalSyncStatusLabel();
+        const syncStatusStr = personalStatus
+            ? `${getTeamSyncStatusLabel()} | ${personalStatus}`
+            : getTeamSyncStatusLabel();
+        const teamSyncStatus = JSON.stringify(syncStatusStr);
+        const allSnippetsForCategories = this.getAllSnippets();
+        const dynamicCategories: Record<string, string> = {};
+        for (const cat of collectCategories(allSnippetsForCategories)) {
+            dynamicCategories[cat] = getCategoryLabel(cat);
+        }
+        const categoriesJson = JSON.stringify(dynamicCategories);
         const favoritesJson = JSON.stringify([...this.getFavorites()]);
         const historyJson = JSON.stringify(this.getHistory());
         const nonce = getNonce();
@@ -664,15 +702,7 @@ ${OVERLAY_HTML}
         <div class="qa-row-2">
             <div class="qa-field" style="flex:1">
                 <label>Category</label>
-                <select id="qaCategory">
-                    <option value="utility">Utility</option>
-                    <option value="hook">Hook</option>
-                    <option value="runtime">Runtime</option>
-                    <option value="network">Network</option>
-                    <option value="ui">UI</option>
-                    <option value="storage">Storage</option>
-                    <option value="performance">Performance</option>
-                </select>
+                <select id="qaCategory"></select>
             </div>
             <div class="qa-field" style="flex:2">
                 <label>Tags <span style="opacity:0.5">(comma separated)</span></label>
@@ -707,7 +737,8 @@ ${OVERLAY_JS}
     let ALL_SNIPPETS = ${snippetsJson};
     const BUILTIN_IDS = new Set(${builtinIds});
     let TEAM_IDS = new Set(${teamIds});
-    const CATEGORIES = ${categoriesJson};
+    let PERSONAL_IDS = new Set(${personalIds});
+    var CATEGORIES = ${categoriesJson};
     let favoriteIds = new Set(${favoritesJson});
     let historyEntries = ${historyJson};
 
@@ -722,6 +753,7 @@ ${OVERLAY_JS}
 
     function init() {
         renderFilters();
+        updateQuickAddCategoryOptions();
         renderSnippets(ALL_SNIPPETS);
         renderFavorites();
         renderHistory();
@@ -827,6 +859,22 @@ ${OVERLAY_JS}
         });
     }
 
+    function updateQuickAddCategoryOptions() {
+        var sel = document.getElementById('qaCategory');
+        if (!sel) return;
+        var current = sel.value;
+        sel.innerHTML = '';
+        for (var key in CATEGORIES) {
+            var opt = document.createElement('option');
+            opt.value = key;
+            opt.textContent = CATEGORIES[key];
+            sel.appendChild(opt);
+        }
+        if (current && sel.querySelector('option[value="' + current + '"]')) {
+            sel.value = current;
+        }
+    }
+
     function renderFilters() {
         const bar = document.getElementById('filterBar');
         let html = '<button class="filter-btn active" data-cat="all">All</button>';
@@ -888,9 +936,11 @@ ${OVERLAY_JS}
 
         const isBuiltin = BUILTIN_IDS.has(s.id);
         const isTeam = TEAM_IDS.has(s.id);
-        const isCustomLocal = !isBuiltin && !isTeam;
+        const isPersonal = PERSONAL_IDS.has(s.id);
+        const isCustomLocal = !isBuiltin && !isTeam && !isPersonal;
         let badge = '';
         if (isTeam) badge = '<span class="custom-badge" style="opacity:0.9">team</span>';
+        else if (isPersonal) badge = '<span class="custom-badge" style="opacity:0.9;background:#6a5acd">personal</span>';
         else if (isCustomLocal) badge = '<span class="custom-badge">custom</span>';
         const deleteBtn = isCustomLocal ? '  <button class="delete-btn" data-action="delete" data-id="' + eid + '">Delete</button>' : '';
         const favClass = favoriteIds.has(s.id) ? ' favorited' : '';
@@ -1036,7 +1086,13 @@ ${OVERLAY_JS}
             if (msg.favorites) favoriteIds = new Set(msg.favorites);
             if (msg.history) historyEntries = msg.history;
             if (msg.teamIds) TEAM_IDS = new Set(msg.teamIds);
+            if (msg.personalIds) PERSONAL_IDS = new Set(msg.personalIds);
             if (typeof msg.teamSyncStatus === 'string') setTeamSyncStatus(msg.teamSyncStatus);
+            if (msg.categories) {
+                Object.assign(CATEGORIES, msg.categories);
+                renderFilters();
+                updateQuickAddCategoryOptions();
+            }
             applyFilters();
             renderFavorites();
             renderHistory();

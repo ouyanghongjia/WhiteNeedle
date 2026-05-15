@@ -358,8 +358,11 @@ tr.selected td { border-bottom-color: rgba(33, 150, 243, 0.35); }
 .group-header { background: var(--vscode-editorGroupHeader-tabsBackground); padding: 6px 10px; font-size: 12px; font-weight: 600; color: var(--accent); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 6px; }
 .group-header .group-count { font-weight: normal; opacity: 0.6; }
 
-.detail-section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.detail-section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; cursor: pointer; user-select: none; }
 .detail-section-header h3 { margin: 0; font-size: 13px; color: var(--accent); }
+.detail-section-header .chevron { display: inline-block; width: 16px; font-size: 11px; transition: transform 0.15s; margin-right: 4px; opacity: 0.6; }
+.detail-section.collapsed .detail-section-header .chevron { transform: rotate(-90deg); }
+.detail-section.collapsed .section-body { display: none; }
 .section-actions { display: flex; gap: 4px; align-items: center; flex-shrink: 0; }
 .btn-sm { background: none; border: 1px solid var(--border); border-radius: 3px; color: var(--fg); cursor: pointer; font-size: 11px; padding: 2px 6px; opacity: 0.7; white-space: nowrap; }
 .btn-sm:hover { opacity: 1; background: var(--hover); }
@@ -682,14 +685,16 @@ ${OVERLAY_HTML}
     function renderSection(title, content, rawData, opts) {
         var enc = encodeURIComponent(rawData || '');
         var hasJson = opts && opts.json;
+        var collapsed = opts && opts.collapsed;
         var btnHtml = '<div class="section-actions">';
         if (hasJson) {
             btnHtml += '<button class="btn-sm btn-collapse-all" title="Collapse all">▶ Fold</button>';
             btnHtml += '<button class="btn-sm btn-expand-all" title="Expand all">▼ Unfold</button>';
         }
         btnHtml += '<button class="btn-sm btn-copy" data-copy="' + enc + '">Copy</button></div>';
-        return '<div class="detail-section">' +
-               '<div class="detail-section-header"><h3>' + esc(title) + '</h3>' + btnHtml + '</div>' +
+        var cls = 'detail-section' + (collapsed ? ' collapsed' : '');
+        return '<div class="' + cls + '">' +
+               '<div class="detail-section-header"><h3><span class="chevron">▼</span>' + esc(title) + '</h3>' + btnHtml + '</div>' +
                '<div class="section-body">' + content + '</div></div>';
     }
 
@@ -730,19 +735,24 @@ ${OVERLAY_HTML}
         if (d.sslVerifyResult != null) html += '<span class="k">SSL Verify</span><span>' + (Number(d.sslVerifyResult) === 0 ? 'OK (0)' : esc(d.sslVerifyResult)) + '</span>';
         if (d.error) html += '<span class="k">Error</span><span style="color:#f44336">' + esc(d.error) + '</span>';
         html += '</div></div>';
+        var queryParams = parseQueryParams(d.url);
+        if (queryParams.length) {
+            var rawQs = JSON.stringify(queryParams.reduce(function(o, p) { o[p.key] = p.value; return o; }, {}), null, 2);
+            html += renderSection('Query Parameters (' + queryParams.length + ')', renderQueryParams(queryParams), rawQs);
+        }
         const requestCookies = collectRequestCookies(d);
         const responseCookies = collectResponseCookies(d);
         if (requestCookies.length) {
-            html += renderSection('Request Cookies', renderCookieList(requestCookies), JSON.stringify(cookiesToObj(requestCookies), null, 2));
+            html += renderSection('Request Cookies', renderCookieList(requestCookies), JSON.stringify(cookiesToObj(requestCookies), null, 2), {collapsed: true});
         }
         if (responseCookies.length) {
-            html += renderSection('Response Cookies', renderCookieList(responseCookies), JSON.stringify(cookiesToObj(responseCookies), null, 2));
+            html += renderSection('Response Cookies', renderCookieList(responseCookies), JSON.stringify(cookiesToObj(responseCookies), null, 2), {collapsed: true});
         }
         const requestHeadersForDisplay = filterHeadersForDisplay(d.requestHeaders, requestCookies.length ? ['cookie'] : []);
         const responseHeadersForDisplay = filterHeadersForDisplay(d.responseHeaders, responseCookies.length ? ['set-cookie'] : []);
         if (requestHeadersForDisplay && Object.keys(requestHeadersForDisplay).length) {
             var rawHeaders = JSON.stringify(requestHeadersForDisplay, null, 2);
-            html += renderSection('Request Headers', renderHeaderList(requestHeadersForDisplay), rawHeaders);
+            html += renderSection('Request Headers', renderHeaderList(requestHeadersForDisplay), rawHeaders, {collapsed: true});
         }
         if (d.requestBody) {
             var isReqJson = false;
@@ -751,7 +761,7 @@ ${OVERLAY_HTML}
         }
         if (responseHeadersForDisplay && Object.keys(responseHeadersForDisplay).length) {
             var rawHeaders = JSON.stringify(responseHeadersForDisplay, null, 2);
-            html += renderSection('Response Headers', renderHeaderList(responseHeadersForDisplay), rawHeaders);
+            html += renderSection('Response Headers', renderHeaderList(responseHeadersForDisplay), rawHeaders, {collapsed: true});
         }
         if (d.responseBody) {
             var isResJson = false;
@@ -798,6 +808,13 @@ ${OVERLAY_HTML}
                 vscode.postMessage({ command: 'mockRequest', detail: d });
             });
         }
+        detailPane.querySelectorAll('.detail-section-header').forEach(function(header) {
+            header.addEventListener('click', function(e) {
+                if (e.target.closest('.section-actions')) return;
+                var section = header.closest('.detail-section');
+                if (section) section.classList.toggle('collapsed');
+            });
+        });
     }
 
     function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -858,6 +875,31 @@ ${OVERLAY_HTML}
             } else {
                 html += '<div class="header-key"></div><div class="header-val">' + esc(item) + '</div>';
             }
+        });
+        html += '</div>';
+        return html;
+    }
+
+    function parseQueryParams(url) {
+        try {
+            var qIdx = String(url || '').indexOf('?');
+            if (qIdx < 0) return [];
+            var qs = String(url).substring(qIdx + 1);
+            var hashIdx = qs.indexOf('#');
+            if (hashIdx >= 0) qs = qs.substring(0, hashIdx);
+            if (!qs) return [];
+            return qs.split('&').map(function(pair) {
+                var eq = pair.indexOf('=');
+                if (eq < 0) return { key: decodeURIComponent(pair), value: '' };
+                return { key: decodeURIComponent(pair.substring(0, eq)), value: decodeURIComponent(pair.substring(eq + 1)) };
+            });
+        } catch(_) { return []; }
+    }
+
+    function renderQueryParams(params) {
+        var html = '<div class="header-grid">';
+        params.forEach(function(p) {
+            html += '<div class="header-key">' + esc(p.key) + '</div><div class="header-val">' + esc(p.value) + '</div>';
         });
         html += '</div>';
         return html;

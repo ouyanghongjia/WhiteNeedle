@@ -2,7 +2,11 @@
  * USB device discovery for WhiteNeedle.
  *
  * Uses the native usbmuxd client to detect attached iOS devices over USB,
- * then probes the WhiteNeedle engine port to confirm the framework is running.
+ * then probes WhiteNeedle engine ports to confirm the framework is running.
+ * A single physical device may host multiple apps each listening on a
+ * different port (27042, 27043, …, up to 27062). Each app appears as a
+ * separate entry in the device list.
+ *
  * Emits the same event interface as Bonjour discovery so both can feed into
  * a unified device list.
  */
@@ -12,15 +16,24 @@ import * as net from 'net';
 import { UsbmuxdClient, UsbDevice } from './usbmuxd';
 import { WNDevice } from '../discovery/bonjourDiscovery';
 
-const ENGINE_PORT = 27042;
-const PROBE_TIMEOUT_MS = 2000;
+const ENGINE_PORT_BASE = 27042;
+const ENGINE_PORT_RANGE = 20;
+const PROBE_TIMEOUT_MS = 1500;
 const POLL_INTERVAL_MS = 3000;
+
+/**
+ * Composite key: a physical USB device + port uniquely identifies one app.
+ */
+function slotKey(usbDeviceId: number, port: number): string {
+    return `${usbDeviceId}:${port}`;
+}
 
 export class UsbDiscovery extends EventEmitter {
     private client: UsbmuxdClient | null = null;
-    private knownDevices = new Map<number, WNDevice>();
+    private knownDevices = new Map<string, WNDevice>();
     private pollTimer: ReturnType<typeof setInterval> | null = null;
     private _running = false;
+    private _scanning = false;
 
     get running(): boolean {
         return this._running;
@@ -36,16 +49,11 @@ export class UsbDiscovery extends EventEmitter {
         this.client = new UsbmuxdClient();
 
         try {
-            // Initial scan
             await this.scanDevices();
         } catch {
             // usbmuxd may not be available — degrade gracefully
         }
 
-        // Periodic polling: re-enumerate and probe engine availability.
-        // We use polling rather than usbmuxd Listen because the Listen channel
-        // only reports USB attach/detach — it can't tell us when the *app* starts
-        // (and WhiteNeedle engine becomes available on the port).
         this.pollTimer = setInterval(() => {
             this.scanDevices().catch(() => { /* ignore */ });
         }, POLL_INTERVAL_MS);
@@ -60,60 +68,94 @@ export class UsbDiscovery extends EventEmitter {
         this.client?.stopListening();
         this.client = null;
 
-        for (const [id, device] of this.knownDevices.entries()) {
-            this.knownDevices.delete(id);
+        for (const [key, device] of this.knownDevices.entries()) {
+            this.knownDevices.delete(key);
             this.emit('deviceLost', device);
         }
     }
 
     private async scanDevices(): Promise<void> {
-        if (!this.client) { return; }
+        if (!this.client || this._scanning) { return; }
+        this._scanning = true;
 
+        try {
+            await this.doScan();
+        } finally {
+            this._scanning = false;
+        }
+    }
+
+    private async doScan(): Promise<void> {
         let devices: UsbDevice[];
         try {
-            devices = await this.client.listDevices();
+            devices = await this.client!.listDevices();
         } catch {
             return;
         }
 
-        const currentIds = new Set<number>();
+        const activeKeys = new Set<string>();
+
         for (const dev of devices) {
             const id = dev.DeviceID ?? dev.Properties?.DeviceID;
             if (!id) { continue; }
-            currentIds.add(id);
 
-            if (this.knownDevices.has(id)) { continue; }
+            const foundDevices = await this.probeAllPorts(dev);
+            for (const wnDevice of foundDevices) {
+                const key = slotKey(id, wnDevice.enginePort);
+                activeKeys.add(key);
 
-            // Probe the engine port through USB tunnel
-            const wnDevice = await this.probeDevice(dev);
-            if (wnDevice) {
-                this.knownDevices.set(id, wnDevice);
-                this.emit('deviceFound', wnDevice);
+                const existing = this.knownDevices.get(key);
+                if (!existing) {
+                    this.knownDevices.set(key, wnDevice);
+                    this.emit('deviceFound', wnDevice);
+                } else if (existing.bundleId !== wnDevice.bundleId) {
+                    this.knownDevices.set(key, wnDevice);
+                    this.emit('deviceLost', existing);
+                    this.emit('deviceFound', wnDevice);
+                }
             }
         }
 
-        // Remove devices that are no longer connected
-        for (const [id, device] of this.knownDevices.entries()) {
-            if (!currentIds.has(id)) {
-                this.knownDevices.delete(id);
+        // Remove entries whose USB device is gone or whose port no longer responds
+        for (const [key, device] of this.knownDevices.entries()) {
+            if (!activeKeys.has(key)) {
+                this.knownDevices.delete(key);
                 this.emit('deviceLost', device);
             }
         }
     }
 
     /**
-     * Probe a USB device to see if WhiteNeedle engine is running.
-     * Creates a transient usbmuxd tunnel, sends a JSON-RPC ping, and
-     * extracts device metadata from the response.
+     * Probe all ports in range for a single physical USB device.
+     * Runs probes in parallel for speed.
      */
-    private async probeDevice(usbDev: UsbDevice): Promise<WNDevice | null> {
-        const client = new UsbmuxdClient();
+    private async probeAllPorts(usbDev: UsbDevice): Promise<WNDevice[]> {
         const deviceId = usbDev.DeviceID ?? usbDev.Properties?.DeviceID;
         const serial = usbDev.Properties?.SerialNumber || usbDev.Properties?.USBSerialNumber || '';
 
+        const ports: number[] = [];
+        for (let i = 0; i <= ENGINE_PORT_RANGE; i++) {
+            ports.push(ENGINE_PORT_BASE + i);
+        }
+
+        const results = await Promise.all(
+            ports.map(port => this.probePort(deviceId, serial, port))
+        );
+
+        return results.filter((d): d is WNDevice => d !== null);
+    }
+
+    /**
+     * Probe a single port on a USB device.
+     * Creates a transient usbmuxd tunnel, sends a JSON-RPC ping, and
+     * extracts device metadata from the response.
+     */
+    private async probePort(deviceId: number, serial: string, port: number): Promise<WNDevice | null> {
+        const client = new UsbmuxdClient();
+
         let tunnelSocket: net.Socket;
         try {
-            tunnelSocket = await client.connect(deviceId, ENGINE_PORT);
+            tunnelSocket = await client.connect(deviceId, port);
         } catch {
             return null;
         }
@@ -122,23 +164,24 @@ export class UsbDiscovery extends EventEmitter {
             const pingResult = await this.sendPing(tunnelSocket);
             tunnelSocket.destroy();
 
+            if (!pingResult) { return null; }
+
             return {
                 name: `USB: ${serial.substring(0, 12) || deviceId}`,
                 host: '127.0.0.1',
-                port: ENGINE_PORT,
-                bundleId: pingResult?.bundleId || 'unknown',
-                deviceName: pingResult?.deviceName || `USB-${serial.substring(0, 8)}`,
-                systemVersion: pingResult?.systemVersion || 'unknown',
-                model: pingResult?.model || 'unknown',
-                wnVersion: pingResult?.wnVersion || 'unknown',
-                enginePort: ENGINE_PORT,
-                engineType: pingResult?.engineType || 'jscore',
+                port,
+                bundleId: pingResult.bundleId || 'unknown',
+                deviceName: pingResult.deviceName || `USB-${serial.substring(0, 8)}`,
+                systemVersion: pingResult.systemVersion || 'unknown',
+                model: pingResult.model || 'unknown',
+                wnVersion: pingResult.wnVersion || 'unknown',
+                enginePort: port,
+                engineType: pingResult.engineType || 'jscore',
                 inspectorPort: 0,
                 transport: 'usb',
                 usbDeviceId: deviceId,
                 serialNumber: serial,
-                // Use engine-reported deviceId (matches Bonjour TXT) for consistent dedup
-                deviceId: pingResult?.deviceId || serial || String(deviceId),
+                deviceId: pingResult.deviceId || serial || String(deviceId),
             } as WNDevice;
         } catch {
             tunnelSocket.destroy();

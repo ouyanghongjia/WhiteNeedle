@@ -2,6 +2,7 @@
 #import "WNRemoteServer.h"
 #import "WNJSEngine.h"
 #import <JavaScriptCore/JavaScriptCore.h>
+#import <UIKit/UIKit.h>
 #import "WNHookEngine.h"
 #import "WNObjCBridge.h"
 #import "WNNativeBridge.h"
@@ -14,7 +15,20 @@
 
 - (id)dispatchMethod:(NSString *)method params:(NSDictionary *)params {
     if ([method isEqualToString:@"ping"]) {
-        return @{@"pong": @YES};
+        NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
+        NSString *deviceName = [[UIDevice currentDevice] name];
+        NSString *vendorId = [[[UIDevice currentDevice] identifierForVendor] UUIDString] ?: @"unknown";
+        return @{
+            @"pong": @YES,
+            @"deviceId": [NSString stringWithFormat:@"%@|%@", bundleId, vendorId],
+            @"bundleId": bundleId,
+            @"deviceName": deviceName,
+            @"systemVersion": [[UIDevice currentDevice] systemVersion],
+            @"model": [[UIDevice currentDevice] model],
+            @"wnVersion": @"2.0.0",
+            @"enginePort": [@(self.port) stringValue],
+            @"engineType": @"jscore",
+        };
     }
 
     if ([method isEqualToString:@"loadScript"]) {

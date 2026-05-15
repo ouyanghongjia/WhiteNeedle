@@ -192,6 +192,7 @@ export class DeviceTreeProvider implements vscode.TreeDataProvider<DeviceTreeIte
         item.iconPath = new vscode.ThemeIcon('info');
         return item;
     }
+
 }
 
 class DeviceTreeItem extends vscode.TreeItem {

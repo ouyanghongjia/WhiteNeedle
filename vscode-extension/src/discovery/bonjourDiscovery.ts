@@ -90,14 +90,17 @@ export class DeviceDiscovery extends EventEmitter {
         this.stopRebrowseTimer();
         this.rebrowseTimer = setInterval(() => {
             if (this.devices.size > 0) {
+                this.emit('log', `Rebrowse stopped: ${this.devices.size} device(s) already found`);
                 this.stopRebrowseTimer();
                 return;
             }
             this.rebrowseCount++;
             if (this.rebrowseCount > MAX_REBROWSE_ATTEMPTS) {
+                this.emit('log', `Rebrowse exhausted (${MAX_REBROWSE_ATTEMPTS} attempts over ${MAX_REBROWSE_ATTEMPTS * REBROWSE_INTERVAL_MS / 1000}s), no devices found`);
                 this.stopRebrowseTimer();
                 return;
             }
+            this.emit('log', `Rebrowse attempt ${this.rebrowseCount}/${MAX_REBROWSE_ATTEMPTS}...`);
             this.rebrowse();
         }, REBROWSE_INTERVAL_MS);
     }
@@ -148,10 +151,20 @@ export class DeviceDiscovery extends EventEmitter {
     private browse(): void {
         if (!this.bonjour) { return; }
 
+        this.emit('log', `Browsing for _${SERVICE_TYPE}._tcp services...`);
+
         this.browser = this.bonjour.find({ type: SERVICE_TYPE }, (service: Service) => {
+            this.emit('log', `Service up: "${service.name}" addresses=[${(service.addresses || []).join(', ')}] port=${service.port} txt=${JSON.stringify(service.txt || {})}`);
+
             const device = this.parseService(service);
-            if (!device) { return; }
-            if (this.isBlocked(device)) { return; }
+            if (!device) {
+                this.emit('log', `Service "${service.name}" skipped: no usable host address`);
+                return;
+            }
+            if (this.isBlocked(device)) {
+                this.emit('log', `Service "${service.name}" skipped: blocked`);
+                return;
+            }
 
             const key = this.deviceIdentityKey(device);
             const existing = this.devices.get(key);
@@ -159,12 +172,10 @@ export class DeviceDiscovery extends EventEmitter {
                 const mergedAliases = this.mergeAliasIPs(existing.aliasIPs, device.aliasIPs);
                 device.aliasIPs = mergedAliases;
                 const aliasesChanged = (existing.aliasIPs || []).join('|') !== mergedAliases.join('|');
-                // Same logical device seen again — prefer routable IP over link-local
                 if (this.isLinkLocal(existing.host) && !this.isLinkLocal(device.host)) {
                     this.devices.set(key, device);
                     this.emit('deviceUpdated', device);
                 } else if (!this.isLinkLocal(existing.host) && this.isLinkLocal(device.host)) {
-                    // Keep existing routable IP, but retain updated metadata and all observed addresses.
                     const merged = { ...device, host: existing.host, aliasIPs: mergedAliases };
                     this.devices.set(key, merged);
                     if (aliasesChanged) {
@@ -191,6 +202,10 @@ export class DeviceDiscovery extends EventEmitter {
                 this.devices.delete(key);
                 this.emit('deviceLost', device);
             }
+        });
+
+        this.browser.on('error', (err: Error) => {
+            this.emit('log', `Browser error: ${err.message}`);
         });
     }
 

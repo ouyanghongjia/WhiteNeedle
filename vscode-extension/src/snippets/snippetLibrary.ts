@@ -25,16 +25,13 @@ export interface SnippetParam {
     description: string;
 }
 
-export type SnippetCategory =
-    | 'hook'
-    | 'runtime'
-    | 'network'
-    | 'ui'
-    | 'storage'
-    | 'performance'
-    | 'utility';
+export type SnippetCategory = string;
 
-export const CATEGORY_LABELS: Record<SnippetCategory, string> = {
+export const BUILTIN_CATEGORIES: string[] = [
+    'hook', 'runtime', 'network', 'ui', 'storage', 'performance', 'utility',
+];
+
+export const CATEGORY_LABELS: Record<string, string> = {
     hook: 'Method Hook',
     runtime: 'ObjC Runtime',
     network: 'Network',
@@ -43,6 +40,26 @@ export const CATEGORY_LABELS: Record<SnippetCategory, string> = {
     performance: 'Performance',
     utility: 'Utility',
 };
+
+export function getCategoryLabel(cat: string): string {
+    if (CATEGORY_LABELS[cat]) { return CATEGORY_LABELS[cat]; }
+    return cat.charAt(0).toUpperCase() + cat.slice(1);
+}
+
+export function collectCategories(snippets: ScriptSnippet[]): string[] {
+    const seen = new Set<string>();
+    const ordered: string[] = [];
+    for (const cat of BUILTIN_CATEGORIES) {
+        if (!seen.has(cat)) { seen.add(cat); ordered.push(cat); }
+    }
+    for (const s of snippets) {
+        if (s.category && !seen.has(s.category)) {
+            seen.add(s.category);
+            ordered.push(s.category);
+        }
+    }
+    return ordered;
+}
 
 export const BUILTIN_SNIPPETS: ScriptSnippet[] = [
     // ---- Hook ----
@@ -1020,6 +1037,7 @@ console.log("  Sandbox: " + FileSystem.home);
 var mods = Module.enumerateModules();
 console.log("  Modules: " + mods.length + " loaded");`,
     },
+
 ];
 
 export function resolveSnippet(snippet: ScriptSnippet, paramValues: Record<string, string>): string {
@@ -1098,9 +1116,8 @@ function validateSnippet(raw: unknown, index: number): ScriptSnippet {
         throw new Error(`Snippet #${index}: missing "code"`);
     }
 
-    const VALID_CATEGORIES: SnippetCategory[] = ['hook', 'runtime', 'network', 'ui', 'storage', 'performance', 'utility'];
-    const category = (typeof obj.category === 'string' && VALID_CATEGORIES.includes(obj.category as SnippetCategory))
-        ? obj.category as SnippetCategory
+    const category = (typeof obj.category === 'string' && obj.category.trim())
+        ? obj.category.trim()
         : 'utility';
 
     const tags = Array.isArray(obj.tags)

@@ -7,6 +7,7 @@
 #import "WNUIDebugBridge.h"
 #import "WNMockInterceptor.h"
 #import "WNNativeLogCapture.h"
+#import <UIKit/UIKit.h>
 #import <sys/socket.h>
 #import <netinet/in.h>
 #import <arpa/inet.h>
@@ -292,7 +293,21 @@ static dispatch_queue_t WNRemoteServerRPCQueue(void) {
     if (!method) return;
 
     if ([method isEqualToString:@"ping"] && requestId) {
-        [self sendJsonRpcResult:@{@"pong": @YES} requestId:requestId client:client];
+        NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
+        NSString *deviceName = [[UIDevice currentDevice] name];
+        NSString *vendorId = [[[UIDevice currentDevice] identifierForVendor] UUIDString] ?: @"unknown";
+        NSDictionary *info = @{
+            @"pong": @YES,
+            @"deviceId": [NSString stringWithFormat:@"%@|%@", bundleId, vendorId],
+            @"bundleId": bundleId,
+            @"deviceName": deviceName,
+            @"systemVersion": [[UIDevice currentDevice] systemVersion],
+            @"model": [[UIDevice currentDevice] model],
+            @"wnVersion": @"2.0.0",
+            @"enginePort": [@(self.port) stringValue],
+            @"engineType": @"jscore",
+        };
+        [self sendJsonRpcResult:info requestId:requestId client:client];
         return;
     }
 
