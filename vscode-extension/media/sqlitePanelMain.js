@@ -656,7 +656,8 @@
         }
         html += '</tr></thead><tbody>';
         for (var r = 0; r < rows.length; r++) {
-            html += '<tr' + (rowClass ? ' class="' + rowClass + '"' : '') + '>';
+            var rowDataEnc = encodeURIComponent(JSON.stringify(rows[r]));
+            html += '<tr class="data-row' + (rowClass ? ' ' + rowClass : '') + '" data-row="' + rowDataEnc + '">';
             for (var ci = 0; ci < cols.length; ci++) {
                 var val = rows[r][cols[ci]];
                 if (val === null || val === undefined) {
@@ -800,5 +801,51 @@
         toastEl.textContent = text;
         toastEl.className = 'toast show' + (isError ? ' error' : '');
         setTimeout(function() { toastEl.className = 'toast'; }, 3000);
+    }
+
+    // Context Menu Logic
+    var contextMenu = document.getElementById('contextMenu');
+    var menuCopyRow = document.getElementById('menuCopyRow');
+    var contextRowData = null;
+
+    document.addEventListener('contextmenu', function(e) {
+        var tr = e.target.closest('tr.data-row');
+        if (tr && contextMenu) {
+            e.preventDefault();
+            try {
+                contextRowData = JSON.parse(decodeURIComponent(tr.getAttribute('data-row') || '{}'));
+                contextMenu.style.left = e.pageX + 'px';
+                contextMenu.style.top = e.pageY + 'px';
+                contextMenu.classList.remove('hidden');
+            } catch (err) {
+                console.error('Failed to parse row data', err);
+            }
+        } else if (contextMenu) {
+            contextMenu.classList.add('hidden');
+        }
+    });
+
+    document.addEventListener('click', function(e) {
+        if (contextMenu && !e.target.closest('#contextMenu')) {
+            contextMenu.classList.add('hidden');
+        }
+    });
+
+    if (menuCopyRow) {
+        menuCopyRow.addEventListener('click', function() {
+            contextMenu.classList.add('hidden');
+            if (contextRowData) {
+                var lines = [];
+                for (var key in contextRowData) {
+                    lines.push(key + ': ' + formatCellValue(contextRowData[key]));
+                }
+                var textToCopy = lines.join('  ');
+                navigator.clipboard.writeText(textToCopy).then(function() {
+                    showToast('Record copied to clipboard');
+                }).catch(function(err) {
+                    showToast('Failed to copy: ' + err, true);
+                });
+            }
+        });
     }
 })();

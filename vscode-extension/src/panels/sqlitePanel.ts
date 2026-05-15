@@ -454,6 +454,12 @@ export class SQLitePanel {
     .sort-select { background: var(--input-bg); color: var(--input-fg); border: 1px solid var(--input-border); border-radius: 3px; padding: 3px 4px; font-size: 11px; cursor: pointer; outline: none; flex-shrink: 0; max-width: 110px; }
     .sort-select:focus { border-color: var(--btn-bg); }
     .filter-match-info { font-size: 10px; opacity: 0.5; flex-shrink: 0; white-space: nowrap; }
+
+    /* Context Menu */
+    .context-menu { position: absolute; background: var(--vscode-menu-background, var(--bg)); border: 1px solid var(--vscode-menu-border, var(--border)); box-shadow: 0 2px 8px rgba(0,0,0,0.3); border-radius: 4px; padding: 4px 0; z-index: 10000; min-width: 140px; }
+    .context-menu.hidden { display: none; }
+    .context-menu-item { padding: 6px 16px; cursor: pointer; font-size: 12px; color: var(--vscode-menu-foreground, var(--fg)); }
+    .context-menu-item:hover { background: var(--vscode-menu-selectionBackground, var(--btn-bg)); color: var(--vscode-menu-selectionForeground, var(--btn-fg)); }
 ${OVERLAY_CSS}
 </style>
 </head>
@@ -507,6 +513,10 @@ ${OVERLAY_HTML}
     </div>
 </div>
 <div class="toast" id="toast"></div>
+
+<div id="contextMenu" class="context-menu hidden">
+    <div class="context-menu-item" id="menuCopyRow">Copy Record</div>
+</div>
 
 <script nonce="${nonce}">
 ${OVERLAY_JS}
