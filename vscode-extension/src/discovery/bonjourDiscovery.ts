@@ -5,6 +5,8 @@ const SERVICE_TYPE = 'whiteneedle';
 const REBROWSE_INTERVAL_MS = 5000;
 const MAX_REBROWSE_ATTEMPTS = 12;
 
+export type TransportType = 'wifi' | 'usb';
+
 export interface WNDevice {
     name: string;
     host: string;
@@ -21,6 +23,13 @@ export interface WNDevice {
     /** @deprecated No longer advertised; debugging uses ios_webkit_debug_proxy */
     inspectorPort: number;
     raw?: Service;
+
+    /** Transport channel: 'wifi' (default/Bonjour) or 'usb'. */
+    transport?: TransportType;
+    /** usbmuxd DeviceID — only set when transport === 'usb'. */
+    usbDeviceId?: number;
+    /** USB serial number — only set when transport === 'usb'. */
+    serialNumber?: string;
 }
 
 export class DeviceDiscovery extends EventEmitter {
