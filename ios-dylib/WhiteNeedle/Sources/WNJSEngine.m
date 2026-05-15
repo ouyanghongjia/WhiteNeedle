@@ -209,7 +209,6 @@ static _Atomic int s_wnJSThreadExternalWaitCount = 0;
         self.jsRunLoopRef = CFRunLoopGetCurrent();
         self.jsKeepAlivePort = [NSMachPort port];
         [[NSRunLoop currentRunLoop] addPort:self.jsKeepAlivePort forMode:NSDefaultRunLoopMode];
-        WNSetInvokeTargetQueue(dispatch_get_main_queue());
         self.jsThreadReady = YES;
         if (self.jsThreadStartSemaphore) {
             dispatch_semaphore_signal(self.jsThreadStartSemaphore);
@@ -221,7 +220,6 @@ static _Atomic int s_wnJSThreadExternalWaitCount = 0;
             }
         }
 
-        WNSetInvokeTargetQueue(NULL);
         self.jsRunLoopRef = NULL;
     }
 }
@@ -300,7 +298,6 @@ static _Atomic int s_wnJSThreadExternalWaitCount = 0;
             codeToEval = [NSString stringWithFormat:@"(function(){\n%@\n})();", code];
         }
 
-        WNSetInvokeTargetQueue(dispatch_get_main_queue());
         JSValue *result = [self.context evaluateScript:codeToEval withSourceURL:[NSURL URLWithString:name]];
         if (!result) {
             NSLog(@"%@ Failed to evaluate script: %@", kWNLogPrefix, name);
@@ -326,7 +323,6 @@ static _Atomic int s_wnJSThreadExternalWaitCount = 0;
 - (JSValue *)evaluateScript:(NSString *)code {
     if (!self.isReady) return nil;
     return [self performOnJSThreadSyncValue:^id{
-        WNSetInvokeTargetQueue(dispatch_get_main_queue());
         return [self.context evaluateScript:code];
     }];
 }
@@ -335,6 +331,58 @@ static _Atomic int s_wnJSThreadExternalWaitCount = 0;
     return [self performOnJSThreadSyncValue:^id{
         return [self.loadedScripts allKeys];
     }] ?: @[];
+}
+
+#pragma mark - Async script management
+
+- (void)loadScriptAsync:(NSString *)code name:(NSString *)name completion:(void (^)(BOOL))completion {
+    if (!self.isReady) {
+        NSLog(@"%@ Engine not ready, cannot load script: %@", kWNLogPrefix, name);
+        if (completion) completion(NO);
+        return;
+    }
+    [self performOnJSThread:^{
+        [self unloadScript:name];
+
+        NSString *codeToEval = code;
+        if (![name isEqualToString:@"bootstrap.js"]) {
+            codeToEval = [NSString stringWithFormat:@"(function(){\n%@\n})();", code];
+        }
+        JSValue *result = [self.context evaluateScript:codeToEval withSourceURL:[NSURL URLWithString:name]];
+        BOOL ok = (result != nil);
+        if (ok) {
+            self.loadedScripts[name] = result;
+            NSLog(@"%@ Script loaded: %@", kWNLogPrefix, name);
+        } else {
+            NSLog(@"%@ Failed to evaluate script: %@", kWNLogPrefix, name);
+        }
+        if (completion) completion(ok);
+    } waitUntilDone:NO];
+    [self wakeJSThread];
+}
+
+- (void)unloadScriptAsync:(NSString *)name completion:(void (^)(void))completion {
+    [self performOnJSThread:^{
+        if (self.loadedScripts[name]) {
+            [self.loadedScripts removeObjectForKey:name];
+            NSLog(@"%@ Script unloaded: %@", kWNLogPrefix, name);
+        }
+        if (completion) completion();
+    } waitUntilDone:NO];
+    [self wakeJSThread];
+}
+
+- (void)evaluateScriptAsync:(NSString *)code completion:(void (^)(NSString * _Nullable))completion {
+    if (!self.isReady) {
+        if (completion) completion(nil);
+        return;
+    }
+    [self performOnJSThread:^{
+        JSValue *result = [self.context evaluateScript:code];
+        NSString *resultStr = [result toString] ?: @"undefined";
+        if (completion) completion(resultStr);
+    } waitUntilDone:NO];
+    [self wakeJSThread];
 }
 
 #pragma mark - Console API
@@ -702,6 +750,24 @@ BOOL WNShouldAvoidSynchronousMainFromJSThread(void) {
     return WNIsExternalThreadWaitingOnJSThread() || WNIsInvokeMainThreadHopActive();
 }
 
+void WNDispatchToQueuePumpingJSRunLoop(dispatch_queue_t queue, dispatch_block_t block) {
+    if (!block) return;
+    WNJSEngine *eng = [WNJSEngine sharedEngine];
+    if (!eng || ![eng isOnJSThread]) {
+        dispatch_sync(queue, block);
+        return;
+    }
+    __block BOOL done = NO;
+    dispatch_async(queue, ^{
+        block();
+        done = YES;
+        [eng wakeJSThread];
+    });
+    while (!done) {
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.005, true);
+    }
+}
+
 void WNRunOnMainFromAnyThread(void (^block)(void)) {
     if (!block) return;
     if ([NSThread isMainThread]) {
@@ -709,11 +775,8 @@ void WNRunOnMainFromAnyThread(void (^block)(void)) {
         return;
     }
     WNJSEngine *eng = [WNJSEngine sharedEngine];
-    if (eng && WNShouldAvoidSynchronousMainFromJSThread()) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            block();
-            [eng wakeJSThread];
-        });
+    if (eng && [eng isOnJSThread]) {
+        WNDispatchToQueuePumpingJSRunLoop(dispatch_get_main_queue(), block);
         return;
     }
     dispatch_sync(dispatch_get_main_queue(), block);

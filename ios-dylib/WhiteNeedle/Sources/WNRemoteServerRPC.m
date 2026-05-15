@@ -31,26 +31,8 @@
         };
     }
 
-    if ([method isEqualToString:@"loadScript"]) {
-        NSString *code = params[@"code"];
-        NSString *name = params[@"name"];
-        if (!code || !name) return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Missing code or name"}];
-        BOOL ok = [self.engine loadScript:code name:name];
-        return @{@"success": @(ok)};
-    }
-
-    if ([method isEqualToString:@"unloadScript"]) {
-        NSString *name = params[@"name"];
-        if (name) [self.engine unloadScript:name];
-        return @{@"success": @YES};
-    }
-
-    if ([method isEqualToString:@"evaluate"]) {
-        NSString *code = params[@"code"];
-        if (!code) return [NSError errorWithDomain:@"WN" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Missing code"}];
-        JSValue *result = [self.engine evaluateScript:code];
-        return @{@"value": [result toString] ?: @"undefined"};
-    }
+    // loadScript / unloadScript / evaluate are handled asynchronously in
+    // -[WNRemoteServer handleRequest:client:] and never reach dispatchMethod:.
 
     if ([method isEqualToString:@"listScripts"]) {
         return @{@"scripts": [self.engine loadedScriptNames]};

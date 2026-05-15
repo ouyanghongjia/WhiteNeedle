@@ -276,9 +276,8 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
         JSContext *ctx = [JSContext currentContext];
         dispatch_queue_t targetQueue = WNGetInvokeTargetQueue();
         if (!targetQueue && ![NSThread isMainThread] && WNObjectRequiresMainThread(p.target)) {
-            NSLog(@"%@ Main-thread enforced for getProperty %@ on %@ (invoke target queue is nil)",
+            NSLog(@"%@ Warning: getProperty '%@' on UIKit object %@ off main thread. Use dispatch.main() for thread safety.",
                   kLogPrefix, propertyName, NSStringFromClass([p.target class]));
-            targetQueue = dispatch_get_main_queue();
         }
 
         BOOL shouldDispatch = WNShouldDispatchToTargetQueue(targetQueue);
@@ -294,18 +293,12 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
         };
 
         if (shouldDispatch) {
-            BOOL mainHop = (targetQueue == dispatch_get_main_queue());
-            if (mainHop && WNShouldAvoidSynchronousMainFromJSThread()) {
-                NSLog(@"%@ Deadlock avoided: async main dispatch for getProperty '%@' (return undefined)", kLogPrefix, propertyName);
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    getValueBlock();
-                    [[WNJSEngine sharedEngine] wakeJSThread];
-                });
-                return [JSValue valueWithUndefinedInContext:ctx];
+            WNJSEngine *eng = [WNJSEngine sharedEngine];
+            if (eng && [eng isOnJSThread]) {
+                WNDispatchToQueuePumpingJSRunLoop(targetQueue, getValueBlock);
+            } else {
+                dispatch_sync(targetQueue, getValueBlock);
             }
-            if (mainHop) atomic_fetch_add(&_wnInvokeMainHopCounter, 1);
-            dispatch_sync(targetQueue, getValueBlock);
-            if (mainHop) atomic_fetch_sub(&_wnInvokeMainHopCounter, 1);
         } else {
             getValueBlock();
         }
@@ -333,9 +326,8 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
         JSContext *setCtx = [JSContext currentContext];
         dispatch_queue_t targetQueue = WNGetInvokeTargetQueue();
         if (!targetQueue && ![NSThread isMainThread] && WNObjectRequiresMainThread(p.target)) {
-            NSLog(@"%@ Main-thread enforced for setProperty %@ on %@ (invoke target queue is nil)",
+            NSLog(@"%@ Warning: setProperty '%@' on UIKit object %@ off main thread. Use dispatch.main() for thread safety.",
                   kLogPrefix, propertyName, NSStringFromClass([p.target class]));
-            targetQueue = dispatch_get_main_queue();
         }
         BOOL shouldDispatch = WNShouldDispatchToTargetQueue(targetQueue);
         @try {
@@ -349,18 +341,12 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
                 }
             };
             if (shouldDispatch) {
-                BOOL mainHop = (targetQueue == dispatch_get_main_queue());
-                if (mainHop && WNShouldAvoidSynchronousMainFromJSThread()) {
-                    NSLog(@"%@ Deadlock avoided: async main dispatch for setProperty '%@' (fire-and-forget)", kLogPrefix, propertyName);
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        setValueBlock();
-                        [[WNJSEngine sharedEngine] wakeJSThread];
-                    });
-                    return;
+                WNJSEngine *eng = [WNJSEngine sharedEngine];
+                if (eng && [eng isOnJSThread]) {
+                    WNDispatchToQueuePumpingJSRunLoop(targetQueue, setValueBlock);
+                } else {
+                    dispatch_sync(targetQueue, setValueBlock);
                 }
-                if (mainHop) atomic_fetch_add(&_wnInvokeMainHopCounter, 1);
-                dispatch_sync(targetQueue, setValueBlock);
-                if (mainHop) atomic_fetch_sub(&_wnInvokeMainHopCounter, 1);
             } else {
                 setValueBlock();
             }
@@ -507,9 +493,8 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
     void *retBuf = (retType[0] == 'v' || retSize == 0) ? NULL : calloc(1, retSize);
     dispatch_queue_t targetQueue = WNGetInvokeTargetQueue();
     if (!targetQueue && ![NSThread isMainThread] && !isClass && WNObjectRequiresMainThread(target)) {
-        NSLog(@"%@ Main-thread enforced for invoke %@ on %@ (invoke target queue is nil)",
+        NSLog(@"%@ Warning: invoke '%@' on UIKit object %@ off main thread. Use dispatch.main() for thread safety.",
               kLogPrefix, selectorString, NSStringFromClass([target class]));
-        targetQueue = dispatch_get_main_queue();
     }
     BOOL shouldDispatch = WNShouldDispatchToTargetQueue(targetQueue);
     __block NSException *capturedException = nil;
@@ -526,19 +511,12 @@ static id WNObjCParsedObjectFromHexAddressString(NSString *addrStr) {
     };
 
     if (shouldDispatch) {
-        BOOL mainHop = (targetQueue == dispatch_get_main_queue());
-        if (mainHop && WNShouldAvoidSynchronousMainFromJSThread()) {
-            NSLog(@"%@ Deadlock avoided: async main dispatch for invoke '%@' (return undefined)", kLogPrefix, selectorString);
-            dispatch_async(dispatch_get_main_queue(), ^{
-                invokeBlock();
-                [[WNJSEngine sharedEngine] wakeJSThread];
-            });
-            if (retBuf) free(retBuf);
-            return [JSValue valueWithUndefinedInContext:context];
+        WNJSEngine *eng = [WNJSEngine sharedEngine];
+        if (eng && [eng isOnJSThread]) {
+            WNDispatchToQueuePumpingJSRunLoop(targetQueue, invokeBlock);
+        } else {
+            dispatch_sync(targetQueue, invokeBlock);
         }
-        if (mainHop) atomic_fetch_add(&_wnInvokeMainHopCounter, 1);
-        dispatch_sync(targetQueue, invokeBlock);
-        if (mainHop) atomic_fetch_sub(&_wnInvokeMainHopCounter, 1);
     } else {
         invokeBlock();
     }

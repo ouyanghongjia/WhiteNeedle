@@ -276,6 +276,43 @@ static void WNSocketCallback(CFSocketRef socket, CFSocketCallBackType type,
     [client sendData:line];
 }
 
+/// Thread-safe: builds JSON response and dispatches sendData on main (NSStream is on mainRunLoop).
+- (void)sendJsonRpcResultAsync:(id)result requestId:(NSNumber *)requestId client:(WNClientConnection *)client {
+    if (!requestId) return;
+    NSDictionary *response = @{
+        @"jsonrpc": @"2.0",
+        @"id": requestId,
+        @"result": result ?: [NSNull null]
+    };
+    NSData *data = [NSJSONSerialization dataWithJSONObject:response options:0 error:nil];
+    if (!data) return;
+    NSMutableData *line = [data mutableCopy];
+    [line appendData:[@"\n" dataUsingEncoding:NSUTF8StringEncoding]];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [client sendData:line];
+    });
+}
+
+/// Thread-safe: sends a JSON-RPC error response via dispatch_async(main).
+- (void)sendJsonRpcErrorAsync:(NSString *)message requestId:(NSNumber *)requestId client:(WNClientConnection *)client {
+    if (!requestId) return;
+    NSDictionary *response = @{
+        @"jsonrpc": @"2.0",
+        @"id": requestId,
+        @"error": @{
+            @"code": @(-32000),
+            @"message": message ?: @"Unknown error"
+        }
+    };
+    NSData *data = [NSJSONSerialization dataWithJSONObject:response options:0 error:nil];
+    if (!data) return;
+    NSMutableData *line = [data mutableCopy];
+    [line appendData:[@"\n" dataUsingEncoding:NSUTF8StringEncoding]];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [client sendData:line];
+    });
+}
+
 static dispatch_queue_t WNRemoteServerRPCQueue(void) {
     static dispatch_queue_t q;
     static dispatch_once_t once;
@@ -311,9 +348,45 @@ static dispatch_queue_t WNRemoteServerRPCQueue(void) {
         return;
     }
 
-    // Run RPC business logic on a dedicated serial queue (NOT main) so the main thread
-    // stays free for UIKit and dispatch_sync(main) from the JS thread.
-    // Socket write-back goes through dispatch_async(main) because NSStream is on mainRunLoop.
+    // Async JS engine methods — go directly to JS thread, no RPC queue blocking.
+    if ([method isEqualToString:@"loadScript"]) {
+        NSString *code = params[@"code"];
+        NSString *name = params[@"name"];
+        if (!code || !name) {
+            [self sendJsonRpcErrorAsync:@"Missing code or name" requestId:requestId client:client];
+            return;
+        }
+        [self.engine loadScriptAsync:code name:name completion:^(BOOL success) {
+            [self sendJsonRpcResultAsync:@{@"success": @(success)} requestId:requestId client:client];
+        }];
+        return;
+    }
+
+    if ([method isEqualToString:@"unloadScript"]) {
+        NSString *name = params[@"name"];
+        if (name) {
+            [self.engine unloadScriptAsync:name completion:^{
+                [self sendJsonRpcResultAsync:@{@"success": @YES} requestId:requestId client:client];
+            }];
+        } else {
+            [self sendJsonRpcResultAsync:@{@"success": @YES} requestId:requestId client:client];
+        }
+        return;
+    }
+
+    if ([method isEqualToString:@"evaluate"]) {
+        NSString *code = params[@"code"];
+        if (!code) {
+            [self sendJsonRpcErrorAsync:@"Missing code" requestId:requestId client:client];
+            return;
+        }
+        [self.engine evaluateScriptAsync:code completion:^(NSString *result) {
+            [self sendJsonRpcResultAsync:@{@"value": result ?: @"undefined"} requestId:requestId client:client];
+        }];
+        return;
+    }
+
+    // Run remaining RPC business logic on a dedicated serial queue (NOT main).
     dispatch_async(WNRemoteServerRPCQueue(), ^{
         id result = [self dispatchMethod:method params:params];
 

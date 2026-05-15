@@ -1661,33 +1661,14 @@ static void *jsValueToRawReturn(JSValue *result, char retType) {
         free(argBuf);
     }
 
-    // Callback blocks (and especially UI completion handlers) are usually meant to run on the main
-    // queue. The JS/Hook path often invokes from the dedicated WhiteNeedle JS thread; calling the
-    // block here without a main hop breaks UIKit (Main Thread Checker) and can crash the layout
-    // engine. Always invoke on the main queue when not already on the main thread.
+    // Blocks (completion handlers, callbacks) are invoked on the main queue when not
+    // already on main. From the JS thread we use WNDispatchToQueuePumpingJSRunLoop so
+    // the JS thread stays responsive (hook callbacks can be processed during the wait)
+    // and non-void blocks can return their value synchronously.
     const char *retType = sig.methodReturnType;
     BOOL isVoid = (retType[0] == 'v');
 
     if (![NSThread isMainThread]) {
-        if (WNShouldAvoidSynchronousMainFromJSThread()) {
-            WNJSEngine *eng = [WNJSEngine sharedEngine];
-            if (isVoid) {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    @try {
-                        [invocation invoke];
-                    } @catch (NSException *e) {
-                        NSLog(@"%@ Block invoke on main (async) exception: %@", kLogPrefix, e);
-                    } @finally {
-                        [eng wakeJSThread];
-                    }
-                });
-                [eng wakeJSThread];
-                return [JSValue valueWithUndefinedInContext:context];
-            }
-            NSLog(@"%@ Skip block callback with return value: cannot dispatch_sync to main (avoid Main↔JS deadlock)",
-                  kLogPrefix);
-            return [JSValue valueWithNullInContext:context];
-        }
         if (isVoid) {
             @try {
                 WNRunOnMainFromAnyThread(^{ [invocation invoke]; });

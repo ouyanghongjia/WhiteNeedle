@@ -578,49 +578,63 @@ static void WNHookClosureCallback(ffi_cif *cif, void *ret, void **args, void *us
     BOOL alreadyForwarded = [objc_getAssociatedObject(invocation, kWNHookForwardedToJSThreadKey) boolValue];
     WNJSEngine *engine = [WNJSEngine sharedEngine];
 
-    // Always execute JS hook logic on the dedicated JS thread when possible.
-    // Deadlock detection: if main thread would block waiting for JS, but JS itself needs main
-    // (dispatch_sync(main) from ObjC bridge), both threads stall forever.
-    // Two known triggers:
-    //   1. JS invoke is mid-hop to main (WNIsInvokeMainThreadHopActive)
-    //   2. Another thread (e.g. RPC queue) is already blocked on the JS thread, which means
-    //      JS is busy — if main also blocks on JS, and JS later needs main → deadlock
-    // In either case:
-    //   - void methods: async forward to JS thread
-    //   - non-void methods: safely fall back to original implementation
+    // Forward JS hook logic to the dedicated JS thread.
+    //
+    // Main-thread strategy:
+    //   - void methods: async (waitUntilDone:NO) — no return value needed.
+    //   - non-void methods: pump the main run loop while JS processes the hook.
+    //     The JS thread uses WNDispatchToQueuePumpingJSRunLoop for dispatch.main(),
+    //     so JS pumps ITS run loop → hook callback is picked up → hook callback may
+    //     dispatch_async(main, ...) → main pump processes it. Both run loops cooperate.
+    //     g_forwardingDepth (thread-local) > 0 on main prevents re-entrant hooks.
+    //
+    // Non-main threads: waitUntilDone:YES (no deadlock risk).
     if (ctx && hasJSHookLogic && ![engine isOnJSThread] && !alreadyForwarded) {
-        BOOL wouldDeadlock = [NSThread isMainThread] &&
-            (WNIsInvokeMainThreadHopActive() || WNIsExternalThreadWaitingOnJSThread());
         [invocation retainArguments];
         objc_setAssociatedObject(invocation, kWNHookForwardedToJSThreadKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
-        if (wouldDeadlock) {
+        NSInvocation *capturedInvocation = invocation;
+        WNHookEntry *capturedEntry = entry;
+        id capturedTarget = target;
+
+        if ([NSThread isMainThread]) {
             if (isVoidReturn) {
-                NSInvocation *capturedInvocation = invocation;
-                WNHookEntry *capturedEntry = entry;
-                id capturedTarget = target;
                 [engine performOnJSThread:^{
                     [WNHookEngine handleHookedInvocation:capturedInvocation
                                                    entry:capturedEntry
                                                   target:capturedTarget];
                 } waitUntilDone:NO];
-                // JS thread may be in dispatch_sync(main) or a long runMode; wake so
-                // performSelector/queued hook runs before the next test assertion.
                 [engine wakeJSThread];
                 return;
             }
 
-            NSLog(@"%@ Skip JS hook on main (avoid deadlock), fallback original: %@",
-                  kLogPrefix, entry.selectorKey);
-            [invocation setSelector:entry.aliasSelector];
-            [invocation invoke];
-            [invocation setSelector:entry.originalSelector];
+            __block BOOL hookDone = NO;
+            [engine performOnJSThread:^{
+                [WNHookEngine handleHookedInvocation:capturedInvocation
+                                               entry:capturedEntry
+                                              target:capturedTarget];
+                hookDone = YES;
+            } waitUntilDone:NO];
+            [engine wakeJSThread];
+
+            // Pump main run loop — JS may dispatch_async(main) back here during the
+            // hook callback (e.g. dispatch.main() in onEnter/onLeave/replacement).
+            // Safety timeout for edge cases where JS is not in a pump state.
+            CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + 2.0;
+            while (!hookDone && CFAbsoluteTimeGetCurrent() < deadline) {
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.005, true);
+            }
+            if (!hookDone) {
+                NSLog(@"%@ Hook pump timeout (JS unresponsive), fallback original: %@",
+                      kLogPrefix, entry.selectorKey);
+                [invocation setSelector:entry.aliasSelector];
+                [invocation invoke];
+                [invocation setSelector:entry.originalSelector];
+            }
             return;
         }
 
-        NSInvocation *capturedInvocation = invocation;
-        WNHookEntry *capturedEntry = entry;
-        id capturedTarget = target;
+        // Non-main thread: safe to block directly.
         [engine performOnJSThread:^{
             [WNHookEngine handleHookedInvocation:capturedInvocation
                                            entry:capturedEntry
